@@ -15,7 +15,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"mtls-gateway/internal/api"
 	"mtls-gateway/internal/auth"
@@ -149,20 +148,8 @@ func gatewayHandler(gw *auth.Gateway, router *proxy.Router, mgr *api.Manager, po
 		remote := auth.RemoteIP(r)
 		serial := rec.Serial
 
-		// 2. 管理路径 (需要 admin 用途) — 用 /admin/ 前缀, /api/ 留给后端业务
-		if strings.HasPrefix(r.URL.Path, "/admin/") {
-			if !rec.HasPurpose(auth.PurposeAdmin) {
-				auth.AuthLog("admin", remote, serial, false)
-				http.Error(w, "admin required", http.StatusForbidden)
-				return
-			}
-			auth.AuthLog("admin", remote, serial, true)
-			r.Header.Set("X-Auth-Purpose", auth.PurposeAdmin)
-			mgr.HTTPHandler().ServeHTTP(w, r)
-			return
-		}
-
-		// 3. 端口用途校验: 证书必须有本端口的用途权限
+		// 2. 端口用途校验: 证书必须有本端口的用途权限
+		//    (管理 API 只走独立 admin 端口 9444 + Unix socket, 不在业务端口)
 		if !rec.HasPurpose(portPurpose) {
 			auth.AuthLog(portPurpose, remote, serial, false)
 			http.Error(w, "no access to purpose: "+portPurpose, http.StatusForbidden)
