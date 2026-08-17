@@ -33,7 +33,6 @@ func main() {
 		caKeyPath     = flag.String("ca-key", "", "CA 私钥 (签发用, 覆盖 config)")
 		certDir       = flag.String("cert-dir", "", "签发证书输出目录 (覆盖 config)")
 		sockPath      = flag.String("sock", "", "Unix socket 路径 (覆盖 config)")
-		gatewayListen = flag.String("listen", "", "网关监听地址 (覆盖 config)")
 		adminListen   = flag.String("admin-listen", "", "管理 API TCP 监听 (覆盖 config)")
 	)
 	flag.Parse()
@@ -48,7 +47,6 @@ func main() {
 	caKey := firstNonEmpty(*caKeyPath, cfg.CAKey, "/etc/mtls-gw/ca.key")
 	cDir := firstNonEmpty(*certDir, cfg.CertDir, "/var/lib/mtls-gw/certs")
 	sock := firstNonEmpty(*sockPath, cfg.SockPath, "/run/mtls-gw.sock")
-	gwListen := firstNonEmpty(*gatewayListen, cfg.Listen, "0.0.0.0:9443")
 	admListen := firstNonEmpty(*adminListen, cfg.AdminListen, "")
 
 	// 目录
@@ -64,16 +62,17 @@ func main() {
 	defer store.Close()
 	log.Printf("db loaded: %d certs", len(store.List()))
 
-	// 认证器
-	gateway, err := auth.New(store, ca, sCert, sKey)
+	// 认证器 (requireIPBind: 默认 true, 配置 require_ip_bind=false 关闭 IP 绑定)
+	requireIPBind := cfg.RequireIPBindResolved()
+	gateway, err := auth.New(store, ca, sCert, sKey, requireIPBind)
 	if err != nil {
 		log.Fatalf("auth: %v", err)
 	}
 
 	// 后端路由 (用途 → 后端地址)
 	backends := []proxy.Backend{}
-	for purpose, target := range cfg.Backends {
-		backends = append(backends, proxy.Backend{Purpose: purpose, Target: target})
+	for purpose, bc := range cfg.Backends {
+		backends = append(backends, proxy.Backend{Purpose: purpose, Target: bc.Target})
 	}
 	router := proxy.NewRouter(backends)
 	log.Printf("routes: %v", router.Purposes())
@@ -89,18 +88,27 @@ func main() {
 		log.Fatalf("manager: %v", err)
 	}
 
-	// ===== 网关主服务 (TCP mTLS): 认证 + 路由 =====
-	go func() {
-		ln, err := net.Listen("tcp", gwListen)
-		if err != nil {
-			log.Fatalf("listen %s: %v", gwListen, err)
+	// ===== 网关主服务 (TCP mTLS): 每个用途一个端口 =====
+	// 每个 backend 配置了 listen 就单独开一个端口, 该端口只服务对应用途
+	// (证书 Purposes 必须包含该用途才能通过, 否则 403)
+	for purpose, bc := range cfg.Backends {
+		bc := bc
+		purpose := purpose
+		if bc.Listen == "" {
+			continue // 未配 listen 的用途不开独立端口
 		}
-		log.Printf("mtls gateway listening on %s (mTLS)", gwListen)
-		srv := &http.Server{Handler: gatewayHandler(gateway, router, mgr)}
-		if err := srv.Serve(tlsListener(ln, gateway.ServerTLSConfig())); err != nil {
-			log.Fatalf("gateway serve: %v", err)
-		}
-	}()
+		go func() {
+			ln, err := net.Listen("tcp", bc.Listen)
+			if err != nil {
+				log.Fatalf("listen %s (purpose=%s): %v", bc.Listen, purpose, err)
+			}
+			log.Printf("mtls gateway [%s] listening on %s (mTLS)", purpose, bc.Listen)
+			srv := &http.Server{Handler: gatewayHandler(gateway, router, mgr, purpose)}
+			if err := srv.Serve(tlsListener(ln, gateway.ServerTLSConfig())); err != nil {
+				log.Fatalf("gateway [%s] serve: %v", purpose, err)
+			}
+		}()
+	}
 
 	// ===== Unix socket 管理通道 (本机直接 admin) =====
 	go func() {
@@ -127,60 +135,60 @@ func main() {
 	select {}
 }
 
-// gatewayHandler 网关主 handler: 认证 → 按用途路由
-func gatewayHandler(gw *auth.Gateway, router *proxy.Router, mgr *api.Manager) http.Handler {
+// gatewayHandler 网关主 handler: 认证 → 校验端口用途权限 → 路由
+// portPurpose: 本监听端口的用途 (如 "dsh"); 证书 Purposes 必须包含它
+func gatewayHandler(gw *auth.Gateway, router *proxy.Router, mgr *api.Manager, portPurpose string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// 1. 认证 + 授权 (IP 预检 + 内存表)
-		purpose, err := gw.Authorize(r)
+		// 1. 认证 + 授权 (IP 预检 + 内存表) → 证书身份记录
+		rec, err := gw.Authorize(r)
 		if err != nil {
 			auth.AuthLog("", auth.RemoteIP(r), "", false)
 			http.Error(w, "forbidden: "+err.Error(), http.StatusForbidden)
 			return
 		}
 		remote := auth.RemoteIP(r)
-		serial := ""
-		if len(r.TLS.PeerCertificates) > 0 {
-			serial = r.TLS.PeerCertificates[0].SerialNumber.String()
-		}
+		serial := rec.Serial
 
 		// 2. 管理路径 (需要 admin 用途) — 用 /admin/ 前缀, /api/ 留给后端业务
 		if strings.HasPrefix(r.URL.Path, "/admin/") {
-			if !auth.IsAdminPurpose(purpose) {
-				auth.AuthLog(purpose, remote, serial, false)
+			if !rec.HasPurpose(auth.PurposeAdmin) {
+				auth.AuthLog("admin", remote, serial, false)
 				http.Error(w, "admin required", http.StatusForbidden)
 				return
 			}
-			auth.AuthLog(purpose, remote, serial, true)
-			r.Header.Set("X-Auth-Purpose", purpose)
+			auth.AuthLog("admin", remote, serial, true)
+			r.Header.Set("X-Auth-Purpose", auth.PurposeAdmin)
 			mgr.HTTPHandler().ServeHTTP(w, r)
 			return
 		}
 
-		// 3. 普通服务: 按用途路由
-		if !router.HasPurpose(purpose) {
-			auth.AuthLog(purpose, remote, serial, false)
-			http.Error(w, "no backend for purpose: "+purpose, http.StatusNotFound)
+		// 3. 端口用途校验: 证书必须有本端口的用途权限
+		if !rec.HasPurpose(portPurpose) {
+			auth.AuthLog(portPurpose, remote, serial, false)
+			http.Error(w, "no access to purpose: "+portPurpose, http.StatusForbidden)
 			return
 		}
-		auth.AuthLog(purpose, remote, serial, true)
+
+		// 4. 路由到本端口对应的后端
+		auth.AuthLog(portPurpose, remote, serial, true)
 		proxy.SanitizeHeader(r)
-		router.Handler(purpose).ServeHTTP(w, r)
+		router.Handler(portPurpose).ServeHTTP(w, r)
 	})
 }
 
 // adminHandler 管理 TCP handler: 认证 + 只允许 admin 用途
 func adminHandler(gw *auth.Gateway, mgr *api.Manager) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		purpose, err := gw.Authorize(r)
+		rec, err := gw.Authorize(r)
 		if err != nil {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
-		if !auth.IsAdminPurpose(purpose) {
+		if !rec.HasPurpose(auth.PurposeAdmin) {
 			http.Error(w, "admin cert required", http.StatusForbidden)
 			return
 		}
-		r.Header.Set("X-Auth-Purpose", purpose)
+		r.Header.Set("X-Auth-Purpose", auth.PurposeAdmin)
 		mgr.HTTPHandler().ServeHTTP(w, r)
 	})
 }
@@ -209,11 +217,26 @@ type Config struct {
 	ServerKey   string            `json:"server_key"`
 	CertDir     string            `json:"cert_dir"`
 	SockPath    string            `json:"sock_path"`
-	Org         string            `json:"org"`          // 证书 O 字段 (默认 "mtls-gw")
-	OU          string            `json:"ou"`           // 证书 OU 字段 (默认 "device")
-	DefaultDays int               `json:"default_days"` // 默认有效期天数 (默认 365)
-	AdminDays   int               `json:"admin_days"`   // admin 用途默认天数 (默认 30)
-	Backends    map[string]string `json:"backends"`     // purpose → target
+	Org          string            `json:"org"`             // 证书 O 字段 (默认 "mtls-gw")
+	OU           string            `json:"ou"`              // 证书 OU 字段 (默认 "device")
+	DefaultDays  int               `json:"default_days"`    // 默认有效期天数 (默认 365)
+	AdminDays    int               `json:"admin_days"`      // admin 用途默认天数 (默认 30)
+	RequireIPBind *bool            `json:"require_ip_bind"` // IP 绑定 (nil=默认 true; false=允许不绑 IP 证书)
+	Backends     map[string]BackendCfg `json:"backends"`    // purpose → 后端配置
+}
+
+// BackendCfg 一个后端的配置
+type BackendCfg struct {
+	Target string `json:"target"` // 后端地址 http://127.0.0.1:3080
+	Listen string `json:"listen"` // 该用途的独立监听地址 (如 "0.0.0.0:9443"); 空=不单独开端口
+}
+
+// RequireIPBindResolved 返回实际 IP 绑定要求 (默认 true)
+func (c *Config) RequireIPBindResolved() bool {
+	if c.RequireIPBind == nil {
+		return true
+	}
+	return *c.RequireIPBind
 }
 
 // DefaultConfig 返回默认配置
@@ -230,7 +253,7 @@ func DefaultConfig() Config {
 		OU:          "device",
 		DefaultDays: 365,
 		AdminDays:   30,
-		Backends:    map[string]string{},
+		Backends:    map[string]BackendCfg{},
 	}
 }
 

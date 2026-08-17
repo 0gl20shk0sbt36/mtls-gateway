@@ -5,6 +5,7 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -12,16 +13,31 @@ import (
 )
 
 // CertRecord 一条证书的完整记录(内存表 + SQLite 行)
+// Purposes: 该身份可访问的应用列表 (admin, dsh, vaultwarden, ...)
+// SQLite 存逗号分隔字符串, 内存中为 []string
 type CertRecord struct {
-	Serial      string `json:"serial"`      // 证书序列号 (主键)
-	Name        string `json:"name"`        // 设备/证书名
-	Purpose     string `json:"purpose"`     // 用途: admin | dsh | vaultwarden | ...
-	TSIP        string `json:"ts_ip"`       // 绑定的 Tailscale IP (证书 SAN 也含此 IP)
-	Status      string `json:"status"`      // enabled | revoked
-	IssuedAt    string `json:"issued_at"`   // 签发时间
-	ExpiresAt   string `json:"expires_at"`  // 过期时间
-	Fingerprint string `json:"fingerprint"` // SHA-256 指纹
+	Serial      string   `json:"serial"`      // 证书序列号 (主键)
+	Name        string   `json:"name"`        // 设备/证书名
+	Purposes    []string `json:"purposes"`    // 可访问的用途列表 (身份→权限)
+	TSIP        string   `json:"ts_ip"`       // 绑定的 Tailscale IP (证书 SAN 也含此 IP)
+	Status      string   `json:"status"`      // enabled | revoked
+	IssuedAt    string   `json:"issued_at"`   // 签发时间
+	ExpiresAt   string   `json:"expires_at"`  // 过期时间
+	Fingerprint string   `json:"fingerprint"` // SHA-256 指纹
 }
+
+// HasPurpose 该身份是否有指定用途权限
+func (r *CertRecord) HasPurpose(p string) bool {
+	for _, x := range r.Purposes {
+		if x == p {
+			return true
+		}
+	}
+	return false
+}
+
+// purposesStr 内存 []string → SQLite 逗号分隔
+func (r *CertRecord) purposesStr() string { return strings.Join(r.Purposes, ",") }
 
 // Store 数据库 + 内存表
 type Store struct {
@@ -70,8 +86,12 @@ func (s *Store) load() error {
 	defer rows.Close()
 	for rows.Next() {
 		var r CertRecord
-		if err := rows.Scan(&r.Serial, &r.Name, &r.Purpose, &r.TSIP, &r.Status, &r.IssuedAt, &r.ExpiresAt, &r.Fingerprint); err != nil {
+		var purposes string
+		if err := rows.Scan(&r.Serial, &r.Name, &purposes, &r.TSIP, &r.Status, &r.IssuedAt, &r.ExpiresAt, &r.Fingerprint); err != nil {
 			return fmt.Errorf("scan: %w", err)
+		}
+		if purposes != "" {
+			r.Purposes = strings.Split(purposes, ",")
 		}
 		s.table[r.Serial] = r
 	}
@@ -112,7 +132,7 @@ func (s *Store) Upsert(r CertRecord) error {
 		ON CONFLICT(serial) DO UPDATE SET
 			name=excluded.name, purpose=excluded.purpose, ts_ip=excluded.ts_ip,
 			status=excluded.status, expires_at=excluded.expires_at, fingerprint=excluded.fingerprint`,
-		r.Serial, r.Name, r.Purpose, r.TSIP, r.Status, r.IssuedAt, r.ExpiresAt, r.Fingerprint)
+		r.Serial, r.Name, r.purposesStr(), r.TSIP, r.Status, r.IssuedAt, r.ExpiresAt, r.Fingerprint)
 	if err != nil {
 		return fmt.Errorf("upsert: %w", err)
 	}

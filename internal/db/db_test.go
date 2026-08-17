@@ -24,7 +24,7 @@ func TestOpenAndCRUD(t *testing.T) {
 	rec := CertRecord{
 		Serial:    "1001",
 		Name:      "test-device",
-		Purpose:   "dsh",
+		Purposes: []string{"dsh"},
 		TSIP:      "100.64.0.1",
 		Status:    "enabled",
 		ExpiresAt: "2027-01-01",
@@ -38,7 +38,7 @@ func TestOpenAndCRUD(t *testing.T) {
 	if !ok {
 		t.Fatal("get should find cert 1001")
 	}
-	if got.Name != "test-device" || got.Purpose != "dsh" {
+	if got.Name != "test-device" || !got.HasPurpose("dsh") {
 		t.Fatalf("unexpected record: %+v", got)
 	}
 
@@ -62,7 +62,7 @@ func TestRevoke(t *testing.T) {
 	}
 	defer s.Close()
 
-	rec := CertRecord{Serial: "2001", Name: "dev", Purpose: "app", TSIP: "100.64.0.2", Status: "enabled", ExpiresAt: "2027-01-01"}
+	rec := CertRecord{Serial: "2001", Name: "dev", Purposes: []string{"app"}, TSIP: "100.64.0.2", Status: "enabled", ExpiresAt: "2027-01-01"}
 	if err := s.Upsert(rec); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
@@ -91,8 +91,8 @@ func TestUpsertOverwrite(t *testing.T) {
 	}
 	defer s.Close()
 
-	rec1 := CertRecord{Serial: "3001", Name: "dev", Purpose: "app", TSIP: "100.64.0.3", Status: "enabled", ExpiresAt: "2027-01-01"}
-	rec2 := CertRecord{Serial: "3001", Name: "dev", Purpose: "admin", TSIP: "100.64.0.3", Status: "enabled", ExpiresAt: "2027-02-01"}
+	rec1 := CertRecord{Serial: "3001", Name: "dev", Purposes: []string{"app"}, TSIP: "100.64.0.3", Status: "enabled", ExpiresAt: "2027-01-01"}
+	rec2 := CertRecord{Serial: "3001", Name: "dev", Purposes: []string{"admin"}, TSIP: "100.64.0.3", Status: "enabled", ExpiresAt: "2027-02-01"}
 	if err := s.Upsert(rec1); err != nil {
 		t.Fatalf("upsert1: %v", err)
 	}
@@ -100,7 +100,7 @@ func TestUpsertOverwrite(t *testing.T) {
 		t.Fatalf("upsert2: %v", err)
 	}
 	got, _ := s.Get("3001")
-	if got.Purpose != "admin" || got.ExpiresAt != "2027-02-01" {
+	if !got.HasPurpose("admin") || got.ExpiresAt != "2027-02-01" {
 		t.Fatalf("overwrite failed: %+v", got)
 	}
 	// 不应重复

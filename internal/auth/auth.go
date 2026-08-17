@@ -19,9 +19,10 @@ import (
 
 // Gateway 认证器
 type Gateway struct {
-	store    *db.Store
-	caPool   *x509.CertPool
-	serverTLS *tls.Config
+	store         *db.Store
+	caPool        *x509.CertPool
+	serverTLS     *tls.Config
+	requireIPBind bool // 是否强制 IP 绑定 (默认 true; false = 允许不绑 IP 的证书)
 }
 
 // 用途常量
@@ -32,7 +33,8 @@ const (
 // New 创建认证器, 加载 CA 和服务器证书
 // caPath: 受信 CA 证书路径
 // serverCertPath/serverKeyPath: 网关自己的 TLS 证书
-func New(store *db.Store, caPath, serverCertPath, serverKeyPath string) (*Gateway, error) {
+// requireIPBind: true=强制证书 SAN IP 必须等于来源 IP (默认); false=跳过 IP 预检
+func New(store *db.Store, caPath, serverCertPath, serverKeyPath string, requireIPBind bool) (*Gateway, error) {
 	caPEM, err := os.ReadFile(caPath)
 	if err != nil {
 		return nil, fmt.Errorf("read ca: %w", err)
@@ -46,8 +48,9 @@ func New(store *db.Store, caPath, serverCertPath, serverKeyPath string) (*Gatewa
 		return nil, fmt.Errorf("load server cert: %w", err)
 	}
 	g := &Gateway{
-		store:  store,
-		caPool: pool,
+		store:         store,
+		caPool:        pool,
+		requireIPBind: requireIPBind,
 		serverTLS: &tls.Config{
 			Certificates: []tls.Certificate{cert},
 			ClientAuth:   tls.RequireAndVerifyClientCert,
@@ -83,11 +86,11 @@ func RemoteIP(r *http.Request) string {
 //  2. IP 预检: SAN IP == 来源 IP (不等立刻拒, 不碰数据库)
 //  3. 内存查表: 证书在册? 启用? → 返回用途
 //
-// 返回: purpose 授权结果, 或错误
-func (g *Gateway) Authorize(r *http.Request) (string, error) {
+// 返回: 证书身份记录 (含权限列表), 或错误
+func (g *Gateway) Authorize(r *http.Request) (*db.CertRecord, error) {
 	cert, err := certFromRequest(r)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	// 1. 取证书 SAN IP (绑定检查用)
@@ -98,27 +101,44 @@ func (g *Gateway) Authorize(r *http.Request) (string, error) {
 	}
 
 	// 2. IP 预检: 证书绑定的 IP 必须等于来源 IP (防私钥复制到别的设备)
+	//    仅当 requireIPBind=true (默认); false = 允许不绑 IP 的证书 (配置显式关闭)
 	remote := RemoteIP(r)
-	if sanIP != "" && sanIP != remote {
-		return "", fmt.Errorf("ip bind mismatch: cert=%s remote=%s", sanIP, remote)
+	if g.requireIPBind {
+		if sanIP != "" && sanIP != remote {
+			return nil, fmt.Errorf("ip bind mismatch: cert=%s remote=%s", sanIP, remote)
+		}
+		// 证书没绑 IP 时, 视为未绑定 → 拒绝 (除非关闭 IP 绑定要求)
+		if sanIP == "" {
+			return nil, fmt.Errorf("cert has no IP bind but require_ip_bind=true")
+		}
 	}
+	// requireIPBind=false: 跳过 IP 预检, 仅凭证书身份授权
 
 	// 3. 内存查表: 序列号 → 记录
 	serial := cert.SerialNumber.String()
 	rec, ok := g.store.Get(serial)
 	if !ok {
-		return "", fmt.Errorf("cert %s not registered", serial)
+		return nil, fmt.Errorf("cert %s not registered", serial)
 	}
 	if rec.Status != "enabled" {
-		return "", fmt.Errorf("cert %s status=%s", serial, rec.Status)
+		return nil, fmt.Errorf("cert %s status=%s", serial, rec.Status)
 	}
 	// 过期检查
 	if rec.ExpiresAt != "" && rec.ExpiresAt < timeNow() {
-		return "", fmt.Errorf("cert %s expired", serial)
+		return nil, fmt.Errorf("cert %s expired", serial)
 	}
 
-	// 4. 返回用途 (权限由数据库决定, 不读证书字段)
-	return rec.Purpose, nil
+	// 4. 返回证书身份记录 (权限列表由数据库决定, 不读证书字段)
+	return &rec, nil
+}
+
+// AuthorizePurposes 返回该证书可访问的用途列表 (等价于返回 rec.Purposes)
+func (g *Gateway) AuthorizePurposes(r *http.Request) ([]string, error) {
+	rec, err := g.Authorize(r)
+	if err != nil {
+		return nil, err
+	}
+	return rec.Purposes, nil
 }
 
 // IsAdminPurpose 判断用途是否 admin

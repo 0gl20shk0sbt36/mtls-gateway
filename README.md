@@ -1,5 +1,7 @@
 # mtls-gw — 通用 mTLS 网关
 
+> English version: [README.en.md](README.en.md)
+
 基于 mTLS 客户端证书的通用访问网关。为自建服务提供**设备级认证 + 按用途路由**的统一入口,
 不绑定任何特定应用——任何自建服务都可复用。
 

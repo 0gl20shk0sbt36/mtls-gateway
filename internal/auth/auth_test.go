@@ -70,11 +70,20 @@ func testGateway(t *testing.T, store *db.Store) (*Gateway, *x509.Certificate, *r
 	writePEM(t, serverCertPath, serverDER)
 	writeKeyPEM(t, serverKeyPath, serverKey)
 
-	gw, err := New(store, caPath, serverCertPath, serverKeyPath)
+	gw, err := New(store, caPath, serverCertPath, serverKeyPath, true)
 	if err != nil {
 		t.Fatalf("new gateway: %v", err)
 	}
 	return gw, caCert, caKey
+}
+
+// testGatewayNoBind 创建关闭 IP 绑定的 Gateway (测试 require_ip_bind=false)
+func testGatewayNoBind(t *testing.T, store *db.Store) (*Gateway, *x509.Certificate, *rsa.PrivateKey) {
+	t.Helper()
+	gw, ca, key := testGateway(t, store)
+	// 直接改 requireIPBind (测试内可见)
+	gw.requireIPBind = false
+	return gw, ca, key
 }
 
 func writePEM(t *testing.T, path string, der []byte) {
@@ -135,17 +144,17 @@ func TestAuthorizeOK(t *testing.T) {
 
 	cert := issueTestCert(t, ca, caKey, "dev-1", "100.64.0.10")
 	store.Upsert(db.CertRecord{
-		Serial: cert.SerialNumber.String(), Name: "dev-1", Purpose: "dsh",
+		Serial: cert.SerialNumber.String(), Name: "dev-1", Purposes: []string{"dsh"},
 		TSIP: "100.64.0.10", Status: "enabled", ExpiresAt: time.Now().AddDate(0, 0, 30).Format("2006-01-02"),
 	})
 
 	req := authRequest(cert, "100.64.0.10:12345")
-	purpose, err := gw.Authorize(req)
+	rec, err := gw.Authorize(req)
 	if err != nil {
 		t.Fatalf("authorize: %v", err)
 	}
-	if purpose != "dsh" {
-		t.Fatalf("expected purpose dsh, got %q", purpose)
+	if !rec.HasPurpose("dsh") {
+		t.Fatalf("expected purpose dsh, got %v", rec.Purposes)
 	}
 }
 
@@ -156,7 +165,7 @@ func TestAuthorizeIPMismatch(t *testing.T) {
 
 	cert := issueTestCert(t, ca, caKey, "dev-1", "100.64.0.10") // 证书绑 100.64.0.10
 	store.Upsert(db.CertRecord{
-		Serial: cert.SerialNumber.String(), Name: "dev-1", Purpose: "dsh",
+		Serial: cert.SerialNumber.String(), Name: "dev-1", Purposes: []string{"dsh"},
 		TSIP: "100.64.0.10", Status: "enabled", ExpiresAt: time.Now().AddDate(0, 0, 30).Format("2006-01-02"),
 	})
 
@@ -186,7 +195,7 @@ func TestAuthorizeRevoked(t *testing.T) {
 
 	cert := issueTestCert(t, ca, caKey, "dev-1", "100.64.0.10")
 	store.Upsert(db.CertRecord{
-		Serial: cert.SerialNumber.String(), Name: "dev-1", Purpose: "dsh",
+		Serial: cert.SerialNumber.String(), Name: "dev-1", Purposes: []string{"dsh"},
 		TSIP: "100.64.0.10", Status: "enabled", ExpiresAt: time.Now().AddDate(0, 0, 30).Format("2006-01-02"),
 	})
 	// 吊销
@@ -206,12 +215,69 @@ func TestAuthorizeExpired(t *testing.T) {
 	cert := issueTestCert(t, ca, caKey, "dev-1", "100.64.0.10")
 	// 数据库记录已过期
 	store.Upsert(db.CertRecord{
-		Serial: cert.SerialNumber.String(), Name: "dev-1", Purpose: "dsh",
+		Serial: cert.SerialNumber.String(), Name: "dev-1", Purposes: []string{"dsh"},
 		TSIP: "100.64.0.10", Status: "enabled", ExpiresAt: "2020-01-01",
 	})
 
 	req := authRequest(cert, "100.64.0.10:12345")
 	if _, err := gw.Authorize(req); err == nil {
 		t.Fatal("expected rejection for expired cert")
+	}
+}
+
+// TestAuthorizeNoIPBindRejected IP 绑定开启时, 无 IP 的证书被拒
+func TestAuthorizeNoIPBindRejected(t *testing.T) {
+	store := testStore(t)
+	gw, ca, caKey := testGateway(t, store) // requireIPBind=true (默认)
+
+	cert := issueTestCert(t, ca, caKey, "dev-nobind", "") // 不绑 IP
+	store.Upsert(db.CertRecord{
+		Serial: cert.SerialNumber.String(), Name: "dev-nobind", Purposes: []string{"dsh"},
+		TSIP: "", Status: "enabled", ExpiresAt: time.Now().AddDate(0, 0, 30).Format("2006-01-02"),
+	})
+
+	req := authRequest(cert, "100.64.0.10:12345")
+	if _, err := gw.Authorize(req); err == nil {
+		t.Fatal("expected rejection for no-IP cert when require_ip_bind=true")
+	}
+}
+
+// TestAuthorizeNoIPBindAllowed IP 绑定关闭时, 无 IP 的证书可通过
+func TestAuthorizeNoIPBindAllowed(t *testing.T) {
+	store := testStore(t)
+	gw, ca, caKey := testGatewayNoBind(t, store) // requireIPBind=false
+
+	cert := issueTestCert(t, ca, caKey, "dev-nobind", "") // 不绑 IP
+	store.Upsert(db.CertRecord{
+		Serial: cert.SerialNumber.String(), Name: "dev-nobind", Purposes: []string{"dsh"},
+		TSIP: "", Status: "enabled", ExpiresAt: time.Now().AddDate(0, 0, 30).Format("2006-01-02"),
+	})
+
+	// 任意来源 IP 都应通过 (不检查 IP)
+	req := authRequest(cert, "10.0.0.99:12345")
+	rec, err := gw.Authorize(req)
+	if err != nil {
+		t.Fatalf("expected allow when require_ip_bind=false: %v", err)
+	}
+	if !rec.HasPurpose("dsh") {
+		t.Fatalf("expected purpose dsh, got %v", rec.Purposes)
+	}
+}
+
+// TestAuthorizeIPMismatchAllowed IP 绑定关闭时, IP 不匹配也通过
+func TestAuthorizeIPMismatchAllowed(t *testing.T) {
+	store := testStore(t)
+	gw, ca, caKey := testGatewayNoBind(t, store) // requireIPBind=false
+
+	cert := issueTestCert(t, ca, caKey, "dev-1", "100.64.0.10") // 绑了 IP
+	store.Upsert(db.CertRecord{
+		Serial: cert.SerialNumber.String(), Name: "dev-1", Purposes: []string{"dsh"},
+		TSIP: "100.64.0.10", Status: "enabled", ExpiresAt: time.Now().AddDate(0, 0, 30).Format("2006-01-02"),
+	})
+
+	// 来源 IP 与证书 SAN 不同, 但关闭了绑定要求 → 应通过
+	req := authRequest(cert, "100.64.0.99:12345")
+	if _, err := gw.Authorize(req); err != nil {
+		t.Fatalf("expected allow when require_ip_bind=false: %v", err)
 	}
 }

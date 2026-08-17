@@ -117,32 +117,79 @@ func NewManager(store *db.Store, caCertPath, caKeyPath, certDir, sockPath string
 
 // IssueRequest 签发请求
 type IssueRequest struct {
-	Name     string `json:"name"`     // 设备名
-	Purpose  string `json:"purpose"`  // 用途: admin | dsh | ...
-	TSIP     string `json:"ts_ip"`    // 绑定 TS IP (写入 SAN)
-	Days     int    `json:"days"`     // 有效期天数 (默认 365)
-	Password string `json:"password"` // p12 密码 (默认自动生成)
+	Name     string   `json:"name"`     // 设备名
+	Purposes []string `json:"purposes"` // 可访问的用途列表: admin | dsh | vaultwarden | ...
+	TSIP     string   `json:"ts_ip"`    // 绑定 TS IP (写入 SAN)
+	Days     int      `json:"days"`     // 有效期天数 (默认 365)
+	Password string   `json:"password"` // p12 密码 (默认自动生成)
+}
+
+// normalizePurposes 规范化用途列表, 返回警告列表 (不终止)
+// admin 规则:
+//   - admin 在首位 + 有其他 → 警告, 仅保留 admin (剔除其他)
+//   - admin 在非首位 → 警告, 剔除 admin (保留其他)
+//   - 仅 admin → 无警告
+func (r *IssueRequest) normalizePurposes() (warnings []string) {
+	if len(r.Purposes) == 0 {
+		return nil
+	}
+	// 兼容旧请求: purposes 可能是逗号分隔字符串
+	if len(r.Purposes) == 1 && strings.Contains(r.Purposes[0], ",") {
+		parts := []string{}
+		for _, p := range strings.Split(r.Purposes[0], ",") {
+			if p = strings.TrimSpace(p); p != "" {
+				parts = append(parts, p)
+			}
+		}
+		r.Purposes = parts
+	}
+	// admin 规则
+	for i, p := range r.Purposes {
+		if p == "admin" {
+			if i == 0 {
+				// admin 在首位: 若还有其他, 剔除其他
+				if len(r.Purposes) > 1 {
+					warnings = append(warnings, "admin 与其他用途混用, 已忽略其他用途, 仅保留 admin")
+					r.Purposes = []string{"admin"}
+				}
+			} else {
+				// admin 不在首位: 剔除 admin, 保留其他
+				warnings = append(warnings, "admin 不在首位, 已剔除 admin, 保留其他用途")
+				others := []string{}
+				for _, x := range r.Purposes {
+					if x != "admin" {
+						others = append(others, x)
+					}
+				}
+				r.Purposes = others
+			}
+			return warnings
+		}
+	}
+	return warnings
 }
 
 // IssueResponse 签发结果
 type IssueResponse struct {
-	Serial      string `json:"serial"`
-	CertPEM     string `json:"cert_pem"`
-	KeyPEM      string `json:"key_pem"` // 仅本机返回; 生产建议只给 p12
-	P12Password string `json:"p12_password,omitempty"`
-	Expires     string `json:"expires"`
-	Fingerprint string `json:"fingerprint"`
+	Serial      string   `json:"serial"`
+	CertPEM     string   `json:"cert_pem"`
+	KeyPEM      string   `json:"key_pem"` // 仅本机返回; 生产建议只给 p12
+	P12Password string   `json:"p12_password,omitempty"`
+	Expires     string   `json:"expires"`
+	Fingerprint string   `json:"fingerprint"`
+	Warnings    []string `json:"warnings,omitempty"` // 规范化警告 (如 admin 混用)
 }
 
 // IssueCert 签发客户端证书并登记数据库
 // SAN: 绑定 TS IP (设备绑定); 不写用途字段 (权限在数据库)
 func (m *Manager) IssueCert(req IssueRequest) (*IssueResponse, error) {
-	if req.Name == "" || req.Purpose == "" {
-		return nil, fmt.Errorf("name and purpose required")
+	warnings := req.normalizePurposes()
+	if req.Name == "" || len(req.Purposes) == 0 {
+		return nil, fmt.Errorf("name and purposes required")
 	}
 	if req.Days <= 0 {
 		// 默认天数: admin 用途用 AdminDays, 其他用 DefaultDays
-		if req.Purpose == "admin" {
+		if req.Purposes[0] == "admin" {
 			req.Days = m.tmpl.AdminDays
 		} else {
 			req.Days = m.tmpl.DefaultDays
@@ -223,7 +270,7 @@ func (m *Manager) IssueCert(req IssueRequest) (*IssueResponse, error) {
 	rec := db.CertRecord{
 		Serial:      serial.String(),
 		Name:        req.Name,
-		Purpose:     req.Purpose,
+		Purposes:    req.Purposes,
 		TSIP:        req.TSIP,
 		Status:      "enabled",
 		IssuedAt:    notBefore.Format(time.RFC3339),
@@ -240,6 +287,7 @@ func (m *Manager) IssueCert(req IssueRequest) (*IssueResponse, error) {
 		P12Password: req.Password,
 		Expires:     rec.ExpiresAt,
 		Fingerprint: rec.Fingerprint,
+		Warnings:    warnings,
 	}, nil
 }
 
