@@ -1,0 +1,32 @@
+# 构建产物 (只忽略根目录二进制, 不误伤 cmd/ 目录)
+/mtls-gw
+/mtls-gw-cli
+*.exe
+*.test
+
+# 本地配置 (含个人路径/凭据)
+config.json
+*.json.local
+
+# 证书/私钥/密钥 (绝不提交)
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+certs/
+
+# 数据库
+*.db
+*.db-wal
+*.db-shm
+
+# 运行时
+*.sock
+/run/
+
+# 编辑器/系统
+.DS_Store
+*.swp
+.idea/
+.vscode/

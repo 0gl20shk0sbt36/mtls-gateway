@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    name: Test (${{ matrix.go }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        go: ["1.26", "1.25"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+          cache: true
+
+      - name: Build
+        run: |
+          go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -v -race -cover ./...
+
+      - name: Build binaries
+        run: |
+          go build -o /tmp/mtls-gw ./cmd/mtls-gw
+          go build -o /tmp/mtls-gw-cli ./cmd/mtls-gw-cli
+          file /tmp/mtls-gw /tmp/mtls-gw-cli
