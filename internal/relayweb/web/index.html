@@ -4,66 +4,161 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>mtls-relay 管理面板</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
-  :root { --fg:#1f2933; --muted:#6b7280; --line:#e5e7eb; --accent:#2563eb; --ok:#16a34a; --err:#dc2626; }
-  * { box-sizing:border-box; }
-  body { margin:0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color:var(--fg); background:#f9fafb; }
-  header { background:#111827; color:#fff; padding:14px 22px; display:flex; align-items:center; gap:12px; }
-  header h1 { font-size:16px; margin:0; font-weight:600; }
-  header .status-dot { width:10px; height:10px; border-radius:50%; background:#6b7280; }
-  header .status-dot.on { background:var(--ok); }
-  main { max-width:960px; margin:24px auto; padding:0 16px; }
-  .card { background:#fff; border:1px solid var(--line); border-radius:10px; padding:18px; margin-bottom:18px; }
-  .card h2 { font-size:14px; margin:0 0 14px; color:#374151; text-transform:uppercase; letter-spacing:.4px; }
-  .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:10px; }
-  label { font-size:13px; color:var(--muted); }
-  input, select, button { padding:8px 10px; border:1px solid var(--line); border-radius:6px; font-size:13px; }
-  input, select { background:#fff; }
-  button { cursor:pointer; background:var(--accent); color:#fff; border:none; font-weight:600; }
-  button.ghost { background:#fff; color:var(--fg); border:1px solid var(--line); }
-  button.danger { background:#fff; color:var(--err); border:1px solid var(--err); }
-  table { width:100%; border-collapse:collapse; font-size:13px; }
-  th, td { text-align:left; padding:8px; border-bottom:1px solid var(--line); }
-  th { color:var(--muted); font-weight:600; }
-  .mono { font-family: ui-monospace, "Cascadia Code", monospace; font-size:12px; }
-  .err { color:var(--err); }
-  .hint { color:var(--muted); font-size:12px; }
-  .toast { position:fixed; bottom:20px; right:20px; background:#111827; color:#fff; padding:10px 16px; border-radius:8px; font-size:13px; display:none; }
+  /* ===== Linear design tokens ===== */
+  :root{
+    --bg:#08090a; --panel:#0f1011; --surface:#191a1b; --surface2:#28282c;
+    --text:#f7f8f8; --text2:#d0d6e0; --text3:#8a8f98; --text4:#62666d;
+    --accent:#5e6ad2; --accent2:#7170ff; --accentHover:#828fff;
+    --ok:#27a644; --err:#f2555a;
+    --border:rgba(255,255,255,0.08); --border-subtle:rgba(255,255,255,0.05);
+    --btn-bg:rgba(255,255,255,0.03);
+    --r-micro:2px; --r-sm:4px; --r:6px; --r-card:8px; --r-panel:12px;
+    --shadow-focus:rgba(0,0,0,0.1) 0px 4px 12px;
+    --font:"Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono:"JetBrains Mono", ui-monospace, "Cascadia Code", Menlo, monospace;
+  }
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  html,body{ height:100%; }
+  body{
+    background:var(--bg); color:var(--text); font-family:var(--font);
+    font-feature-settings:"cv01","ss03"; font-size:14px; line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+  }
+  /* ===== Header ===== */
+  header{
+    position:sticky; top:0; z-index:10; display:flex; align-items:center; gap:12px;
+    padding:0 20px; height:48px; background:var(--panel);
+    border-bottom:1px solid var(--border-subtle);
+  }
+  header .brand{ font-size:14px; font-weight:590; letter-spacing:-0.2px; color:var(--text); display:flex; align-items:center; gap:10px; }
+  header .brand .logomark{ width:18px;height:18px;border-radius:5px;background:var(--accent); display:inline-flex;align-items:center;justify-content:center; color:#fff; font-size:10px; font-weight:600; flex:none; }
+  header .sub{ font-size:12px; color:var(--text3); }
+  header .dot{ width:8px;height:8px;border-radius:50%; background:var(--text4); transition:background .2s; }
+  header .dot.on{ background:var(--ok); box-shadow:0 0 0 3px rgba(39,166,68,.18); }
+  header .right{ margin-left:auto; display:flex; align-items:center; gap:10px; }
+  /* ===== Layout ===== */
+  main{ max-width:1080px; margin:0 auto; padding:28px 20px 64px; display:flex; flex-direction:column; gap:16px; }
+  .card{
+    background:rgba(255,255,255,0.02); border:1px solid var(--border);
+    border-radius:var(--r-panel); padding:18px 20px;
+  }
+  .card h2{
+    font-size:11px; font-weight:510; letter-spacing:.6px; text-transform:uppercase;
+    color:var(--text3); margin-bottom:14px;
+  }
+  /* ===== Rows / forms ===== */
+  .row{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+  .row + .row{ margin-top:10px; }
+  label{ font-size:12px; color:var(--text3); font-weight:510; }
+  input, select{
+    background:rgba(255,255,255,0.02); color:var(--text);
+    border:1px solid var(--border); border-radius:var(--r);
+    padding:8px 10px; font-size:13px; font-family:var(--font);
+  }
+  input:focus, select:focus{ outline:none; border-color:var(--accent2); box-shadow:var(--shadow-focus); }
+  html{ color-scheme: dark; } /* 原生控件(滚动条等)走暗色 */
+  /* ===== 自绘下拉(替代原生 select, 全浏览器暗色可控) ===== */
+  .sel{ position:relative; }
+  .sel .sel-btn{ width:100%; display:flex; justify-content:space-between; align-items:center;
+    background:rgba(255,255,255,0.02); color:var(--text); border:1px solid var(--border);
+    border-radius:var(--r); padding:8px 10px; font-size:13px; font-family:var(--font); cursor:pointer; text-align:left; }
+  .sel .sel-btn .arrow{ color:var(--text3); margin-left:8px; flex:none; }
+  .sel .sel-list{ position:absolute; top:calc(100% + 4px); left:0; right:0; z-index:40;
+    background:var(--surface); border:1px solid var(--border); border-radius:var(--r);
+    box-shadow:0 10px 30px rgba(0,0,0,.45); max-height:230px; overflow:auto; display:none; }
+  .sel.open .sel-list{ display:block; }
+  .sel .sel-list .opt{ padding:8px 10px; font-size:13px; color:var(--text); cursor:pointer; }
+  .sel .sel-list .opt:hover{ background:rgba(255,255,255,0.06); }
+  .sel .sel-list .opt.sel{ color:var(--accent); }
+  .sel input[type=hidden]{ display:none; }
+  /* ===== Buttons ===== */
+  button{
+    font-family:var(--font); font-size:13px; font-weight:510; cursor:pointer;
+    border-radius:var(--r); padding:8px 14px; border:1px solid var(--border);
+    background:var(--btn-bg); color:var(--text); transition:background .15s, border-color .15s, color .15s;
+  }
+  button:hover{ background:rgba(255,255,255,0.06); border-color:rgba(255,255,255,0.14); }
+  button.primary{ background:var(--accent); border-color:transparent; color:#fff; }
+  button.primary:hover{ background:var(--accentHover); }
+  button.ghost{ background:transparent; border-color:var(--border); color:var(--text2); }
+  button.danger{ background:transparent; color:var(--err); border-color:rgba(242,85,90,.4); }
+  button.danger:hover{ background:rgba(242,85,90,.12); border-color:var(--err); }
+  button.small{ padding:5px 9px; font-size:12px; border-radius:var(--r-sm); }
+  /* ===== Table ===== */
+  table{ width:100%; border-collapse:collapse; font-size:12.5px; }
+  th, td{ text-align:left; padding:9px 8px; border-bottom:1px solid var(--border-subtle); }
+  th{ color:var(--text3); font-weight:510; font-size:11px; text-transform:uppercase; letter-spacing:.4px; }
+  td{ color:var(--text2); }
+  tbody tr:hover{ background:rgba(255,255,255,0.02); }
+  .mono{ font-family:var(--mono); font-size:12px; color:var(--text); }
+  .muted{ color:var(--text3); }
+  .err{ color:var(--err); }
+  .hint{ color:var(--text3); font-size:12px; }
+  .pill{ display:inline-flex; align-items:center; gap:6px; padding:2px 10px 2px 6px; border-radius:9999px; border:1px solid var(--border); font-size:12px; font-weight:510; color:var(--text2); }
+  .pill .pdot{ width:6px;height:6px;border-radius:50%; }
+  .pill.up .pdot{ background:var(--ok); } .pill.up{ color:var(--text); }
+  .pill.down .pdot{ background:var(--text4); }
+  /* ===== Toast ===== */
+  .toast{
+    position:fixed; bottom:20px; right:20px; max-width:360px; z-index:20;
+    background:var(--surface); border:1px solid var(--border);
+    color:var(--text); padding:10px 16px; border-radius:var(--r-card);
+    font-size:13px; box-shadow:rgba(0,0,0,.4) 0px 4px 12px; display:none;
+  }
+  .toast.error{ border-color:rgba(242,85,90,.5); color:var(--err); }
+  @media (max-width:640px){ main{ padding:18px 14px 48px; } .card{ padding:16px; } }
 </style>
 </head>
 <body>
 <header>
-  <h1>mtls-relay 管理面板</h1>
-  <span id="daemonDot" class="status-dot"></span>
-  <span class="hint" style="color:#9ca3af">客户端 mTLS 中继</span>
+  <div class="brand">
+    <span class="logomark">R</span>
+    mtls-relay
+  </div>
+  <span class="dot" id="daemonDot"></span>
+  <span class="sub">客户端 mTLS 中继</span>
+  <div class="right"><span class="pill down" id="overallPill"><span class="pdot"></span><span id="overallLabel">离线</span></span></div>
 </header>
 
 <main>
   <div class="card">
     <h2>证书</h2>
     <div class="row">
-      <label>选择证书 (来自系统/目录/文件)</label>
-      <select id="certSelect" style="flex:1"></select>
-      <button type="button" id="refreshCerts">刷新</button>
+      <label for="certSelect">选择证书（系统 / 目录 / 文件）</label>
+      <div class="sel" id="certSel" style="flex:1;min-width:220px">
+        <button type="button" class="sel-btn" id="certBtn"><span class="txt">— 选择证书 —</span><span class="arrow">▾</span></button>
+        <div class="sel-list" id="certList"></div>
+      </div>
+      <button type="button" class="ghost small" id="refreshCerts">刷新</button>
     </div>
-    <div class="hint" id="certHint"></div>
+    <div class="hint" id="certHint" style="margin-top:10px"></div>
   </div>
 
   <div class="card">
     <h2>新增隧道</h2>
     <div class="row">
-      <input id="newLocal" type="number" placeholder="本地端口" style="width:110px">
-      <input id="newRemote" placeholder="远端网关后端 host:port" style="flex:1">
-      <input id="newSNI" placeholder="TLS SNI (可选)" style="width:150px">
-      <input id="newPurpose" placeholder="用途 (可选)" style="width:110px">
-      <button type="button" id="addTunnel">添加</button>
+      <div class="sel" id="newServiceSel" style="flex:1;min-width:220px">
+        <button type="button" class="sel-btn" id="newServiceBtn"><span class="txt">— 选择服务 —</span><span class="arrow">▾</span></button>
+        <div class="sel-list" id="newServiceList"></div>
+      </div>
+      <button type="button" class="ghost small" id="refreshServices">刷新</button>
     </div>
+    <div class="row" style="margin-top:10px">
+      <input id="newLocal" type="number" placeholder="本地端口（默认同服务端）" style="width:200px">
+      <input id="newSNI" placeholder="TLS SNI（可选）" style="width:150px">
+      <button type="button" class="primary" id="addTunnel">添加</button>
+    </div>
+    <div class="hint" id="serviceHint"></div>
   </div>
 
   <div class="card">
     <h2>运行控制</h2>
     <div class="row">
-      <button type="button" id="btnStart">启动</button>
+      <button type="button" class="primary" id="btnStart">启动</button>
       <button type="button" class="ghost" id="btnReload">Reload</button>
       <button type="button" class="ghost" id="btnStop">停止</button>
     </div>
@@ -72,9 +167,10 @@
   <div class="card">
     <h2>隧道</h2>
     <table>
-      <thead><tr><th>ID</th><th>本地</th><th>远端</th><th>用途</th><th>连接</th><th>流入</th><th>流出</th><th>操作</th></tr></thead>
-      <tbody id="tunnelBody"><tr><td colspan="8" class="hint">(无)</td></tr></tbody>
+      <thead><tr><th>服务</th><th>本地监听</th><th>服务端入口</th><th>状态</th><th>连接</th><th>流入</th><th>流出</th><th>操作</th></tr></thead>
+      <tbody id="tunnelBody"><tr><td colspan="8" class="hint">（无）</td></tr></tbody>
     </table>
+    <div class="hint" style="margin-top:8px">本地监听 = 你的程序要连的地址（127.0.0.1:端口）；服务端入口 = 中继拨号到的服务端网关地址。连接/流入/流出为实时指标。</div>
   </div>
 </main>
 
