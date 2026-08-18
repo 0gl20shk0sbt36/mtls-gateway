@@ -172,6 +172,36 @@
     </table>
     <div class="hint" style="margin-top:8px">本地监听 = 你的程序要连的地址（127.0.0.1:端口）；服务端入口 = 中继拨号到的服务端网关地址。连接/流入/流出为实时指标。</div>
   </div>
+  <div class="card" style="margin-top:16px">
+    <h2 class="card-title">🔒 证书管理</h2>
+    <div id="adminLocked">
+      <p class="hint" style="margin:6px 0 10px">管理台需先用<b>管理员证书</b>验证解锁；该入口一直可用，但无 admin 证书无法解锁，且服务端对非 admin 也会 403。</p>
+      <div class="row">
+        <div class="sel" id="adminCertSel" style="flex:1;min-width:220px">
+          <button type="button" class="sel-btn" id="adminCertBtn"><span class="txt">— 选择 admin 证书 —</span><span class="arrow">▾</span></button>
+          <div class="sel-list" id="adminCertList"></div>
+        </div>
+        <button type="button" class="primary small" id="adminVerify">验证并解锁</button>
+      </div>
+    </div>
+    <div id="adminUnlocked" style="display:none;margin-top:12px">
+      <p class="hint" id="adminStatus" style="margin:0 0 10px"></p>
+      <div class="row"><input id="newName" placeholder="设备名 (如 dev-1)" style="flex:1"></div>
+      <div class="row" style="margin-top:8px">
+        <input id="newPurposes" placeholder="用途, 逗号分隔 (如 dsh,vaultwarden; 或 admin)" style="flex:1.4">
+        <input id="newTSIP" placeholder="TS IP (可选)" style="flex:1">
+      </div>
+      <div class="row" style="margin-top:8px">
+        <input id="newCertPwd" type="password" placeholder="p12 密码 (可选, 留空自动生成)" style="flex:1.4">
+        <button type="button" class="primary small" id="adminIssue">签发</button>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <input id="revokeSerial" placeholder="要吊销的证书序列号" style="flex:1.4">
+        <button type="button" class="ghost small danger" id="adminRevoke">吊销</button>
+      </div>
+      <div class="hint" id="adminResult" style="margin-top:8px;white-space:pre-wrap"></div>
+    </div>
+  </div>
 </main>
 
 <div class="toast" id="toast"></div>
