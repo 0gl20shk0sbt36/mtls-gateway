@@ -37,6 +37,7 @@ type Tunnel struct {
 // RelayConfig 持久化配置: 允许多条隧道, 证书可复用
 type RelayConfig struct {
 	ServerAddr   string   `json:"server_addr,omitempty"` // 服务端 /info 发现端点, 如 gw.example:9499
+	AdminAddr    string   `json:"admin_addr,omitempty"`  // 服务端 admin 端点, 如 gw.example:9444 (证书管理)
 	ListenHost   string   `json:"listen_host"`           // 本地监听地址, 默认 127.0.0.1
 	ServerCAFile string   `json:"server_ca,omitempty"`   // 网关 CA 文件路径 (验证网关服务器证书; 空=系统根)
 	Tunnels      []Tunnel `json:"tunnels"`

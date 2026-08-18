@@ -121,6 +121,49 @@ func (m *Manager) ListCerts() ([]certsource.IdentityMeta, error) { return m.rela
 // Services 从服务端 /info 拉取可用服务 (供外壳选择)
 func (m *Manager) Services() ([]ServiceInfo, error) { return m.relay.Discover() }
 
+// —— 服务端管理桥 (证书管理台用; 需 admin 证书) ——
+
+func (m *Manager) adminAddr() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.cfg.AdminAddr
+}
+
+// adminClientFor 按 certID 加载证书, 构建设往服务端 admin 端点的 mTLS 客户端
+func (m *Manager) adminClientFor(certID string) (*AdminClient, error) {
+	addr := m.adminAddr()
+	if addr == "" {
+		return nil, fmt.Errorf("admin_addr not set in relay config")
+	}
+	cert, err := m.relay.loadCert(certID)
+	if err != nil {
+		return nil, err
+	}
+	return NewAdminClient(addr, cert, m.relay.rootCAs), nil
+}
+
+func (m *Manager) AdminVerify(certID string) error {
+	ac, err := m.adminClientFor(certID)
+	if err != nil {
+		return err
+	}
+	return ac.Verify()
+}
+func (m *Manager) AdminIssue(certID string, req IssueRequest) (*IssueResponse, error) {
+	ac, err := m.adminClientFor(certID)
+	if err != nil {
+		return nil, err
+	}
+	return ac.Issue(req)
+}
+func (m *Manager) AdminRevoke(certID string, serial string) error {
+	ac, err := m.adminClientFor(certID)
+	if err != nil {
+		return err
+	}
+	return ac.Revoke(serial)
+}
+
 // BuildServiceTunnel 依据服务端规则生成一条隧道。
 // RemoteAddr = 服务端host:服务入口端口; 本地端口默认与服务端入口一致, 传 localPort>0 可覆盖。
 func (m *Manager) BuildServiceTunnel(svc ServiceInfo, localPort int, certID, serverName string) (Tunnel, error) {
@@ -181,6 +224,45 @@ func (m *Manager) Handler() http.Handler {
 			return
 		}
 		writeJSON(w, svcs)
+	})
+
+	// —— 管理桥 (证书管理台; 先选 admin 证书验证解锁) ——
+	type adminVerifyReq struct{ CertID string `json:"cert_id"` }
+	type adminIssueReq struct {
+		CertID string `json:"cert_id"`
+		IssueRequest
+	}
+	type adminRevokeReq struct {
+		CertID string `json:"cert_id"`
+		Serial string `json:"serial"`
+	}
+	mux.HandleFunc("POST /api/admin/verify", func(w http.ResponseWriter, r *http.Request) {
+		var b adminVerifyReq
+		json.NewDecoder(r.Body).Decode(&b)
+		if err := m.AdminVerify(b.CertID); err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true})
+	})
+	mux.HandleFunc("POST /api/admin/issue", func(w http.ResponseWriter, r *http.Request) {
+		var b adminIssueReq
+		json.NewDecoder(r.Body).Decode(&b)
+		resp, err := m.AdminIssue(b.CertID, b.IssueRequest)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, resp)
+	})
+	mux.HandleFunc("POST /api/admin/revoke", func(w http.ResponseWriter, r *http.Request) {
+		var b adminRevokeReq
+		json.NewDecoder(r.Body).Decode(&b)
+		if err := m.AdminRevoke(b.CertID, b.Serial); err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true})
 	})
 
 	mux.HandleFunc("GET /api/config", func(w http.ResponseWriter, r *http.Request) {
