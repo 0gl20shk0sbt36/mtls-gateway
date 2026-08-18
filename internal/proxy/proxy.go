@@ -189,11 +189,27 @@ func (r *Router) Serve(rt *route, w http.ResponseWriter, req *http.Request) {
 	rt.rp.ServeHTTP(w, rc)
 }
 
+// substitute 前缀替换: 剥掉命中入口前缀, 换成目标前缀 (nginx proxy_pass 语义, 斜杠去重)
 func substitute(p, inPath, outPath string) string {
+	rest := p
 	if inPath != "" {
-		p = strings.TrimPrefix(p, inPath)
+		rest = strings.TrimPrefix(p, inPath)
 	}
-	return outPath + p
+	if outPath == "" {
+		outPath = "/"
+	}
+	return joinURLPath(outPath, rest)
+}
+
+// joinURLPath 拼接两个路径段, 去除多余斜杠
+func joinURLPath(base, tail string) string {
+	base = strings.TrimSuffix(base, "/")
+	tail = strings.TrimPrefix(tail, "/")
+	r := base + "/" + tail
+	if r == "" || r == "/" {
+		return "/"
+	}
+	return r
 }
 
 // newReverseProxy Host/Origin 改写为后端 loopback (信任围栏放行); 路径替换由 Serve 负责
