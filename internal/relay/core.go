@@ -27,7 +27,7 @@ type Relay struct {
 
 	ctx       context.Context
 	cancel    context.CancelFunc
-	runCtx    context.Context        // 当前运行周期上下文 (Start 时重建)
+	runCtx    context.Context // 当前运行周期上下文 (Start 时重建)
 	runCancel context.CancelFunc
 	tunnels   map[string]*tunnelRuntime // tunnel ID -> runtime
 	started   bool

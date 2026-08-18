@@ -128,6 +128,7 @@ func (rt *tunnelRuntime) snapshot() TunnelStatus {
 		RemoteAddr:  rt.tunnel.RemoteAddr,
 		Purpose:     rt.tunnel.Purpose,
 		CertID:      rt.tunnel.CertID,
+		Running:     true, // snapshot 只在运行中的 runtime 上调用
 		ActiveConns: atomic.LoadInt64(&rt.metrics.activeConns),
 		ConnsTotal:  atomic.LoadInt64(&rt.metrics.connsTotal),
 		BytesIn:     atomic.LoadInt64(&rt.metrics.bytesIn),
