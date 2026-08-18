@@ -3,135 +3,129 @@ package proxy
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
-// TestRouterRouting 用途路由: 请求按 purpose 分发到对应后端
-func TestRouterRouting(t *testing.T) {
-	// 两个后端: app-a 和 app-b
-	backendA := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("X-Backend", "A")
+func newEcho() *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Path", r.URL.Path)
+		w.Header().Set("X-Host", r.Host)
 		w.WriteHeader(200)
+		w.Write([]byte(r.URL.Path))
 	}))
-	defer backendA.Close()
-	backendB := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("X-Backend", "B")
-		w.WriteHeader(200)
-	}))
-	defer backendB.Close()
+}
 
-	router := NewRouter([]Backend{
-		{Purpose: "app-a", Target: backendA.URL},
-		{Purpose: "app-b", Target: backendB.URL},
+func TestLongestPrefixMatch(t *testing.T) {
+	a := newEcho(); defer a.Close()
+	b := newEcho(); defer b.Close()
+	r, err := NewRouter([]Mapping{
+		{Listen: ":9990/a", Target: a.URL, Services: []string{"svc-a"}},
+		{Listen: ":9990/a/b", Target: b.URL, Services: []string{"svc-b"}},
 	})
-
-	// app-a 用途 → 应到 A
-	req := httptest.NewRequest("GET", "http://gw.example/", nil)
-	rec := httptest.NewRecorder()
-	router.Handler("app-a").ServeHTTP(rec, req)
-	if rec.Header().Get("X-Backend") != "A" {
-		t.Fatalf("expected backend A, got %q", rec.Header().Get("X-Backend"))
+	if err != nil { t.Fatal(err) }
+	cases := []struct{ path, want string }{
+		{"/a/b/c", ":9990/a/b"},
+		{"/a/x", ":9990/a"},
+		{"/a/b", ":9990/a/b"},
+		{"/a", ":9990/a"},
 	}
+	for _, c := range cases {
+		m := r.Match("9990", c.path)
+		if m == nil || m.Listen() != c.want {
+			t.Errorf("Match(:9990 %q) = %v, want %s", c.path, m, c.want)
+		}
+	}
+}
 
-	// app-b 用途 → 应到 B
-	req2 := httptest.NewRequest("GET", "http://gw.example/", nil)
+func TestBoundaryNoFalseMatch(t *testing.T) {
+	a := newEcho(); defer a.Close()
+	r, _ := NewRouter([]Mapping{{Listen: ":9990/a", Target: a.URL, Services: nil}})
+	for _, p := range []string{"/ab", "/ax", "/a-b"} {
+		if m := r.Match("9990", p); m != nil {
+			t.Errorf("Match(%q) should be nil, got %v", p, m)
+		}
+	}
+}
+
+func TestWholePortFallbackAndServe(t *testing.T) {
+	back := newEcho(); defer back.Close()
+	r, _ := NewRouter([]Mapping{
+		{Listen: ":9991/a", Target: back.URL, Services: nil}, // 带前缀
+	})
+	// 整口兜底: 无路径映射
+	r2, _ := NewRouter([]Mapping{
+		{Listen: ":9992", Target: back.URL, Services: nil},
+	})
+	if m := r.Match("9991", "/b"); m != nil {
+		t.Errorf("no-path on :9991 should be nil (no whole), got %v", m)
+	}
+	_ = r2
+	if m := r2.Match("9992", "/anything"); m == nil || m.Listen() != ":9992" {
+		t.Errorf("whole-port fallback failed, got %v", m)
+	}
+}
+
+func TestPrefixSubstitution(t *testing.T) {
+	back := newEcho(); defer back.Close()
+	r, _ := NewRouter([]Mapping{
+		{Listen: ":9993/a", Target: back.URL, Services: nil},        // 剥 /a
+		{Listen: ":9994", Target: back.URL + "/x", Services: nil},  // 补 /x
+	})
+	// 剥
+	rec := httptest.NewRecorder()
+	r.Serve(r.Match("9993", "/a/hello"), rec, httptest.NewRequest("GET", "http://t/a/hello", nil))
+	if got := rec.Header().Get("X-Path"); got != "/hello" {
+		t.Errorf("strip: backend path = %q, want /hello", got)
+	}
+	// 补
 	rec2 := httptest.NewRecorder()
-	router.Handler("app-b").ServeHTTP(rec2, req2)
-	if rec2.Header().Get("X-Backend") != "B" {
-		t.Fatalf("expected backend B, got %q", rec2.Header().Get("X-Backend"))
+	r.Serve(r.Match("9994", "/p"), rec2, httptest.NewRequest("GET", "http://t/p", nil))
+	if got := rec2.Header().Get("X-Path"); got != "/x/p" {
+		t.Errorf("prepend: backend path = %q, want /x/p", got)
 	}
 }
 
-// TestRouterUnknownPurpose 未知用途 → 404
-func TestRouterUnknownPurpose(t *testing.T) {
-	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(200)
-	}))
-	defer backend.Close()
-
-	router := NewRouter([]Backend{{Purpose: "app-a", Target: backend.URL}})
-	req := httptest.NewRequest("GET", "http://gw.example/", nil)
-	rec := httptest.NewRecorder()
-	router.Handler("ghost").ServeHTTP(rec, req)
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("expected 404 for unknown purpose, got %d", rec.Code)
+func TestDuplicateListenError(t *testing.T) {
+	a := newEcho(); defer a.Close()
+	if _, err := NewRouter([]Mapping{
+		{Listen: ":9995/a", Target: a.URL},
+		{Listen: ":9995/a", Target: "http://127.0.0.1:9"},
+	}); err == nil {
+		t.Error("duplicate listen should error")
+	} else if !strings.Contains(err.Error(), "duplicate") {
+		t.Errorf("want duplicate error, got: %v", err)
+	}
+	// 同 target 不同 listen: 合法
+	if _, err := NewRouter([]Mapping{
+		{Listen: ":9995/a", Target: a.URL},
+		{Listen: ":9996/b", Target: a.URL},
+	}); err != nil {
+		t.Errorf("same target different listen should be ok, got %v", err)
 	}
 }
 
-// TestHostRewrite 反代改写 Host 头 (关键: 后端看到 loopback/目标地址)
-func TestHostRewrite(t *testing.T) {
-	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// 后端应看到改写后的 Host (目标地址), 而非原始 gw.example
-		w.Header().Set("X-Seen-Host", r.Host)
-		w.WriteHeader(200)
-	}))
-	defer backend.Close()
-
-	router := NewRouter([]Backend{{Purpose: "app-a", Target: backend.URL}})
-	req := httptest.NewRequest("GET", "http://gw.example:9443/", nil)
-	rec := httptest.NewRecorder()
-	router.Handler("app-a").ServeHTTP(rec, req)
-
-	seen := rec.Header().Get("X-Seen-Host")
-	if seen == "gw.example:9443" {
-		t.Fatalf("host was not rewritten: %q", seen)
-	}
-}
-
-// TestOriginRewrite 反代改写 Origin 头 (关键: 浏览器请求 403 的修复)
-func TestOriginRewrite(t *testing.T) {
-	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("X-Seen-Origin", r.Header.Get("Origin"))
-		w.WriteHeader(200)
-	}))
-	defer backend.Close()
-
-	router := NewRouter([]Backend{{Purpose: "app-a", Target: backend.URL}})
-	req := httptest.NewRequest("GET", "http://gw.example:9443/", nil)
-	req.Header.Set("Origin", "https://gw.example:9443")
-	rec := httptest.NewRecorder()
-	router.Handler("app-a").ServeHTTP(rec, req)
-
-	seen := rec.Header().Get("X-Seen-Origin")
-	if seen == "https://gw.example:9443" {
-		t.Fatalf("origin was not rewritten: %q", seen)
-	}
-	if seen == "" {
-		t.Fatal("origin should be rewritten to target, not empty")
-	}
-}
-
-// TestPurposes 列出用途
-func TestPurposes(t *testing.T) {
-	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	defer backend.Close()
-	router := NewRouter([]Backend{
-		{Purpose: "app-a", Target: backend.URL},
-		{Purpose: "admin", Target: backend.URL},
+func TestAllows(t *testing.T) {
+	a := newEcho(); defer a.Close()
+	r, _ := NewRouter([]Mapping{
+		{Listen: ":9997", Target: a.URL, Services: []string{"svc-a", "svc-b"}},
+		{Listen: ":9998", Target: a.URL, Services: []string{"any"}},
 	})
-	purposes := router.Purposes()
-	if len(purposes) != 2 {
-		t.Fatalf("expected 2 purposes, got %d", len(purposes))
-	}
-	if !router.HasPurpose("app-a") || !router.HasPurpose("admin") {
-		t.Fatal("HasPurpose should return true for configured purposes")
-	}
-	if router.HasPurpose("ghost") {
-		t.Fatal("HasPurpose should return false for unknown")
-	}
+	sa := r.Match("9997", "/")
+	if !sa.Allows([]string{"svc-b"}) { t.Error("svc-b should be allowed") }
+	if sa.Allows([]string{"svc-c"}) { t.Error("svc-c should be denied") }
+	an := r.Match("9998", "/")
+	if !an.Allows([]string{}) { t.Error("any should allow any (even empty)") }
 }
 
-// TestWebSocketUpgrade 检测 WebSocket 升级请求
-func TestWebSocketUpgrade(t *testing.T) {
-	req := httptest.NewRequest("GET", "http://gw.example/", nil)
-	req.Header.Set("Upgrade", "websocket")
-	req.Header.Set("Connection", "Upgrade")
-	if !IsWebSocketUpgrade(req) {
-		t.Fatal("should detect websocket upgrade")
-	}
-
-	req2 := httptest.NewRequest("GET", "http://gw.example/", nil)
-	if IsWebSocketUpgrade(req2) {
-		t.Fatal("should not detect websocket upgrade on normal request")
+func TestListens(t *testing.T) {
+	a := newEcho(); defer a.Close()
+	r, _ := NewRouter([]Mapping{
+		{Listen: ":9443", Target: a.URL},
+		{Listen: ":9445/admin", Target: a.URL},
+	})
+	got := r.Listens()
+	if len(got) != 2 || got[0] != "9443" || got[1] != "9445" {
+		t.Errorf("Listens = %v", got)
 	}
 }
