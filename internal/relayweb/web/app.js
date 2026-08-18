@@ -215,8 +215,9 @@ init();
 async function verifyAdmin() {
   const cert = getSel("adminCertList");
   if (!cert) { toast("请先选择 admin 证书", true); return; }
+  ADMIN_PWD = $("adminPwd").value || "";
   try {
-    await api("/api/admin/verify", jpost({ cert_id: cert }));
+    await api("/api/admin/verify", jpost({ cert_id: cert, load_pwd: ADMIN_PWD }));
     $("adminLocked").style.display = "none";
     $("adminUnlocked").style.display = "";
     $("adminStatus").textContent = "已解锁：admin 证书已验证，可签发/吊销。";
@@ -229,7 +230,7 @@ async function adminIssue() {
   const purps = $("newPurposes").value.split(/[,，\s]+/).filter(Boolean);
   if (!cert || !name || !purps.length) { toast("需选 admin 证书 + 填设备名 + 用途", true); return; }
   try {
-    const resp = await api("/api/admin/issue", jpost({ cert_id: cert, name, purposes: purps, ts_ip: $("newTSIP").value.trim(), password: $("newCertPwd").value }));
+    const resp = await api("/api/admin/issue", jpost({ cert_id: cert, load_pwd: ADMIN_PWD, name, purposes: purps, ts_ip: $("newTSIP").value.trim(), password: $("newCertPwd").value }));
     $("adminResult").textContent = `✔ 已签发：${resp.name}\n序列号: ${resp.serial}\np12 密码: ${resp.p12_password || "（无）"}`;
     toast("签发成功");
   } catch (e) { toast("签发失败: " + e.message, true); }
@@ -239,7 +240,7 @@ async function adminRevoke() {
   const serial = $("revokeSerial").value.trim();
   if (!cert || !serial) { toast("需选 admin 证书 + 填序列号", true); return; }
   try {
-    await api("/api/admin/revoke", jpost({ cert_id: cert, serial }));
+    await api("/api/admin/revoke", jpost({ cert_id: cert, load_pwd: ADMIN_PWD, serial }));
     $("adminResult").textContent = `✔ 已吊销序列号: ${serial}`;
     toast("已吊销");
   } catch (e) { toast("吊销失败: " + e.message, true); }

@@ -115,3 +115,28 @@ func (d *dirSource) Load(id string) (tls.Certificate, error) {
 	}
 	return loadFilePEMOrP12(full)
 }
+
+// LoadWithPassword 带密码加载 (加密私钥/p12)
+func (d *dirSource) LoadWithPassword(id, password string) (tls.Certificate, error) {
+	if strings.Contains(id, "..") || filepath.IsAbs(id) {
+		return tls.Certificate{}, fmt.Errorf("invalid cert id: %s", id)
+	}
+	full := filepath.Join(d.root, id)
+	st, err := os.Stat(full)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("cert %s not found: %w", id, err)
+	}
+	if st.IsDir() {
+		cert, err := os.ReadFile(filepath.Join(full, "cert.pem"))
+		if err != nil {
+			return tls.Certificate{}, err
+		}
+		key, err := os.ReadFile(filepath.Join(full, "key.pem"))
+		if err != nil {
+			return tls.Certificate{}, err
+		}
+		combined := append(append(append([]byte{}, cert...), '\n'), key...)
+		return tlsFromPEMWithPassword(id, combined, password)
+	}
+	return loadFilePEMOrP12Pwd(full, password)
+}

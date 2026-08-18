@@ -29,3 +29,8 @@ func (s *fileSource) List() ([]IdentityMeta, error) {
 func (s *fileSource) Load(id string) (tls.Certificate, error) {
 	return loadFilePEMOrP12(s.path)
 }
+
+// LoadWithPassword 带密码加载 (加密私钥/p12)
+func (s *fileSource) LoadWithPassword(id, password string) (tls.Certificate, error) {
+	return loadFilePEMOrP12Pwd(s.path, password)
+}

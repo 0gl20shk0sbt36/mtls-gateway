@@ -127,6 +127,55 @@ func p12DecodeCerts(data []byte) ([]*x509.Certificate, error) {
 	return append([]*x509.Certificate{cert}, caCerts...), nil
 }
 
+// tlsFromPEMWithPassword 从 PEM 构造证书; 若私钥被加密则用 password 解密重建。
+// 支持遗留 DEK-Info 加密 (RSA/EC PRIVATE KEY); PKCS#8 "ENCRYPTED PRIVATE KEY" 无标准库 → 提示用 .p12。
+func tlsFromPEMWithPassword(name string, pemBytes []byte, password string) (tls.Certificate, error) {
+	if c, err := tls.X509KeyPair(pemBytes, pemBytes); err == nil {
+		return c, nil // 未加密
+	}
+	if password == "" {
+		return tls.Certificate{}, fmt.Errorf("private key needs password: %s", name)
+	}
+	rest := pemBytes
+	var all []byte
+	for {
+		b, r := pem.Decode(rest)
+		if b == nil {
+			break
+		}
+		rest = r
+		if x509.IsEncryptedPEMBlock(b) {
+			der, err := x509.DecryptPEMBlock(b, []byte(password))
+			if err != nil {
+				return tls.Certificate{}, fmt.Errorf("decrypt key %s: %v", name, err)
+			}
+			b = &pem.Block{Type: b.Type, Bytes: der}
+		} else if b.Type == "ENCRYPTED PRIVATE KEY" {
+			return tls.Certificate{}, fmt.Errorf("pkcs#8 encrypted key unsupported, use .p12: %s", name)
+		}
+		all = append(all, pem.EncodeToMemory(b)...)
+	}
+	kc, err := tls.X509KeyPair(all, all)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("parse keypair %s: %w", name, err)
+	}
+	return kc, nil
+}
+
+// loadFilePEMOrP12Pwd 按扩展名加载 (pem/crt keypair 或 p12/pfx); 带密码支持
+func loadFilePEMOrP12Pwd(path, password string) (tls.Certificate, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("read %s: %w", path, err)
+	}
+	switch lowerExt(path) {
+	case ".p12", ".pfx":
+		return tlsFromP12(path, data, password)
+	default:
+		return tlsFromPEMWithPassword(path, data, password)
+	}
+}
+
 // loadFilePEMOrP12 按扩展名加载文件 (pem/crt=keypair; p12/pfx=需要密码)
 func loadFilePEMOrP12(path string) (tls.Certificate, error) {
 	data, err := os.ReadFile(path)

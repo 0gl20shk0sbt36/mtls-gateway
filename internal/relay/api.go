@@ -129,35 +129,35 @@ func (m *Manager) adminAddr() string {
 	return m.cfg.AdminAddr
 }
 
-// adminClientFor 按 certID 加载证书, 构建设往服务端 admin 端点的 mTLS 客户端
-func (m *Manager) adminClientFor(certID string) (*AdminClient, error) {
+// adminClientFor 用 certID 加载证书(可带密码), 构建设往服务端 admin 端点的客户端
+func (m *Manager) adminClientFor(certID, password string) (*AdminClient, error) {
 	addr := m.adminAddr()
 	if addr == "" {
 		return nil, fmt.Errorf("admin_addr not set in relay config")
 	}
-	cert, err := m.relay.loadCert(certID)
+	cert, err := m.relay.LoadCertWithPassword(certID, password)
 	if err != nil {
 		return nil, err
 	}
 	return NewAdminClient(addr, cert, m.relay.rootCAs), nil
 }
 
-func (m *Manager) AdminVerify(certID string) error {
-	ac, err := m.adminClientFor(certID)
+func (m *Manager) AdminVerify(certID, password string) error {
+	ac, err := m.adminClientFor(certID, password)
 	if err != nil {
 		return err
 	}
 	return ac.Verify()
 }
-func (m *Manager) AdminIssue(certID string, req IssueRequest) (*IssueResponse, error) {
-	ac, err := m.adminClientFor(certID)
+func (m *Manager) AdminIssue(certID, password string, req IssueRequest) (*IssueResponse, error) {
+	ac, err := m.adminClientFor(certID, password)
 	if err != nil {
 		return nil, err
 	}
 	return ac.Issue(req)
 }
-func (m *Manager) AdminRevoke(certID string, serial string) error {
-	ac, err := m.adminClientFor(certID)
+func (m *Manager) AdminRevoke(certID, password, serial string) error {
+	ac, err := m.adminClientFor(certID, password)
 	if err != nil {
 		return err
 	}
@@ -227,19 +227,24 @@ func (m *Manager) Handler() http.Handler {
 	})
 
 	// —— 管理桥 (证书管理台; 先选 admin 证书验证解锁) ——
-	type adminVerifyReq struct{ CertID string `json:"cert_id"` }
+	type adminVerifyReq struct {
+		CertID  string `json:"cert_id"`
+		LoadPwd string `json:"load_pwd,omitempty"` // 加载加密 admin 证书用
+	}
 	type adminIssueReq struct {
-		CertID string `json:"cert_id"`
+		CertID  string `json:"cert_id"`
+		LoadPwd string `json:"load_pwd,omitempty"` // 加载用; IssueRequest.Password=新证书 p12 密码
 		IssueRequest
 	}
 	type adminRevokeReq struct {
-		CertID string `json:"cert_id"`
-		Serial string `json:"serial"`
+		CertID  string `json:"cert_id"`
+		LoadPwd string `json:"load_pwd,omitempty"`
+		Serial  string `json:"serial"`
 	}
 	mux.HandleFunc("POST /api/admin/verify", func(w http.ResponseWriter, r *http.Request) {
 		var b adminVerifyReq
 		json.NewDecoder(r.Body).Decode(&b)
-		if err := m.AdminVerify(b.CertID); err != nil {
+		if err := m.AdminVerify(b.CertID, b.LoadPwd); err != nil {
 			writeErr(w, err)
 			return
 		}
@@ -248,7 +253,7 @@ func (m *Manager) Handler() http.Handler {
 	mux.HandleFunc("POST /api/admin/issue", func(w http.ResponseWriter, r *http.Request) {
 		var b adminIssueReq
 		json.NewDecoder(r.Body).Decode(&b)
-		resp, err := m.AdminIssue(b.CertID, b.IssueRequest)
+		resp, err := m.AdminIssue(b.CertID, b.LoadPwd, b.IssueRequest)
 		if err != nil {
 			writeErr(w, err)
 			return
@@ -258,7 +263,7 @@ func (m *Manager) Handler() http.Handler {
 	mux.HandleFunc("POST /api/admin/revoke", func(w http.ResponseWriter, r *http.Request) {
 		var b adminRevokeReq
 		json.NewDecoder(r.Body).Decode(&b)
-		if err := m.AdminRevoke(b.CertID, b.Serial); err != nil {
+		if err := m.AdminRevoke(b.CertID, b.LoadPwd, b.Serial); err != nil {
 			writeErr(w, err)
 			return
 		}

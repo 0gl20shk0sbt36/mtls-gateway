@@ -41,6 +41,11 @@ type Source interface {
 	Load(id string) (tls.Certificate, error)
 }
 
+// LoaderWithPassword 支持带密码加载的源 (加密私钥 / 需密码的 p12)
+type LoaderWithPassword interface {
+	LoadWithPassword(id, password string) (tls.Certificate, error)
+}
+
 // OpenSystem 打开"系统证书源" (跨平台分派):
 //   - Windows: 系统证书库 "My" 存储
 //   - Linux:   统一证书目录 (~/.mtls-gw/certs, /etc/mtls-gw/certs)

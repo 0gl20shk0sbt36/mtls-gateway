@@ -219,6 +219,17 @@ func (r *Relay) ListCertMeta() ([]certsource.IdentityMeta, error) {
 	return r.src.List()
 }
 
+// LoadCertWithPassword 加载证书; 若私钥被加密(需密码)则用 password 解锁。
+// 需要密码而 password 为空时, 报"needs password"错误, 由调用方(WebUI)弹出密码框再试。
+func (r *Relay) LoadCertWithPassword(certID, password string) (tls.Certificate, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if with, ok := r.src.(certsource.LoaderWithPassword); ok {
+		return with.LoadWithPassword(certID, password)
+	}
+	return r.loadCert(certID)
+}
+
 // SetServerAddr 设置服务端 /info 发现端点(供 Discover 在未 Start 时使用)。
 func (r *Relay) SetServerAddr(addr string) {
 	r.mu.Lock()
