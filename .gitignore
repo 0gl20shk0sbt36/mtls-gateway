@@ -12,6 +12,9 @@
 /.gocache/
 /.smoke/
 
+# 端到端验证临时目录 (含临时 CA 私钥/证书/二进制, 绝不提交)
+/.e2e/
+
 # 本地配置 (含个人路径/凭据)
 config.json
 *.json.local

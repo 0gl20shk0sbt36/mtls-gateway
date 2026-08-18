@@ -25,10 +25,12 @@ type Relay struct {
 	src        certsource.Source          // 证书来源 (由外层/daemon 注入)
 	certCache  map[string]tls.Certificate // source-CertID -> 证书 (复用)
 
-	ctx     context.Context
-	cancel  context.CancelFunc
-	tunnels map[string]*tunnelRuntime // tunnel ID -> runtime
-	started bool
+	ctx       context.Context
+	cancel    context.CancelFunc
+	runCtx    context.Context        // 当前运行周期上下文 (Start 时重建)
+	runCancel context.CancelFunc
+	tunnels   map[string]*tunnelRuntime // tunnel ID -> runtime
+	started   bool
 }
 
 // New 创建 Relay。cfg 可为空配置(后续通过管理 API 补隧道)。
@@ -112,6 +114,8 @@ func (r *Relay) Start(cfg RelayConfig) error {
 	if r.started {
 		return errAlreadyStarted
 	}
+	// 每个运行周期一个独立上下文: 使 stop 后再 start 仍可正常工作。
+	r.runCtx, r.runCancel = context.WithCancel(r.ctx)
 	r.listenHost = cfg.ListenHost
 	r.applyServerCA(cfg.ServerCAFile)
 	var runtimes []*tunnelRuntime
@@ -126,6 +130,10 @@ func (r *Relay) Start(cfg RelayConfig) error {
 				t2.stop()
 			}
 			r.tunnels = map[string]*tunnelRuntime{}
+			if r.runCancel != nil {
+				r.runCancel()
+				r.runCancel = nil
+			}
 			return err
 		}
 		runtimes = append(runtimes, rt)
@@ -170,7 +178,7 @@ func (r *Relay) Reload(cfg RelayConfig) error {
 	return nil
 }
 
-// Stop 停止所有隧道。
+// Stop 停止所有隧道 (暂停运行周期; 之后可再次 Start/Reload)。
 func (r *Relay) Stop() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -179,12 +187,17 @@ func (r *Relay) Stop() {
 	}
 	r.tunnels = map[string]*tunnelRuntime{}
 	r.started = false
-	r.cancel()
+	if r.runCancel != nil {
+		r.runCancel()
+		r.runCancel = nil
+		r.runCtx = nil
+	}
 }
 
-// Close 完全关闭(停隧道 + 取消上下文)。
+// Close 完全关闭(停隧道 + 取消根上下文, 之后不可再 Start)。
 func (r *Relay) Close() {
 	r.Stop()
+	r.cancel()
 }
 
 // Status 返回所有隧道状态快照。

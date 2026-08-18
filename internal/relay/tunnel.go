@@ -39,7 +39,7 @@ func (r *Relay) startTunnel(t Tunnel) (*tunnelRuntime, error) {
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithCancel(r.ctx)
+	ctx, cancel := context.WithCancel(r.runCtx)
 	rt := &tunnelRuntime{
 		r:        r,
 		tunnel:   t,

@@ -338,3 +338,58 @@ func TestRelay_StartTwice(t *testing.T) {
 		t.Fatalf("expected error on second Start")
 	}
 }
+
+// TestRelay_StopThenStart 回归测试: Stop 后再 Start 必须能再次正常转发。
+// 曾因 Stop 永久取消根上下文导致重启后所有上行 dial 立即 "operation was canceled"。
+func TestRelay_StopThenStart(t *testing.T) {
+	h := newHarness(t)
+	defer h.close()
+	src := h.buildSrc(t)
+
+	localPort := freePort(t)
+	r := New("", src)
+	defer r.Close()
+	cfg := RelayConfig{ListenHost: "127.0.0.1", ServerCAFile: h.caPath, Tunnels: []Tunnel{{
+		ID: "t1", LocalPort: localPort, RemoteAddr: h.gwAddr,
+		ServerName: "gw-server", CertID: h.clientPairPath, Enabled: true,
+	}}}
+
+	// 第 1 轮: 启动 → 转发 → 停止
+	if err := r.Start(cfg); err != nil {
+		t.Fatal(err)
+	}
+	echoThrough := func(t *testing.T, msg string) {
+		t.Helper()
+		conn, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", localPort))
+		if err != nil {
+			t.Fatalf("dial: %v", err)
+		}
+		defer conn.Close()
+		if _, err := conn.Write([]byte(msg)); err != nil {
+			t.Fatal(err)
+		}
+		buf := make([]byte, len(msg))
+		conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+		if _, err := io.ReadFull(conn, buf); err != nil {
+			t.Fatalf("read echo (round 0): %v", err)
+		}
+		if string(buf) != msg {
+			t.Fatalf("round 0 echo mismatch: got %q", buf)
+		}
+	}
+	echoThrough(t, "round-one")
+	r.Stop()
+
+	// 第 2 轮: 再次 Start → 必须能再次转发 (回归点)
+	if err := r.Start(cfg); err != nil {
+		t.Fatalf("restart after Stop failed: %v", err)
+	}
+	echoThrough(t, "round-two")
+
+	// 第 3 轮: 再次 Stop → 再 Start 仍应正常
+	r.Stop()
+	if err := r.Start(cfg); err != nil {
+		t.Fatalf("second restart after Stop failed: %v", err)
+	}
+	echoThrough(t, "round-three")
+}
