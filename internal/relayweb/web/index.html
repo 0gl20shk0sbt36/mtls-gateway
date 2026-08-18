@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mtls-relay 管理面板</title>
+<style>
+  :root { --fg:#1f2933; --muted:#6b7280; --line:#e5e7eb; --accent:#2563eb; --ok:#16a34a; --err:#dc2626; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color:var(--fg); background:#f9fafb; }
+  header { background:#111827; color:#fff; padding:14px 22px; display:flex; align-items:center; gap:12px; }
+  header h1 { font-size:16px; margin:0; font-weight:600; }
+  header .status-dot { width:10px; height:10px; border-radius:50%; background:#6b7280; }
+  header .status-dot.on { background:var(--ok); }
+  main { max-width:960px; margin:24px auto; padding:0 16px; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:10px; padding:18px; margin-bottom:18px; }
+  .card h2 { font-size:14px; margin:0 0 14px; color:#374151; text-transform:uppercase; letter-spacing:.4px; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:10px; }
+  label { font-size:13px; color:var(--muted); }
+  input, select, button { padding:8px 10px; border:1px solid var(--line); border-radius:6px; font-size:13px; }
+  input, select { background:#fff; }
+  button { cursor:pointer; background:var(--accent); color:#fff; border:none; font-weight:600; }
+  button.ghost { background:#fff; color:var(--fg); border:1px solid var(--line); }
+  button.danger { background:#fff; color:var(--err); border:1px solid var(--err); }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:left; padding:8px; border-bottom:1px solid var(--line); }
+  th { color:var(--muted); font-weight:600; }
+  .mono { font-family: ui-monospace, "Cascadia Code", monospace; font-size:12px; }
+  .err { color:var(--err); }
+  .hint { color:var(--muted); font-size:12px; }
+  .toast { position:fixed; bottom:20px; right:20px; background:#111827; color:#fff; padding:10px 16px; border-radius:8px; font-size:13px; display:none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>mtls-relay 管理面板</h1>
+  <span id="daemonDot" class="status-dot"></span>
+  <span class="hint" style="color:#9ca3af">客户端 mTLS 中继</span>
+</header>
+
+<main>
+  <div class="card">
+    <h2>证书</h2>
+    <div class="row">
+      <label>选择证书 (来自系统/目录/文件)</label>
+      <select id="certSelect" style="flex:1"></select>
+      <button type="button" id="refreshCerts">刷新</button>
+    </div>
+    <div class="hint" id="certHint"></div>
+  </div>
+
+  <div class="card">
+    <h2>新增隧道</h2>
+    <div class="row">
+      <input id="newLocal" type="number" placeholder="本地端口" style="width:110px">
+      <input id="newRemote" placeholder="远端网关后端 host:port" style="flex:1">
+      <input id="newSNI" placeholder="TLS SNI (可选)" style="width:150px">
+      <input id="newPurpose" placeholder="用途 (可选)" style="width:110px">
+      <button type="button" id="addTunnel">添加</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>运行控制</h2>
+    <div class="row">
+      <button type="button" id="btnStart">启动</button>
+      <button type="button" class="ghost" id="btnReload">Reload</button>
+      <button type="button" class="ghost" id="btnStop">停止</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>隧道</h2>
+    <table>
+      <thead><tr><th>ID</th><th>本地</th><th>远端</th><th>用途</th><th>连接</th><th>流入</th><th>流出</th><th>操作</th></tr></thead>
+      <tbody id="tunnelBody"><tr><td colspan="8" class="hint">(无)</td></tr></tbody>
+    </table>
+  </div>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

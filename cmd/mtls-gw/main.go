@@ -24,15 +24,15 @@ import (
 
 func main() {
 	var (
-		cfgPath       = flag.String("config", "/etc/mtls-gw/config.json", "配置文件路径")
-		dbPath        = flag.String("db", "/var/lib/mtls-gw/mtls-gw.db", "SQLite 数据库路径")
-		caPath        = flag.String("ca", "", "CA 证书路径 (覆盖 config)")
-		serverCert    = flag.String("server-cert", "", "网关 TLS 证书 (覆盖 config)")
-		serverKey     = flag.String("server-key", "", "网关 TLS 私钥 (覆盖 config)")
-		caKeyPath     = flag.String("ca-key", "", "CA 私钥 (签发用, 覆盖 config)")
-		certDir       = flag.String("cert-dir", "", "签发证书输出目录 (覆盖 config)")
-		sockPath      = flag.String("sock", "", "Unix socket 路径 (覆盖 config)")
-		adminListen   = flag.String("admin-listen", "", "管理 API TCP 监听 (覆盖 config)")
+		cfgPath     = flag.String("config", "/etc/mtls-gw/config.json", "配置文件路径")
+		dbPath      = flag.String("db", "/var/lib/mtls-gw/mtls-gw.db", "SQLite 数据库路径")
+		caPath      = flag.String("ca", "", "CA 证书路径 (覆盖 config)")
+		serverCert  = flag.String("server-cert", "", "网关 TLS 证书 (覆盖 config)")
+		serverKey   = flag.String("server-key", "", "网关 TLS 私钥 (覆盖 config)")
+		caKeyPath   = flag.String("ca-key", "", "CA 私钥 (签发用, 覆盖 config)")
+		certDir     = flag.String("cert-dir", "", "签发证书输出目录 (覆盖 config)")
+		sockPath    = flag.String("sock", "", "Unix socket 路径 (覆盖 config)")
+		adminListen = flag.String("admin-listen", "", "管理 API TCP 监听 (覆盖 config)")
 	)
 	flag.Parse()
 
@@ -196,20 +196,20 @@ func firstNonEmpty(vals ...string) string {
 
 // Config 配置文件结构
 type Config struct {
-	Listen      string            `json:"listen"`
-	AdminListen string            `json:"admin_listen"`
-	CA          string            `json:"ca"`
-	CAKey       string            `json:"ca_key"`
-	ServerCert  string            `json:"server_cert"`
-	ServerKey   string            `json:"server_key"`
-	CertDir     string            `json:"cert_dir"`
-	SockPath    string            `json:"sock_path"`
-	Org          string            `json:"org"`             // 证书 O 字段 (默认 "mtls-gw")
-	OU           string            `json:"ou"`              // 证书 OU 字段 (默认 "device")
-	DefaultDays  int               `json:"default_days"`    // 默认有效期天数 (默认 365)
-	AdminDays    int               `json:"admin_days"`      // admin 用途默认天数 (默认 30)
-	RequireIPBind *bool            `json:"require_ip_bind"` // IP 绑定 (nil=默认 true; false=允许不绑 IP 证书)
-	Backends     map[string]BackendCfg `json:"backends"`    // purpose → 后端配置
+	Listen        string                `json:"listen"`
+	AdminListen   string                `json:"admin_listen"`
+	CA            string                `json:"ca"`
+	CAKey         string                `json:"ca_key"`
+	ServerCert    string                `json:"server_cert"`
+	ServerKey     string                `json:"server_key"`
+	CertDir       string                `json:"cert_dir"`
+	SockPath      string                `json:"sock_path"`
+	Org           string                `json:"org"`             // 证书 O 字段 (默认 "mtls-gw")
+	OU            string                `json:"ou"`              // 证书 OU 字段 (默认 "device")
+	DefaultDays   int                   `json:"default_days"`    // 默认有效期天数 (默认 365)
+	AdminDays     int                   `json:"admin_days"`      // admin 用途默认天数 (默认 30)
+	RequireIPBind *bool                 `json:"require_ip_bind"` // IP 绑定 (nil=默认 true; false=允许不绑 IP 证书)
+	Backends      map[string]BackendCfg `json:"backends"`        // purpose → 后端配置
 }
 
 // BackendCfg 一个后端的配置

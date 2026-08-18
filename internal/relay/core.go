@@ -1,0 +1,211 @@
+package relay
+
+import (
+	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"log"
+	"net"
+	"os"
+	"sync"
+
+	"mtls-gateway/internal/certsource"
+)
+
+// Relay 客户端中继核心: 单实例, 同时服务多条隧道(端口)。
+// 持有一个证书来源(source), 各隧道通过 CertID 从该来源选证书;
+// 证书按 CertID 缓存, 多条隧道引用同一证书时复用一份 tls.Certificate。
+type Relay struct {
+	cfgPath string
+	mu      sync.Mutex
+
+	listenHost string                     // 当前配置的本地监听地址 (Start/Reload 更新)
+	serverCA   string                     // 网关 CA 文件路径 (验服务器证书; 空=系统根)
+	rootCAs    *x509.CertPool             // 由 serverCA 构建; nil=系统根
+	src        certsource.Source          // 证书来源 (由外层/daemon 注入)
+	certCache  map[string]tls.Certificate // source-CertID -> 证书 (复用)
+
+	ctx     context.Context
+	cancel  context.CancelFunc
+	tunnels map[string]*tunnelRuntime // tunnel ID -> runtime
+	started bool
+}
+
+// New 创建 Relay。cfg 可为空配置(后续通过管理 API 补隧道)。
+// src 为证书来源(不得为 nil)。
+func New(cfgPath string, src certsource.Source) *Relay {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &Relay{
+		cfgPath:   cfgPath,
+		src:       src,
+		certCache: make(map[string]tls.Certificate),
+		ctx:       ctx,
+		cancel:    cancel,
+		tunnels:   make(map[string]*tunnelRuntime),
+	}
+}
+
+// cfgListenHost 返回当前本地监听地址
+func (r *Relay) cfgListenHost() string {
+	if r.listenHost == "" {
+		return DefaultListenHost
+	}
+	return r.listenHost
+}
+
+// applyServerCA 设置网关 CA 并构建根池 (用于验证网关服务器证书)。
+// serverCA 为空 = 用系统根 (根池 nil)。
+func (r *Relay) applyServerCA(serverCA string) {
+	r.serverCA = serverCA
+	r.rootCAs = nil
+	if serverCA == "" {
+		return
+	}
+	pemBytes, err := os.ReadFile(serverCA)
+	if err != nil {
+		log.Printf("relay: read server_ca %s: %v (falling back to system roots)", serverCA, err)
+		return
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(pemBytes) {
+		log.Printf("relay: parse server_ca %s failed (falling back to system roots)", serverCA)
+		return
+	}
+	r.rootCAs = pool
+}
+
+// loadCert 从来源加载证书(CertID), 命中缓存则复用。
+func (r *Relay) loadCert(certID string) (tls.Certificate, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if c, ok := r.certCache[certID]; ok {
+		return c, nil
+	}
+	c, err := r.src.Load(certID)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	r.certCache[certID] = c
+	return c, nil
+}
+
+// relayDial 建立一条到给定隧道上游的 mTLS 连接。
+// 绑定在 tunnelRuntime 上由 tunnel.go 调用。
+func (r *Relay) relayDial(ctx context.Context, t Tunnel) (net.Conn, error) {
+	cert, err := r.loadCert(t.CertID)
+	if err != nil {
+		return nil, err
+	}
+	d := &Dialer{
+		ServerAddr: t.RemoteAddr,
+		ServerName: t.ServerName,
+		ClientCert: &cert,
+		RootCAs:    r.rootCAs,
+	}
+	return d.Dial(ctx)
+}
+
+// Start 监听并启动所有隧道。
+func (r *Relay) Start(cfg RelayConfig) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.started {
+		return errAlreadyStarted
+	}
+	r.listenHost = cfg.ListenHost
+	r.applyServerCA(cfg.ServerCAFile)
+	var runtimes []*tunnelRuntime
+	for _, t := range cfg.Tunnels {
+		if !t.Enabled {
+			continue
+		}
+		rt, err := r.startTunnel(t)
+		if err != nil {
+			// 回滚已启动的
+			for _, t2 := range runtimes {
+				t2.stop()
+			}
+			r.tunnels = map[string]*tunnelRuntime{}
+			return err
+		}
+		runtimes = append(runtimes, rt)
+		r.tunnels[t.ID] = rt
+	}
+	r.started = true
+	log.Printf("relay: started %d tunnel(s)", len(runtimes))
+	return nil
+}
+
+// Reload 增量应用隧道集变更: 新增/更新的隧道起监听, 已删的停止。
+// 不改动仍在运行且未变的隧道(不做断流热切换)。
+func (r *Relay) Reload(cfg RelayConfig) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.started {
+		return errNotStarted
+	}
+	r.listenHost = cfg.ListenHost
+	r.applyServerCA(cfg.ServerCAFile)
+	next := map[string]bool{}
+	for _, t := range cfg.Tunnels {
+		if !t.Enabled {
+			continue
+		}
+		next[t.ID] = true
+		if _, ok := r.tunnels[t.ID]; !ok {
+			rt, err := r.startTunnel(t)
+			if err != nil {
+				return err
+			}
+			r.tunnels[t.ID] = rt
+		}
+	}
+	// 停止已从配置移除的隧道
+	for id, rt := range r.tunnels {
+		if !next[id] {
+			rt.stop()
+			delete(r.tunnels, id)
+		}
+	}
+	return nil
+}
+
+// Stop 停止所有隧道。
+func (r *Relay) Stop() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, rt := range r.tunnels {
+		rt.stop()
+	}
+	r.tunnels = map[string]*tunnelRuntime{}
+	r.started = false
+	r.cancel()
+}
+
+// Close 完全关闭(停隧道 + 取消上下文)。
+func (r *Relay) Close() {
+	r.Stop()
+}
+
+// Status 返回所有隧道状态快照。
+func (r *Relay) Status() []TunnelStatus {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]TunnelStatus, 0, len(r.tunnels))
+	for _, rt := range r.tunnels {
+		out = append(out, rt.snapshot())
+	}
+	return out
+}
+
+// ListCertMeta 返回来源里可选的证书(供外壳/用户选择)。
+func (r *Relay) ListCertMeta() ([]certsource.IdentityMeta, error) {
+	return r.src.List()
+}
+
+var errAlreadyStarted = errString("relay already started")
+var errNotStarted = errString("relay not started")
+
+type errString string
+
+func (e errString) Error() string { return string(e) }

@@ -38,4 +38,27 @@ jobs:
         run: |
           go build -o /tmp/mtls-gw ./cmd/mtls-gw
           go build -o /tmp/mtls-gw-cli ./cmd/mtls-gw-cli
-          file /tmp/mtls-gw /tmp/mtls-gw-cli
+          go build -o /tmp/mtls-relay ./cmd/mtls-relay
+          go build -o /tmp/mtls-relay-cli ./cmd/mtls-relay-cli
+          file /tmp/mtls-gw /tmp/mtls-gw-cli /tmp/mtls-relay /tmp/mtls-relay-cli
+
+  windows-build:
+    name: Cross-compile (windows)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+      - name: Build windows (all cmd; includes Windows certstore)
+        env:
+          GOOS: windows
+          GOARCH: amd64
+        run: |
+          go build ./cmd/mtls-gw
+          go build ./cmd/mtls-gw-cli
+          go build ./cmd/mtls-relay
+          go build ./cmd/mtls-relay-cli

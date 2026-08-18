@@ -1,6 +1,7 @@
 // Package proxy 实现按用途(证书授权结果)路由到后端服务的反向代理。
 // 关键: 认证通过后把 Host/Origin 改写为后端的 loopback 地址,
-//       让后端(如 dsh)的信任围栏看到 loopback 而放行特权方法。
+//
+//	让后端(如 dsh)的信任围栏看到 loopback 而放行特权方法。
 package proxy
 
 import (

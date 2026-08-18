@@ -1,9 +1,10 @@
 // mtls-gw-cli — mtls-gw 管理 CLI (瘦客户端, 调 Unix socket API)
 // 用法:
-//   mtls-gw-cli issue <name> --purpose dsh --ts-ip 100.x.y.z [--days 365]
-//   mtls-gw-cli revoke <serial>
-//   mtls-gw-cli list
-//   mtls-gw-cli health
+//
+//	mtls-gw-cli issue <name> --purpose dsh --ts-ip 100.x.y.z [--days 365]
+//	mtls-gw-cli revoke <serial>
+//	mtls-gw-cli list
+//	mtls-gw-cli health
 package main
 
 import (

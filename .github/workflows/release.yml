@@ -36,7 +36,7 @@ jobs:
           go-version: '1.26'
           cache: true
 
-      - name: Build mtls-gw
+      - name: Build mtls-gw + mtls-relay
         env:
           GOOS: ${{ matrix.os }}
           GOARCH: ${{ matrix.arch }}
@@ -47,6 +47,10 @@ jobs:
             -o "dist/mtls-gw-${{ matrix.os }}-${{ matrix.arch }}$EXT" ./cmd/mtls-gw
           go build -trimpath -ldflags "-s -w -X main.version=${{ github.ref_name }}" \
             -o "dist/mtls-gw-cli-${{ matrix.os }}-${{ matrix.arch }}$EXT" ./cmd/mtls-gw-cli
+          go build -trimpath -ldflags "-s -w -X main.version=${{ github.ref_name }}" \
+            -o "dist/mtls-relay-${{ matrix.os }}-${{ matrix.arch }}$EXT" ./cmd/mtls-relay
+          go build -trimpath -ldflags "-s -w -X main.version=${{ github.ref_name }}" \
+            -o "dist/mtls-relay-cli-${{ matrix.os }}-${{ matrix.arch }}$EXT" ./cmd/mtls-relay-cli
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -69,7 +73,7 @@ jobs:
       - name: Generate checksums
         run: |
           cd dist
-          sha256sum mtls-gw-* mtls-gw-cli-* > SHA256SUMS.txt
+          sha256sum mtls-gw-* mtls-gw-cli-* mtls-relay-* mtls-relay-cli-* > SHA256SUMS.txt
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
@@ -84,6 +88,8 @@ jobs:
             ### Download
             - `mtls-gw-<os>-<arch>` — the gateway daemon
             - `mtls-gw-cli-<os>-<arch>` — management CLI
+            - `mtls-relay-<os>-<arch>` — client-side relay daemon (mTLS for non-mTLS programs)
+            - `mtls-relay-cli-<os>-<arch>` — client relay CLI
             - `SHA256SUMS.txt` — checksums
 
             See [README](https://github.com/0gl20shk0sbt36/mtls-gateway#readme) for setup.

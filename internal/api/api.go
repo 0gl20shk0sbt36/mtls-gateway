@@ -1,6 +1,7 @@
 // Package api 提供管理 API。
 // 双通道: Unix socket(本机 CLI, 文件权限控制 = 直接 admin)
-//          + TCP mTLS(远程 Web, 需 admin 用途证书)。
+//   - TCP mTLS(远程 Web, 需 admin 用途证书)。
+//
 // 管理操作全部走这里: 签发/吊销/列表/路由配置。
 package api
 
@@ -50,13 +51,13 @@ func (t *CertTemplate) ApplyDefaults() {
 
 // Manager 管理 API 服务
 type Manager struct {
-	store       *db.Store
-	caCert      *x509.Certificate
-	caKey       *rsa.PrivateKey
-	certDir     string // 已签发证书输出目录
-	sockPath    string // Unix socket 路径
-	adminOnly   bool   // TCP 通道是否要求 admin 用途
-	tmpl        CertTemplate // 证书模板 (可配置)
+	store     *db.Store
+	caCert    *x509.Certificate
+	caKey     *rsa.PrivateKey
+	certDir   string       // 已签发证书输出目录
+	sockPath  string       // Unix socket 路径
+	adminOnly bool         // TCP 通道是否要求 admin 用途
+	tmpl      CertTemplate // 证书模板 (可配置)
 }
 
 // orgName 返回证书 O 字段
@@ -220,8 +221,8 @@ func (m *Manager) IssueCert(req IssueRequest) (*IssueResponse, error) {
 	tmpl := &x509.Certificate{
 		SerialNumber: serial,
 		Subject: pkix.Name{
-			CommonName:   req.Name,
-			Organization: m.orgName(), // O 字段 (配置 org)
+			CommonName:         req.Name,
+			Organization:       m.orgName(),          // O 字段 (配置 org)
 			OrganizationalUnit: []string{m.ouName()}, // OU 字段 (配置 ou)
 		},
 		NotBefore:   notBefore,

@@ -1,8 +1,16 @@
 # 构建产物 (只忽略根目录二进制, 不误伤 cmd/ 目录)
 /mtls-gw
 /mtls-gw-cli
+/mtls-relay
+/mtls-relay-cli
+/goenv.sh
 *.exe
 *.test
+
+# Go 工作区辅助目录 (沙箱内可写 GOPATH/GOCACHE, 不入库)
+/.gopath/
+/.gocache/
+/.smoke/
 
 # 本地配置 (含个人路径/凭据)
 config.json

@@ -24,7 +24,7 @@ func TestOpenAndCRUD(t *testing.T) {
 	rec := CertRecord{
 		Serial:    "1001",
 		Name:      "test-device",
-		Purposes: []string{"dsh"},
+		Purposes:  []string{"dsh"},
 		TSIP:      "100.64.0.1",
 		Status:    "enabled",
 		ExpiresAt: "2027-01-01",

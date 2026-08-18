@@ -303,3 +303,61 @@ go test -cover ./...   # 覆盖率
 - 测试内自建临时 CA + 服务器证书, 不依赖部署环境
 - `TestAuthorizeIPMismatch` 验证私钥复制到别的设备会被拒 (IP 预检)
 - `TestHostRewrite` / `TestOriginRewrite` 验证反代头改写 (免改后端的关键)
+
+---
+
+## 9. 客户端中继 (mtls-relay)
+
+`mtls-relay` 是**客户端侧的中继层(客户端网关)**, 为**不支持 mTLS 的本地程序**提供到 `mtls-gw` 受保护服务的透明转发:
+
+```
+本地程序(不支持 mTLS) ──明文──► [mtls-relay 客户端 daemon] ──mTLS──► [mtls-gw 服务端] ──反代──► 后端服务
+                            (把明文送进 mTLS)              (把 mTLS 送进后端)
+```
+
+- **单实例 daemon**, 同时监听并转发所有配置的端口(隧道), 不是每端口一个进程。
+- **端口 ↔ 证书是隧道粒度绑定**: 每隧道 = 本地端口 + 远端(网关后端) + 绑一个证书; **一个证书可复用绑定多个端口**(同一 `CertID` 复用于多条隧道)。
+- 结构与服务端 mtls-gw 对称: **核心 daemon + 本地管理 API + 对等壳(CLI/WebUI/GUI)**。
+
+### 9.1 构成
+
+| 命令/包 | 说明 |
+|---------|------|
+| `cmd/mtls-relay` | 客户端 daemon: 加载配置, 起核心 + 本地管理 API + WebUI |
+| `cmd/mtls-relay-cli` | CLI 外壳: certs / tunnel / reload / start / stop / status / config |
+| `internal/relay` | 核心层(跨平台): 多隧道转发生命周期, mTLS 上行, 管理 API |
+| `internal/certsource` | 证书来源抽象: Windows 系统证书库 / Linux 统一目录 / 文件(pem/p12) |
+| `internal/relayweb` | WebUI 外壳: 本地单页面板(go:embed, 无 Node 构建) |
+| `internal/gui` | GUI 外壳(仅 Windows, 规划/最后实施) |
+
+### 9.2 使用
+
+```bash
+# 构建
+go build -o mtls-relay ./cmd/mtls-relay
+go build -o mtls-relay-cli ./cmd/mtls-relay-cli
+
+# 启动 daemon (默认证书来源=系统: Windows 个人库 / Linux ~/.mtls-gw/certs)
+./mtls-relay -config ~/.mtls-relay/config.json -listen-admin 127.0.0.1:18081
+
+# 用 CLI 选证书 + 加隧道
+mtls-relay-cli certs
+mtls-relay-cli tunnel add --id dsh --local 18080 --remote gw.example:9443 --cert <ID>
+mtls-relay-cli reload          # 或 start(首次)
+mtls-relay-cli status
+
+# 文件来源(跨平台兜底)
+./mtls-relay -source file -source-arg /path/to/client.pem
+```
+
+- WebUI: 浏览器打开 `http://127.0.0.1:18081/`(仅本机回环)。
+- 证书来源可用 `--source system|dir|file`; `--filter-org` 只展示指定 org 签发的证书, `--show-all` 显示全部。
+- 本地默认仅监听 `127.0.0.1`, 不暴露局域网; 上行默认验证网关服务器证书(可用 `server_ca` 配置网关 CA, 否则用系统根)。
+
+### 9.3 客户端中继的测试
+
+核心层 `internal/relay` 与 `internal/certsource` 自建临时 CA + mTLS 网关 stub(echo) 覆盖:
+- 单隧道/多隧道转发、并发
+- **证书复用**(同一 CertID 用于两条隧道都通)
+- 上行 mTLS 失败 → 该连接被拒但监听存活
+- 增删隧道 reload、路径穿越防护、org 过滤

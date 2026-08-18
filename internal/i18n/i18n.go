@@ -21,34 +21,34 @@ const (
 // 占位符用 %s %d 等 fmt 风格
 var messages = map[string][2]string{
 	// 通用
-	"unknown_command":     {"未知命令: %s", "unknown command: %s"},
-	"usage":               {"用法: %s", "usage: %s"},
-	"ok":                  {"OK", "OK"},
+	"unknown_command": {"未知命令: %s", "unknown command: %s"},
+	"usage":           {"用法: %s", "usage: %s"},
+	"ok":              {"OK", "OK"},
 
 	// issue
-	"issue_success":       {"=== 签发成功 ===", "=== issued successfully ==="},
-	"serial":              {"序列号: %s", "serial: %s"},
-	"p12_password":        {"p12 密码: %s", "p12 password: %s"},
-	"expires":             {"到期: %s", "expires: %s"},
-	"cert_dir":            {"证书目录: %s", "cert directory: %s"},
-	"issue_failed":        {"签发失败: %v (核心进程在跑吗? sock=%s)", "issue failed: %v (is the daemon running? sock=%s)"},
-	"issue_error":         {"签发错误: %v", "issue error: %v"},
-	"issue_usage":         {"用法: mtls-gw-cli issue <name> --purpose <p> [--ts-ip <ip>] [--days N]", "usage: mtls-gw-cli issue <name> --purpose <p> [--ts-ip <ip>] [--days N]"},
+	"issue_success": {"=== 签发成功 ===", "=== issued successfully ==="},
+	"serial":        {"序列号: %s", "serial: %s"},
+	"p12_password":  {"p12 密码: %s", "p12 password: %s"},
+	"expires":       {"到期: %s", "expires: %s"},
+	"cert_dir":      {"证书目录: %s", "cert directory: %s"},
+	"issue_failed":  {"签发失败: %v (核心进程在跑吗? sock=%s)", "issue failed: %v (is the daemon running? sock=%s)"},
+	"issue_error":   {"签发错误: %v", "issue error: %v"},
+	"issue_usage":   {"用法: mtls-gw-cli issue <name> --purpose <p> [--ts-ip <ip>] [--days N]", "usage: mtls-gw-cli issue <name> --purpose <p> [--ts-ip <ip>] [--days N]"},
 
 	// revoke
-	"revoked":             {"已吊销: %s", "revoked: %s"},
-	"revoke_failed":       {"吊销失败: %v", "revoke failed: %v"},
-	"revoke_error":        {"吊销错误: HTTP %d", "revoke error: HTTP %d"},
-	"revoke_usage":        {"用法: mtls-gw-cli revoke <serial>", "usage: mtls-gw-cli revoke <serial>"},
+	"revoked":       {"已吊销: %s", "revoked: %s"},
+	"revoke_failed": {"吊销失败: %v", "revoke failed: %v"},
+	"revoke_error":  {"吊销错误: HTTP %d", "revoke error: HTTP %d"},
+	"revoke_usage":  {"用法: mtls-gw-cli revoke <serial>", "usage: mtls-gw-cli revoke <serial>"},
 
 	// list
-	"no_certs":            {"(无证书)", "(no certs)"},
-	"list_failed":         {"列表失败: %v", "list failed: %v"},
-	"list_header":         {"%-12s %-20s %-16s %-16s %-10s %s", "%-12s %-20s %-16s %-16s %-10s %s"},
+	"no_certs":    {"(无证书)", "(no certs)"},
+	"list_failed": {"列表失败: %v", "list failed: %v"},
+	"list_header": {"%-12s %-20s %-16s %-16s %-10s %s", "%-12s %-20s %-16s %-16s %-10s %s"},
 
 	// health
-	"core_ok":             {"核心进程: OK", "core process: OK"},
-	"health_failed":       {"健康检查失败: %v", "health check failed: %v"},
+	"core_ok":       {"核心进程: OK", "core process: OK"},
+	"health_failed": {"健康检查失败: %v", "health check failed: %v"},
 
 	// admin 警告 (核心进程返回)
 	"warn_admin_mixed":    {"admin 与其他用途混用, 已忽略其他用途, 仅保留 admin", "admin mixed with other purposes; ignoring others, keeping admin only"},
