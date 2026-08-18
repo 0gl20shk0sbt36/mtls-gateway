@@ -28,5 +28,7 @@ certs/
 # 编辑器/系统
 .DS_Store
 *.swp
+*.bak
+*.bak-*
 .idea/
 .vscode/

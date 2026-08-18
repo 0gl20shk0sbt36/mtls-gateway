@@ -10,7 +10,7 @@
   → [mtls-gw] (mTLS 验证 + IP 预检 + 授权 + 路由)
       ├─ 应用A → http://127.0.0.1:3080
       ├─ 应用B → http://127.0.0.1:8081   (未来应用, 配置加一行即可)
-      └─ /admin/* → 管理 API (仅 admin 证书)
+      └─ 管理端口 (admin_listen) → 管理 API (仅 admin 证书)
 ```
 
 ---
@@ -109,18 +109,22 @@ sudo mkdir -p /etc/mtls-gw
   "ou": "device",
   "default_days": 365,
   "admin_days": 30,
+  "require_ip_bind": true,
   "backends": {
-    "app-a": "http://127.0.0.1:3080"
+    "app-a": {
+      "target": "http://127.0.0.1:3080",
+      "listen": "0.0.0.0:9443"
+    }
   }
 }
 ```
 
-- `listen`: 业务端口 (mTLS 网关)
 - `admin_listen`: 管理 API 端口 (admin 证书)
+- `require_ip_bind`: 是否强制证书 SAN IP == 来源 IP (true/false)
 - `org` / `ou`: 签发证书的 O/OU 字段 (默认 "mtls-gw"/"device")
 - `default_days`: 普通用途默认有效期 (默认 365)
 - `admin_days`: admin 用途默认有效期 (默认 30)
-- `backends`: **用途 → 后端地址** 映射, 加新应用就加一行
+- `backends`: **用途 → {target, listen}** 映射。`target`=后端上游地址, `listen`=该用途的 mTLS 监听地址 (多端口一用途一端口), 加新应用就加一个用途块
 
 ### 配置分工 (哪些放配置, 哪些用参数)
 
@@ -216,7 +220,7 @@ curl --cert cert.pem --key key.pem https://<网关地址>:9443/
 | 私钥复制到别的设备 | IP 预检: 证书 SAN IP ≠ 来源 IP → 拒绝 |
 | 证书泄露/设备丢失 | 吊销单个证书 (数据库改状态, 立即生效) |
 | 证书过期 | 签发时设有效期 (admin 建议短周期) |
-| 设备证书攻击管理面 | 权限分离: /admin/* 仅 admin 用途 |
+| 设备证书攻击管理面 | 权限分离: 管理 API 仅在 admin_listen 端口, 仅 admin 用途 |
 | 未注册证书 | 内存表查不到 serial → 拒绝 |
 | DNS rebinding / CSRF (后端) | Host/Origin 改写为 loopback, 围栏天然通过 |
 
@@ -256,8 +260,8 @@ CLI 和 Web 面板都是核心进程的壳, 都调核心 API (不是 Web 调 CLI
 
 ```json
 "backends": {
-  "app-a": "http://127.0.0.1:3080",
-  "app-b": "http://127.0.0.1:8081"
+  "app-a": { "target": "http://127.0.0.1:3080", "listen": "0.0.0.0:9443" },
+  "app-b": { "target": "http://127.0.0.1:8081", "listen": "0.0.0.0:9445" }
 }
 ```
 
@@ -269,7 +273,7 @@ CLI 和 Web 面板都是核心进程的壳, 都调核心 API (不是 Web 调 CLI
 
 1. **Go flag 遇非 flag 参数即停**: `--purpose admin` 在位置参数后不解析 → 需手动分类参数
 2. **/run 根目录无写权限**: 普通用户 bind Unix socket 失败 → 用 systemd `RuntimeDirectory`
-3. **管理 API 前缀冲突**: 用 `/admin/` 避免和后端应用的 `/api/` RPC 冲突
+3. **管理面路径冲突**: 早期管理 API 在业务端口用 `/admin/` 前缀 (与后端 `/api/` RPC 冲突); 已重构为独立管理端口 `admin_listen` (如 9444), 彻底避开前缀冲突
 4. **Origin 头必须同步改写**: 只改 Host 不改 Origin → 浏览器请求 403
 5. **旧进程未重启**: 改 json tag 后 daemon 不重启, API 返回旧格式
 
@@ -283,14 +287,17 @@ go test -v ./...       # 详细输出
 go test -cover ./...   # 覆盖率
 ```
 
-| 包 | 覆盖点 | 测试数 |
-|----|--------|--------|
-| `internal/db` | CRUD / 吊销 / 覆盖更新 / 持久化重载 | 3 |
-| `internal/auth` | 正常授权 / IP 不匹配 / 未登记 / 吊销 / 过期 | 5 |
-| `internal/api` | 签发 / 模板字段(O/OU/天数) / 非法名 / 缺字段 / 默认值 | 5 |
-| `internal/proxy` | 路由分发 / 未知用途 404 / Host 改写 / Origin 改写 / WebSocket 检测 | 6 |
+共 26 个测试, `go test ./...` 全部通过。实测覆盖率:
 
-共 19 个测试, 覆盖率 db 83% / auth 72% / proxy 84% / api 54%。
+| 包 | 覆盖率 |
+|----|--------|
+| `internal/db` | 83.6% |
+| `internal/proxy` | 84.4% |
+| `internal/auth` | 67.9% |
+| `internal/api` | 59.6% |
+| `cmd/mtls-gw`, `cmd/mtls-gw-cli`, `internal/i18n` | 0% (命令入口 / 纯消息表, 低优) |
+
+> CLI 提示语言自动检测: `LC_ALL` > `LC_MESSAGES` > `LANG`, 默认中文; 消息表集中在 `internal/i18n`。
 
 测试要点:
 - 测试内自建临时 CA + 服务器证书, 不依赖部署环境
