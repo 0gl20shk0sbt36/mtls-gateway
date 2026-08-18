@@ -28,6 +28,9 @@ func main() {
 		sourceArg   = flag.String("source-arg", "", "dir=目录路径 / file=文件路径 (system 忽略)")
 		filterOrg   = flag.String("filter-org", "mtls-gw", "只展示该 org 签发的证书 (空=不过滤)")
 		showAll     = flag.Bool("show-all", false, "显示全部证书 (跳过 org 过滤)")
+		noWeb       = flag.Bool("no-web", false, "不启动管理 HTTP (纯中继, 无 WebUI/API)")
+		server      = flag.String("server", "", "覆盖服务端发现端点 (临时, 不写入配置)")
+		noWrite     = flag.Bool("no-write", false, "WebUI/API 改动只改内存, 不写回 -config 文件")
 	)
 	flag.Parse()
 
@@ -47,8 +50,23 @@ func main() {
 		log.Fatalf("manager: %v", err)
 	}
 
+	// 临时会话开关 (--no-write / --server)
+	if *noWrite {
+		mgr.SetNoPersist(true)
+	}
+	if *server != "" {
+		r.SetServerAddr(*server)
+		mgr.SetServerAddr(*server)
+	}
+
 	// 若已有启用的隧道配置, 启动即运行
 	cfg := mgr.Config()
+	cfgServerAddr := cfg.ServerAddr
+	if *server != "" {
+		cfgServerAddr = *server
+	}
+	r.SetServerAddr(cfgServerAddr)   // 让 Discover(/api/services) 在未 Start 时也能用
+	r.SetServerCA(cfg.ServerCAFile)  // 证书验证根的加载
 	if len(cfg.Tunnels) > 0 {
 		if n := countEnabled(cfg.Tunnels); n > 0 {
 			if err := mgr.Start(); err != nil {
@@ -59,21 +77,24 @@ func main() {
 		}
 	}
 
-	// 管理 HTTP server (提供管理 API + WebUI 面板)
-	ln, err := net.Listen("tcp", *adminListen)
-	if err != nil {
-		log.Fatalf("admin listen %s: %v", *adminListen, err)
-	}
-	srv := &http.Server{
-		Handler:           relayweb.NewHandler(mgr),
-		ReadHeaderTimeout: 10 * time.Second,
-	}
-	go func() {
-		log.Printf("mtls-relay admin api + webui on %s", *adminListen)
-		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("admin serve: %v", err)
+	// 管理 HTTP server (提供管理 API + WebUI 面板); --no-web 或空 listen 则不起 (纯中继)
+	var srv *http.Server
+	if !*noWeb && *adminListen != "" {
+		ln, err := net.Listen("tcp", *adminListen)
+		if err != nil {
+			log.Fatalf("admin listen %s: %v", *adminListen, err)
 		}
-	}()
+		srv = &http.Server{
+			Handler:           relayweb.NewHandler(mgr),
+			ReadHeaderTimeout: 10 * time.Second,
+		}
+		go func() {
+			log.Printf("mtls-relay admin api + webui on %s", *adminListen)
+			if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
+				log.Fatalf("admin serve: %v", err)
+			}
+		}()
+	}
 
 	// 优雅退出
 	quit := make(chan os.Signal, 1)
@@ -81,7 +102,9 @@ func main() {
 	<-quit
 	log.Println("shutting down...")
 	mgr.Stop()
-	srv.Close()
+	if srv != nil {
+		srv.Close()
+	}
 }
 
 func expandHome(p string) string {

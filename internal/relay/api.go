@@ -3,7 +3,9 @@ package relay
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -13,10 +15,12 @@ import (
 // Manager 中继管理入口: 外壳(CLI/WebUI/GUI)唯一接口。
 // 持有当前 RelayConfig 并持久化到磁盘; 提供 HTTP 管理 API 及便捷方法。
 type Manager struct {
-	relay   *Relay
-	cfgPath string
-	mu      sync.Mutex
-	cfg     RelayConfig
+	relay          *Relay
+	cfgPath        string
+	mu             sync.Mutex
+	cfg            RelayConfig
+	noPersist      bool   // 只改内存、不落盘 (临时会话)
+	serverOverride string // --server 覆盖的发现端点
 }
 
 // NewManager 创建管理入口。加载已有配置(若无则用默认)。
@@ -36,36 +40,59 @@ func (m *Manager) Config() RelayConfig {
 	return m.cfg
 }
 
-// Save 将当前配置落盘
+// Save 将当前配置落盘 (noPersist 时跳过)
 func (m *Manager) Save() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.noPersist {
+		return nil
+	}
 	return SaveConfig(m.cfgPath, m.cfg)
 }
 
-// AddTunnel 新增或覆盖隧道并持久化
+// SetNoPersist 切换是否落盘 (true=WebUI/API 改动只改内存)
+func (m *Manager) SetNoPersist(v bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.noPersist = v
+}
+
+// SetServerAddr 覆盖服务端发现端点 (--server; 供 Discover 与按服务建隧道)
+func (m *Manager) SetServerAddr(addr string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.serverOverride = addr
+}
+
+// AddTunnel 新增或覆盖隧道并持久化 (noPersist 时仅内存)
 func (m *Manager) AddTunnel(t Tunnel) error {
 	m.mu.Lock()
 	m.cfg.UpsertTunnel(t)
 	cfg := m.cfg
+	np := m.noPersist
 	m.mu.Unlock()
-	if err := SaveConfig(m.cfgPath, cfg); err != nil {
-		return err
+	if !np {
+		if err := SaveConfig(m.cfgPath, cfg); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
-// DelTunnel 删除隧道并持久化
+// DelTunnel 删除隧道并持久化 (noPersist 时仅内存)
 func (m *Manager) DelTunnel(id string) (bool, error) {
 	m.mu.Lock()
 	ok := m.cfg.DelTunnel(id)
 	cfg := m.cfg
+	np := m.noPersist
 	m.mu.Unlock()
 	if !ok {
 		return false, nil
 	}
-	if err := SaveConfig(m.cfgPath, cfg); err != nil {
-		return true, err
+	if !np {
+		if err := SaveConfig(m.cfgPath, cfg); err != nil {
+			return true, err
+		}
 	}
 	return true, nil
 }
@@ -91,6 +118,44 @@ func (m *Manager) Status() []TunnelStatus { return m.relay.Status() }
 // ListCerts 当前可用证书 (供用户选择)
 func (m *Manager) ListCerts() ([]certsource.IdentityMeta, error) { return m.relay.ListCertMeta() }
 
+// Services 从服务端 /info 拉取可用服务 (供外壳选择)
+func (m *Manager) Services() ([]ServiceInfo, error) { return m.relay.Discover() }
+
+// BuildServiceTunnel 依据服务端规则生成一条隧道。
+// RemoteAddr = 服务端host:服务入口端口; 本地端口默认与服务端入口一致, 传 localPort>0 可覆盖。
+func (m *Manager) BuildServiceTunnel(svc ServiceInfo, localPort int, certID, serverName string) (Tunnel, error) {
+	cfg := m.Config()
+	sa := m.serverOverride
+	if sa == "" {
+		sa = cfg.ServerAddr
+	}
+	serverHost := stripPort(sa)
+	if serverHost == "" {
+		return Tunnel{}, fmt.Errorf("server_addr not set")
+	}
+	port := portOfListen(svc.Listen)
+	if port == "" {
+		return Tunnel{}, fmt.Errorf("service %s has no listen port", svc.Listen)
+	}
+	if localPort <= 0 {
+		p, err := strconv.Atoi(port)
+		if err != nil {
+			return Tunnel{}, fmt.Errorf("service port %q: %w", port, err)
+		}
+		localPort = p
+	}
+	return Tunnel{
+		ID:         svc.Listen,
+		LocalPort:  localPort,
+		RemoteAddr: net.JoinHostPort(serverHost, port),
+		Service:    svc.Listen,
+		Purpose:    svc.Listen,
+		CertID:     certID,
+		ServerName: serverName,
+		Enabled:    true,
+	}, nil
+}
+
 // Handler 返回管理 HTTP handler (仅 bind loopback)
 func (m *Manager) Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -108,16 +173,50 @@ func (m *Manager) Handler() http.Handler {
 		writeJSON(w, metas)
 	})
 
+	// GET /api/services — 从服务端 /info 拉取可用服务(供选择)
+	mux.HandleFunc("GET /api/services", func(w http.ResponseWriter, r *http.Request) {
+		svcs, err := m.Services()
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, svcs)
+	})
+
 	mux.HandleFunc("GET /api/config", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, m.Config())
 	})
 
-	// POST /api/tunnels  (body: Tunnel json) — 新增/覆盖
+	// POST /api/tunnels  (body: Tunnel json) — 新增/覆盖; 支持按 service 生成
 	mux.HandleFunc("POST /api/tunnels", func(w http.ResponseWriter, r *http.Request) {
 		var t Tunnel
 		if err := json.NewDecoder(r.Body).Decode(&t); err != nil {
 			writeErr(w, err)
 			return
+		}
+		if t.Service != "" {
+			svcs, err := m.Services()
+			if err != nil {
+				writeErr(w, err)
+				return
+			}
+			var svc *ServiceInfo
+			for i := range svcs {
+				if svcs[i].Listen == t.Service {
+					svc = &svcs[i]
+					break
+				}
+			}
+			if svc == nil {
+				writeErr(w, fmt.Errorf("service not found on server: %s", t.Service))
+				return
+			}
+			built, err := m.BuildServiceTunnel(*svc, t.LocalPort, t.CertID, t.ServerName)
+			if err != nil {
+				writeErr(w, err)
+				return
+			}
+			t = built
 		}
 		if err := m.AddTunnel(t); err != nil {
 			writeErr(w, err)

@@ -22,12 +22,13 @@ type CertSel struct {
 	Arg    string `json:"arg"`    // 非 system 来源时的目录/文件路径 (system 时忽略)
 }
 
-// Tunnel 一条隧道 = 本地端口 + 远端 + 用途 + 绑定证书
+// Tunnel 一条隧道 = 本地端口 + 远端 + 服务/用途 + 绑定证书
 type Tunnel struct {
 	ID         string `json:"id"`                    // 隧道 ID (稳定)
 	LocalPort  int    `json:"local_port"`            // 本地监听端口 (程序连这里)
-	RemoteAddr string `json:"remote_addr"`           // 远端网关后端, 如 gw.example:9443
-	Purpose    string `json:"purpose"`               // 用途 (记录用, 与远端端口对应)
+	RemoteAddr string `json:"remote_addr"`           // 远端网关入口, 如 gw.example:9499
+	Service    string `json:"service,omitempty"`     // 所选服务端服务名(规则名); 空=手动填写
+	Purpose    string `json:"purpose,omitempty"`     // 用途 (记录用, 与规则名对应)
 	CertID     string `json:"cert_id"`               // 绑定的证书身份 (可多条隧道复用)
 	ServerName string `json:"server_name,omitempty"` // TLS SNI (可选)
 	Enabled    bool   `json:"enabled"`               // 是否启用
@@ -35,8 +36,9 @@ type Tunnel struct {
 
 // RelayConfig 持久化配置: 允许多条隧道, 证书可复用
 type RelayConfig struct {
-	ListenHost   string   `json:"listen_host"`         // 本地监听地址, 默认 127.0.0.1
-	ServerCAFile string   `json:"server_ca,omitempty"` // 网关 CA 文件路径 (验证网关服务器证书; 空=系统根)
+	ServerAddr   string   `json:"server_addr,omitempty"` // 服务端 /info 发现端点, 如 gw.example:9499
+	ListenHost   string   `json:"listen_host"`           // 本地监听地址, 默认 127.0.0.1
+	ServerCAFile string   `json:"server_ca,omitempty"`   // 网关 CA 文件路径 (验证网关服务器证书; 空=系统根)
 	Tunnels      []Tunnel `json:"tunnels"`
 }
 

@@ -20,6 +20,7 @@ type Relay struct {
 	mu      sync.Mutex
 
 	listenHost string                     // 当前配置的本地监听地址 (Start/Reload 更新)
+	serverAddr string                     // 服务端 /info 发现端点 (Start/Reload 更新; 亦可用 SetServerAddr)
 	serverCA   string                     // 网关 CA 文件路径 (验服务器证书; 空=系统根)
 	rootCAs    *x509.CertPool             // 由 serverCA 构建; nil=系统根
 	src        certsource.Source          // 证书来源 (由外层/daemon 注入)
@@ -117,6 +118,7 @@ func (r *Relay) Start(cfg RelayConfig) error {
 	// 每个运行周期一个独立上下文: 使 stop 后再 start 仍可正常工作。
 	r.runCtx, r.runCancel = context.WithCancel(r.ctx)
 	r.listenHost = cfg.ListenHost
+	r.serverAddr = cfg.ServerAddr
 	r.applyServerCA(cfg.ServerCAFile)
 	var runtimes []*tunnelRuntime
 	for _, t := range cfg.Tunnels {
@@ -153,6 +155,7 @@ func (r *Relay) Reload(cfg RelayConfig) error {
 		return errNotStarted
 	}
 	r.listenHost = cfg.ListenHost
+	r.serverAddr = cfg.ServerAddr
 	r.applyServerCA(cfg.ServerCAFile)
 	next := map[string]bool{}
 	for _, t := range cfg.Tunnels {
@@ -214,6 +217,20 @@ func (r *Relay) Status() []TunnelStatus {
 // ListCertMeta 返回来源里可选的证书(供外壳/用户选择)。
 func (r *Relay) ListCertMeta() ([]certsource.IdentityMeta, error) {
 	return r.src.List()
+}
+
+// SetServerAddr 设置服务端 /info 发现端点(供 Discover 在未 Start 时使用)。
+func (r *Relay) SetServerAddr(addr string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.serverAddr = addr
+}
+
+// SetServerCA 设置并加载服务端 CA(供 Discover 在未 Start 时验证网关服务器证书)。
+func (r *Relay) SetServerCA(caFile string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.applyServerCA(caFile)
 }
 
 var errAlreadyStarted = errString("relay already started")

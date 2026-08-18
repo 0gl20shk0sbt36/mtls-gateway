@@ -25,9 +25,17 @@ func (d *Dialer) Dial(ctx context.Context) (net.Conn, error) {
 		timeout = 10 * time.Second
 	}
 	dialer := &net.Dialer{Timeout: timeout}
+	sni := d.ServerName
+	if sni == "" {
+		if h, _, err := net.SplitHostPort(d.ServerAddr); err == nil {
+			sni = h
+		} else {
+			sni = d.ServerAddr
+		}
+	}
 	tlsCfg := &tls.Config{
 		InsecureSkipVerify: false, // 默认验证网关服务器证书
-		ServerName:         d.ServerName,
+		ServerName:         sni,
 		RootCAs:            d.RootCAs,
 		MinVersion:         tls.VersionTLS12,
 	}
