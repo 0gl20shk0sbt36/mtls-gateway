@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"path"
 	"net/http/httputil"
 	"net/url"
 	"strings"
@@ -176,14 +177,36 @@ func (rt *tunnelRuntime) localHTTPHandler(localPath string) http.Handler {
 
 // joinSlash 拼接路径并去重斜杠 (nginx proxy_pass 语义)
 func joinSlash(a, b string) string {
+	var joined string
 	switch {
 	case a == "" || a == "/":
-		return "/" + strings.TrimPrefix(b, "/")
+		joined = "/" + strings.TrimPrefix(b, "/")
 	case b == "" || b == "/":
-		return strings.TrimSuffix(a, "/") + "/"
+		joined = strings.TrimSuffix(a, "/") + "/"
 	default:
-		return strings.TrimSuffix(a, "/") + "/" + strings.TrimPrefix(b, "/")
+		joined = strings.TrimSuffix(a, "/") + "/" + strings.TrimPrefix(b, "/")
 	}
+	// 仅移除 .. 段(不折叠 //、不丢尾斜杠 — 两者都有语义), 防路径逃逸
+	return cleanDotSegments(joined)
+}
+
+// cleanDotSegments 移除 .. 段与 . 段(保留 // 与尾斜杠语义)
+func cleanDotSegments(p string) string {
+	segments := strings.Split(p, "/")
+	var out []string
+	for _, seg := range segments {
+		switch seg {
+		case "..":
+			if len(out) > 0 {
+				out = out[:len(out)-1]
+			}
+		case ".":
+			// 跳过
+		default:
+			out = append(out, seg)
+		}
+	}
+	return strings.Join(out, "/")
 }
 
 // acceptLoop accepts local connections and proxies each to the mTLS upstream.

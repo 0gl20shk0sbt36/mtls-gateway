@@ -1,6 +1,7 @@
 package eventlog
 
 import (
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -73,5 +74,29 @@ func TestRotatePrunesOldFiles(t *testing.T) {
 	files := l.Files()
 	if len(files) > 3 { // 当前 + 2 份历史
 		t.Fatalf("maxFiles=2 should keep <=3 files, got %d: %v", len(files), files)
+	}
+}
+
+// 第十二批: StatusWriter 计数与透传(ReadFrom 计字节 / Hijack 安全断言)
+func TestStatusWriterReadFromCounts(t *testing.T) {
+	rec := httptest.NewRecorder()
+	sw := NewStatusWriter(rec)
+	// httptest.ResponseRecorder 实现 ReaderFrom → 透传分支, bytes 应累加
+	n, err := sw.ReadFrom(strings.NewReader("hello"))
+	if err != nil || n != 5 {
+		t.Fatalf("ReadFrom: n=%d err=%v", n, err)
+	}
+	if sw.Bytes() != 5 {
+		t.Fatalf("bytes = %d, want 5", sw.Bytes())
+	}
+	if sw.Status() != 200 {
+		t.Fatalf("status = %d, want 200", sw.Status())
+	}
+}
+
+func TestStatusWriterHijackSafe(t *testing.T) {
+	sw := NewStatusWriter(httptest.NewRecorder()) // 非 Hijacker
+	if _, _, err := sw.Hijack(); err == nil {
+		t.Fatal("Hijack on non-hijacker should error, not panic")
 	}
 }

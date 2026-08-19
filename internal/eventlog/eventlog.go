@@ -198,7 +198,11 @@ func (w *StatusWriter) Bytes() int64 { return w.bytes }
 
 // 透传底层能力: WebSocket 升级(101)与流式/大文件响应不被包装层破坏
 func (w *StatusWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	return w.ResponseWriter.(http.Hijacker).Hijack()
+	hj, ok := w.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, fmt.Errorf("underlying ResponseWriter is not a Hijacker")
+	}
+	return hj.Hijack()
 }
 
 func (w *StatusWriter) Flush() {
@@ -209,7 +213,13 @@ func (w *StatusWriter) Flush() {
 
 func (w *StatusWriter) ReadFrom(r io.Reader) (int64, error) {
 	if rf, ok := w.ResponseWriter.(io.ReaderFrom); ok {
-		return rf.ReadFrom(r)
+		n, err := rf.ReadFrom(r)
+		w.bytes += n // 透传分支也要计字节
+		if w.status == 0 {
+			w.status = http.StatusOK
+		}
+		return n, err
 	}
-	return io.Copy(w.ResponseWriter, r) // 经 Write 正确计字节
+	// 回退: 经自身 Write 计数(不直接写底层)
+	return io.Copy(struct{ io.Writer }{w}, r)
 }

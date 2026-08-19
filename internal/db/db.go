@@ -175,12 +175,15 @@ func (s *Store) FindByName(name string) []CertRecord {
 }
 
 // Delete 删除记录(签发 finalize 失败回滚用: 防幽灵记录/名字占坑)
+// 顺序: SQL 先成功、再删内存(与 Revoke/Upsert 一致, 防 DB 失败时内存/DB 分叉)
 func (s *Store) Delete(serial string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if _, err := s.sqlite.Exec(`DELETE FROM certs WHERE serial=?`, serial); err != nil {
+		return fmt.Errorf("delete cert %s: %w", serial, err)
+	}
 	delete(s.table, serial)
-	_, err := s.sqlite.Exec(`DELETE FROM certs WHERE serial=?`, serial)
-	return err
+	return nil
 }
 
 // Revoke 吊销: 改内存 + 落库

@@ -43,6 +43,7 @@ func discoverHTTPClient(addr string, cert *tls.Certificate, rootCAs *x509.CertPo
 			Certificates: []tls.Certificate{*cert},
 			RootCAs:      rootCAs,
 			ServerName:   stripPort(addr),
+			MinVersion:   tls.VersionTLS12, // 纵深防御: 与服务端/其它客户端一致
 		},
 	}
 	return &http.Client{Transport: tr, Timeout: 8 * time.Second}
@@ -112,9 +113,8 @@ func (r *Relay) DiscoverWithCertOf(certID, lang string) ([]ServiceInfo, error) {
 
 // loadFirstCert 取来源里第一枚可用证书(用于发现/默认)
 func (r *Relay) loadFirstCert() (tls.Certificate, error) {
-	r.mu.Lock()
+	// src 构造期注入不可变, 无需持锁; List 是磁盘/证书库 IO, 锁外执行
 	metas, err := r.src.List()
-	r.mu.Unlock()
 	if err != nil {
 		return tls.Certificate{}, err
 	}

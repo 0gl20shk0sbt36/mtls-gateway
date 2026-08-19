@@ -116,10 +116,10 @@ func (m *Manager) DelTunnel(id string) (bool, error) {
 	}
 	if !np {
 		if err := SaveConfig(m.cfgPath, cfg); err != nil {
-			return true, err
+			log.Printf("config saved in memory but disk write failed: %v (restart will lose changes)", err)
 		}
 	}
-	m.reloadTunnels()
+	m.reloadTunnels() // 落盘失败也同步运行时(内存权威, 与 AddTunnel 一致)
 	return true, nil
 }
 
