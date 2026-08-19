@@ -2,6 +2,12 @@
 const $ = (id) => document.getElementById(id);
 const t = I18N.t;
 
+// 全局状态(提前声明, 避免 TDZ: init 早于这些声明执行时抛 "Cannot access before initialization")
+let SERVICES = [];
+let CFG = null;
+let DRAFT = null;
+let CFG_ADMIN_ROLE = "mtls-superadmin";
+
 // applyI18n: 批量应用 data-i18n / data-i18n-html / data-i18n-ph (动态渲染的容器内容不在内)
 function applyI18n() {
   document.querySelectorAll("[data-i18n]").forEach((el) => {
@@ -220,8 +226,6 @@ function esc(s) {
   }[c]));
 }
 
-let SERVICES = [];
-
 // 渲染选中服务的通道行: 每通道一行 [通道(只读) | 本地路由输入(默认=通道)]
 function renderSvcChannels(svc) {
   const box = $("svcChannelRows");
@@ -333,8 +337,6 @@ async function verifyAdmin() {
     $("adminPwd").value = ""; // 验证成功即清空密码(失败保留)
   } catch (e) { toast(t("verifyFail", { m: e.message }), true); }
 }
-let CFG = null;
-let CFG_ADMIN_ROLE = "mtls-superadmin";
 async function loadAdminData() {
   const cert = getSel("adminCertList");
   if (!cert) return;
@@ -357,7 +359,6 @@ async function loadAdminData() {
   } catch (e) { /* 加载失败不阻塞 */ }
 }
 
-let DRAFT = null;
 function renderCfg() {
   const imm = CFG.mode === "immutable";
   $("cfgMode").textContent = CFG.mode + (imm ? " 🔒" : "");
