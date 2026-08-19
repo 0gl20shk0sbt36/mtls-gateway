@@ -87,13 +87,28 @@ function initMultiSel(btnId, listId, onChange) {
     e.stopPropagation();
     const d = e.target.closest(".opt");
     if (!d || d.dataset.val == null) return;
+    if (d.classList.contains("dis")) return; // 禁选(any 已选时)
     const s = SEL_MULTI[listId];
     const v = d.dataset.val;
-    if (s.has(v)) { s.delete(v); d.classList.remove("on"); }
-    else { s.add(v); d.classList.add("on"); }
+    if (v === "any") {
+      s.clear();
+      s.add("any"); // any 互斥: 选中后清空其他
+    } else {
+      if (s.has("any")) return; // any 已选, 其他禁点(双保险)
+      if (s.has(v)) s.delete(v); else s.add(v);
+    }
+    refreshMultiOpts(listId);
     updateMultiLabel(listId);
     if (onChange) onChange([...s]);
   };
+}
+function refreshMultiOpts(listId) {
+  const s = SEL_MULTI[listId] || new Set();
+  const anyOn = s.has("any");
+  document.querySelectorAll("#" + listId + " .opt").forEach((d) => {
+    d.classList.toggle("on", s.has(d.dataset.val));
+    d.classList.toggle("dis", anyOn && d.dataset.val !== "any"); // any 选中 → 其他禁选
+  });
 }
 function setMultiOpts(listId, items, selected) {
   SEL_MULTI[listId] = new Set(selected || []);
@@ -101,11 +116,12 @@ function setMultiOpts(listId, items, selected) {
   list.innerHTML = "";
   (items || []).forEach((it) => {
     const d = document.createElement("div");
-    d.className = "opt chk" + (SEL_MULTI[listId].has(it.value) ? " on" : "");
+    d.className = "opt chk";
     d.dataset.val = it.value;
     d.textContent = it.label;
     list.appendChild(d);
   });
+  refreshMultiOpts(listId);
   updateMultiLabel(listId);
 }
 function setMultiLabel(listId, fn) { SEL_MULTI_LABEL[listId] = fn; }
@@ -376,6 +392,7 @@ function renderCfg() {
       <button type="button" class="danger small" data-cfg="m-del" data-i="${i}"${dis}>×</button>
     </div>`;
   });
+  h += `<div class="row" style="margin-top:6px"><button type="button" class="ghost small" id="cfgAddMap"${dis}>${t("addMap")}</button></div>`;
   $("cfgMappings").innerHTML = h;
   // 服务
   let sv = `<div class="hint" style="margin-top:8px">${t("cfgServices")}</div>`;
@@ -394,36 +411,71 @@ function renderCfg() {
       <button type="button" class="danger small" data-cfg="s-del" data-i="${i}"${dis}>×</button>
     </div>`;
   });
+  sv += `<div class="row" style="margin-top:6px"><button type="button" class="ghost small" id="cfgAddSvc"${dis}>${t("addSvc")}</button></div>`;
   $("cfgServices").innerHTML = sv;
   // 角色
   let r = `<div class="hint" style="margin-top:8px">${t("cfgRoles")}</div>`;
+  r += `<div id="cfgRoleChips">`;
   rl.forEach((name, i) => {
     r += `<span class="chip">${esc(name)}<button type="button" class="chip-x" data-cfg="role-del" data-i="${i}"${dis}>×</button></span>`;
   });
-  r += `<input id="cfgNewRole" placeholder="新角色" style="width:120px;margin-left:8px"${dis}>
-        <button type="button" class="ghost small" id="cfgAddRole"${dis}>＋ 角色</button>
-        <button type="button" class="ghost small" id="cfgAddMap"${dis}>＋ 通道</button>
-        <button type="button" class="ghost small" id="cfgAddSvc"${dis}>＋ 服务</button>`;
+  r += `</div><div class="row" style="margin-top:6px">
+    <button type="button" class="ghost small" id="cfgAddRole"${dis}>${t("addRole")}</button>
+    <input id="cfgNewRole" placeholder="${t("cfgNewRole")}" style="width:130px;margin-left:8px;display:none"${dis}>
+  </div>`;
   $("cfgRoles").innerHTML = r;
   if (!imm) {
+    // 回车确认角色: 输入框原位变成 chip(与已有角色样式一致, 不可输入)
+    function roleEnter(e) {
+      if (e.key !== "Enter") return;
+      const inp = $("cfgNewRole");
+      if (!inp) return;
+      const v = inp.value.trim();
+      if (!v) return;
+      if (!/^[A-Za-z0-9_-]+$/.test(v)) { toast("角色名仅限字母/数字/下划线/连字符", true); return; }
+      if (v === "any") { toast("any 是内置角色, 无需声明", true); return; }
+      if (DRAFT.roles.includes(v)) { toast("角色已存在", true); return; }
+      DRAFT.roles.push(v);
+      const chip = document.createElement("span");
+      chip.className = "chip";
+      chip.innerHTML = `${esc(v)}<button type="button" class="chip-x" data-cfg="role-del">×</button>`;
+      chip.querySelector(".chip-x").onclick = () => {
+        DRAFT.roles.splice(DRAFT.roles.indexOf(v), 1);
+        chip.remove();
+        cfgSync();
+      };
+      inp.replaceWith(chip); // 原位变成 chip, 无法再输入
+      cfgSync();
+    }
     $("cfgAddRole").onclick = () => {
-      const v = $("cfgNewRole").value.trim();
-      if (v && !DRAFT.roles.includes(v)) DRAFT.roles.push(v);
-      $("cfgNewRole").value = "";
-      renderCfg();
+      let inp = $("cfgNewRole");
+      if (!inp) { // 输入框已被替换成 chip → 重新创建
+        inp = document.createElement("input");
+        inp.id = "cfgNewRole";
+        inp.placeholder = t("cfgNewRole");
+        inp.style.cssText = "width:130px;margin-left:8px";
+        inp.onkeydown = roleEnter;
+        $("cfgAddRole").insertAdjacentElement("afterend", inp);
+      }
+      inp.style.display = "";
+      inp.value = "";
+      inp.focus();
     };
+    const nr = $("cfgNewRole");
+    if (nr) nr.onkeydown = roleEnter;
     $("cfgAddMap").onclick = () => { DRAFT.mappings.push({ id: "", listen: "", target: "" }); renderCfg(); };
     $("cfgAddSvc").onclick = () => { DRAFT.services.push({ name: "", channels: [], roles: [] }); renderCfg(); };
-    // 服务行多选
+    // 服务行多选 (any 置顶; 互斥由组件处理)
     s.forEach((x, i) => {
-      initMultiSel(`svcChBtn${i}`, `svcChList${i}`, (v) => { DRAFT.services[i].channels = v; });
+      initMultiSel(`svcChBtn${i}`, `svcChList${i}`, (v) => { DRAFT.services[i].channels = v; cfgSync(); });
       setMultiLabel(`svcChList${i}`, (v) => v.join(",") || "— 通道 —");
       setMultiOpts(`svcChList${i}`, m.map((mm) => ({ value: mm.id, label: mm.id })), x.channels || []);
-      initMultiSel(`svcRolesBtn${i}`, `svcRolesList${i}`, (v) => { DRAFT.services[i].roles = v; });
+      initMultiSel(`svcRolesBtn${i}`, `svcRolesList${i}`, (v) => { DRAFT.services[i].roles = v; cfgSync(); });
       setMultiLabel(`svcRolesList${i}`, (v) => v.join(",") || "— 角色 —");
-      setMultiOpts(`svcRolesList${i}`, [...rl, "any"].map((rr) => ({ value: rr, label: rr })), x.roles || []);
+      setMultiOpts(`svcRolesList${i}`, ["any", ...rl].map((rr) => ({ value: rr, label: rr })), x.roles || []);
     });
   }
+  cfgSync();
   // 输入 → DRAFT
   document.querySelectorAll("input[data-cfg]").forEach((inp) => {
     inp.addEventListener("input", () => {
@@ -431,6 +483,7 @@ function renderCfg() {
       const k = inp.dataset.cfg;
       if (k.startsWith("m-")) DRAFT.mappings[i][k.slice(2)] = inp.value;
       else if (k.startsWith("s-")) DRAFT.services[i][k.slice(2)] = inp.value;
+      cfgSync(); // 有变更才点亮保存
     });
   });
   // 行删除 → DRAFT
@@ -442,6 +495,17 @@ function renderCfg() {
       else if (b.dataset.cfg === "role-del") { DRAFT.roles.splice(i, 1); renderCfg(); }
     });
   });
+}
+
+// cfgSync: 保存按钮灰态 — 草稿与服务端状态有差异才点亮
+function cfgSync() {
+  const btn = $("cfgSave");
+  if (!btn || !CFG || !DRAFT) return;
+  const changed =
+    JSON.stringify(DRAFT.mappings) !== JSON.stringify(CFG.mappings || []) ||
+    JSON.stringify(DRAFT.services) !== JSON.stringify(CFG.services || []) ||
+    JSON.stringify(DRAFT.roles) !== JSON.stringify(CFG.roles || []);
+  btn.disabled = !changed || CFG.mode === "immutable";
 }
 
 function cfgSay(msg, err) { $("cfgResult").textContent = (err ? "✘ " : "✔ ") + msg; }

@@ -78,6 +78,10 @@
   .sel .sel-list .opt.chk::before{ content:""; position:absolute; left:9px; top:50%; transform:translateY(-50%); width:13px; height:13px; border:1.5px solid var(--text4); border-radius:3px; box-sizing:border-box; }
   .sel .sel-list .opt.chk.on::before{ border-color:var(--accent); background:var(--accent); }
   .sel .sel-list .opt.chk.on::after{ content:""; position:absolute; left:12px; top:50%; transform:translateY(-62%) rotate(45deg); width:5px; height:9px; border-right:2px solid #fff; border-bottom:2px solid #fff; }
+  .sel .sel-list .opt.dis{ opacity:.35; cursor:not-allowed; }
+  /* 禁用按钮(保存无变更/只读) */
+  button:disabled{ opacity:.35; cursor:not-allowed; }
+  input.locked{ opacity:.55; background:rgba(255,255,255,0.03); }
   /* 角色 chips */
   .chip{ display:inline-flex; align-items:center; gap:4px; background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:2px 8px; margin:2px 4px 2px 0; font-size:12px; }
   .chip-x{ background:none; border:none; color:var(--text4); cursor:pointer; padding:0 2px; font-size:13px; line-height:1; }
@@ -164,7 +168,7 @@
         <button type="button" class="sel-btn" id="adminCertBtn"><span class="txt" data-i18n="chooseCert">— 选择证书 —</span><span class="arrow">▾</span></button>
         <div class="sel-list" id="adminCertList"></div>
       </div>
-      <input id="adminPwd" type="password" placeholder="" autocomplete="new-password" style="width:150px">
+      <input id="adminPwd" type="password" placeholder="" data-i18n-ph="certPwd" autocomplete="new-password" style="width:150px">
       <button type="button" class="primary small" id="adminVerify" data-i18n="verify">验证</button>
     </div>
   </div>
