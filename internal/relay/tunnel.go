@@ -90,36 +90,49 @@ func (r *Relay) startTunnel(rt *tunnelRuntime) error {
 }
 
 // localHTTPHandler 本地路径模式: 剥本地前缀 → 补通道前缀 → mTLS 转发服务端通道
+// upstream/tlsCfg 首次请求时惰性初始化: startTunnel 在 Start 持锁期间构造 handler,
+// 若此处同步调用 serverHost()/dialTLSConfig() 会与 r.mu 重入死锁
 func (rt *tunnelRuntime) localHTTPHandler(localPath string) http.Handler {
-	upstream, err := url.Parse("https://" + net.JoinHostPort(rt.r.serverHost(), rt.route.ChannelPort()) + rt.route.ChannelPath())
-	if err != nil {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			http.Error(w, "bad upstream: "+err.Error(), http.StatusInternalServerError)
-		})
-	}
-	tlsCfg, err := rt.r.dialTLSConfig(rt.certID)
-	if err != nil {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			http.Error(w, "load cert: "+err.Error(), http.StatusInternalServerError)
-		})
-	}
-	rp := &httputil.ReverseProxy{
-		Director: func(req *http.Request) {
-			rest := strings.TrimPrefix(req.URL.Path, localPath)
-			if rest == "" {
-				rest = "/"
-			}
-			req.URL.Scheme = upstream.Scheme
-			req.URL.Host = upstream.Host
-			req.URL.Path = joinSlash(upstream.Path, rest) // 补通道前缀(如 /admin + /x)
-			req.URL.RawPath = ""
-			req.Host = upstream.Host
-		},
-		Transport: &http.Transport{TLSClientConfig: tlsCfg},
+	var (
+		once     sync.Once
+		upstream *url.URL
+		tlsCfg   *tls.Config
+		rp       *httputil.ReverseProxy
+		initErr  error
+	)
+	init := func() {
+		upstream, initErr = url.Parse("https://" + net.JoinHostPort(rt.r.serverHost(), rt.route.ChannelPort()) + rt.route.ChannelPath())
+		if initErr != nil {
+			return
+		}
+		tlsCfg, initErr = rt.r.dialTLSConfig(rt.certID)
+		if initErr != nil {
+			return
+		}
+		// rp 必须在 tlsCfg 就绪后构造(Transport 拷贝值, 提前构造会捕获 nil)
+		rp = &httputil.ReverseProxy{
+			Director: func(req *http.Request) {
+				rest := strings.TrimPrefix(req.URL.Path, localPath)
+				if rest == "" {
+					rest = "/"
+				}
+				req.URL.Scheme = upstream.Scheme
+				req.URL.Host = upstream.Host
+				req.URL.Path = joinSlash(upstream.Path, rest) // 补通道前缀(如 /admin + /x)
+				req.URL.RawPath = ""
+				req.Host = upstream.Host
+			},
+			Transport: &http.Transport{TLSClientConfig: tlsCfg},
+		}
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if !strings.HasPrefix(req.URL.Path, localPath) {
 			http.Error(w, "local path prefix mismatch: "+req.URL.Path, http.StatusNotFound)
+			return
+		}
+		once.Do(init)
+		if initErr != nil {
+			http.Error(w, "init upstream: "+initErr.Error(), http.StatusInternalServerError)
 			return
 		}
 		rp.ServeHTTP(w, req)
