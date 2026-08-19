@@ -61,6 +61,15 @@
   }
   input:focus, select:focus{ outline:none; border-color:var(--accent2); box-shadow:var(--shadow-focus); }
   html{ color-scheme: dark; } /* 原生控件(滚动条等)走暗色 */
+  /* 自绘密码框: 常驻"显示/隐藏"眼睛 —— 解决 Chromium 原生眼睛"失焦后消失"的渲染 bug */
+  input[type="password"]::-ms-reveal, input[type="password"]::-ms-clear{ display:none; } /* Edge 原生眼睛隐藏 */
+  .pwd-wrap{ position:relative; display:inline-flex; align-items:center; min-width:150px; }
+  .pwd-wrap input{ width:100%; padding-right:32px; }
+  .pwd-wrap .eye{ position:absolute; right:3px; top:50%; transform:translateY(-50%);
+    width:26px; height:24px; display:flex; align-items:center; justify-content:center;
+    background:var(--panel); border:none; border-radius:6px; color:var(--text3); cursor:pointer; z-index:2; }
+  .pwd-wrap .eye:hover{ color:var(--text); }
+  .pwd-wrap .eye svg{ display:block; }
   /* ===== 自绘下拉(替代原生 select, 全浏览器暗色可控) ===== */
   .sel{ position:relative; }
   .sel .sel-btn{ width:100%; display:flex; justify-content:space-between; align-items:center;
@@ -151,7 +160,10 @@
         <button type="button" class="sel-btn" id="adminCertBtn"><span class="txt">— 选择证书 —</span><span class="arrow">▾</span></button>
         <div class="sel-list" id="adminCertList"></div>
       </div>
-      <input id="adminPwd" type="password" placeholder="证书密码(如有)" autocomplete="new-password" style="width:150px">
+      <div class="pwd-wrap">
+        <input id="adminPwd" type="password" placeholder="证书密码(如有)" autocomplete="new-password">
+        <button type="button" class="eye" id="adminPwdEye" title="显示/隐藏密码"></button>
+      </div>
       <button type="button" class="primary small" id="adminVerify">验证</button>
     </div>
   </div>
@@ -185,7 +197,10 @@
         <input id="newTSIP" placeholder="TS IP (可选)" style="flex:1">
       </div>
       <div class="row" style="margin-top:8px">
-        <input id="newCertPwd" type="password" placeholder="p12 密码 (可选, 留空自动生成)" autocomplete="new-password" style="flex:1.4">
+        <div class="pwd-wrap" style="flex:1.4">
+        <input id="newCertPwd" type="password" placeholder="p12 密码 (可选, 留空自动生成)" autocomplete="new-password">
+        <button type="button" class="eye" id="newCertPwdEye" title="显示/隐藏密码"></button>
+      </div>
         <button type="button" class="primary small" id="adminIssue">签发</button>
       </div>
       <div class="row" style="margin-top:10px">
