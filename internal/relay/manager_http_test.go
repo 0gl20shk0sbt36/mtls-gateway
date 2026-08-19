@@ -123,7 +123,7 @@ func TestManagerHTTP_BadJSON(t *testing.T) {
 	}
 }
 
-// H-1: 新增隧道缺参数 → 错误; 完整 → 成功(noPersist)
+// H-1: 新增隧道缺参数 → 错误; 完整 → 成功(noPersist, 强制断言)
 func TestManagerHTTP_AddTunnel(t *testing.T) {
 	h := newHarness(t)
 	defer h.close()
@@ -133,13 +133,14 @@ func TestManagerHTTP_AddTunnel(t *testing.T) {
 	if rec.Code < 400 {
 		t.Fatalf("missing fields should fail: %d", rec.Code)
 	}
-	// 完整(不启动, 只管理): service 需要存在(Discover) — 无服务端 info, 用错误路径断言
+	// 完整参数 → 配置层成功(不启动隧道; service 存在性由 Discover 决定, 这里服务端不可达时 AddTunnel 仍应登记配置)
 	rec2 := apiReq(handler, "POST", "/api/tunnels", fmt.Sprintf(`{"service":"svc-x","cert_id":%q,"locals":{}}`, h.clientPairPath), "")
-	if rec2.Code == 200 {
-		// 若成功(配置层), 检查 m.Config() 有隧道
-		if len(m.Config().Tunnels) == 0 {
-			t.Fatal("tunnel should be in config")
-		}
+	if rec2.Code != 200 {
+		t.Fatalf("add tunnel should be 200, got %d: %s", rec2.Code, rec2.Body.String())
+	}
+	tuns := m.Config().Tunnels
+	if len(tuns) != 1 || tuns[0].Service != "svc-x" {
+		t.Fatalf("tunnel should be in config: %+v", tuns)
 	}
 }
 

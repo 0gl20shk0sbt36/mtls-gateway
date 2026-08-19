@@ -39,7 +39,8 @@ func NewManager(relay *Relay, cfgPath string) (*Manager, error) {
 	return m, nil
 }
 
-// Config 返回当前配置的深拷贝(Tunnels 切片底层数组不共享, 防外部改动)
+// Config 返回当前配置的拷贝(顶层 Tunnels 切片复制; Tunnel.Routes 为值类型内嵌切片,
+// 由调用方约定只读 — 变更走 AddTunnel/DelTunnel)
 func (m *Manager) Config() RelayConfig {
 	m.mu.Lock()
 	defer m.mu.Unlock()
