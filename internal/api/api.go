@@ -249,7 +249,8 @@ func (m *Manager) IssueCert(req IssueRequest) (*IssueResponse, error) {
 	if req.Days > 3650 { // 上限 10 年: 保证"过期"吊销兜底有效
 		return nil, fmt.Errorf("certificate validity too long: %d days (max 3650)", req.Days)
 	}
-	// 禁止同名证书(含已吊销的): 避免同名多条记录混淆
+	// 禁止同名证书(含已吊销的): 原子检查+登记(防并发同名 TOCTOU)
+	// 先快速预检(友好错误), 最终以 InsertUniqueName 原子判定为准
 	if recs := m.store.FindByName(req.Name); len(recs) > 0 {
 		return nil, fmt.Errorf("certificate name %s already exists (%d record(s)), 禁止同名签发", req.Name, len(recs))
 	}
@@ -350,7 +351,7 @@ func (m *Manager) IssueCert(req IssueRequest) (*IssueResponse, error) {
 		ExpiresAt:   notAfter.Format("2006-01-02"),
 		Fingerprint: fmt.Sprintf("%X", sha256.Sum256(cert.Raw)), // SHA-256 指纹
 	}
-	if err := m.store.Upsert(rec); err != nil {
+	if err := m.store.InsertUniqueName(rec); err != nil { // 原子: 并发同名签发时只有一个成功
 		return nil, err
 	}
 	committed = true
@@ -423,8 +424,9 @@ func (m *Manager) handler(isLocal bool) http.Handler {
 			http.Error(w, err.Error(), apiErrStatus(err))
 			return
 		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		json.NewEncoder(w).Encode(resp)
-		})
+	})
 	mux.HandleFunc("POST /admin/certs/revoke", func(w http.ResponseWriter, r *http.Request) {
 		if !isLocal && r.Header.Get("X-Auth-Purpose") != m.AdminRole {
 			http.Error(w, "admin required", http.StatusForbidden)
@@ -454,6 +456,7 @@ func (m *Manager) handler(isLocal bool) http.Handler {
 		json.NewEncoder(w).Encode(m.store.List())
 	})
 	mux.HandleFunc("GET /admin/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	})
 	return mux

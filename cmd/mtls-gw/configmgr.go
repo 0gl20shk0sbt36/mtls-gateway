@@ -99,7 +99,7 @@ func (m *ConfigManager) persist() error {
 	if m.mode == "ephemeral" {
 		return nil
 	}
-	if err := copyFile(m.path, m.path+".bak-"+time.Now().Format("20060102-150405")); err != nil {
+	if err := copyFile(m.path, m.path+".bak-"+time.Now().Format("20060102-150405.000000000")); err != nil {
 		log.Printf("config backup failed: %v (仍继续写入)", err)
 	}
 	// 备份限量: 只留最近 5 份, 防无限累积
@@ -108,12 +108,20 @@ func (m *ConfigManager) persist() error {
 	if err := toml.NewEncoder(&buf).Encode(m.cfg); err != nil {
 		return fmt.Errorf("encode config: %w", err)
 	}
-	// 原子替换: 临时文件 + rename, 避免写一半崩溃损坏配置
-	tmp := m.path + ".tmp"
-	if err := os.WriteFile(tmp, buf.Bytes(), 0o600); err != nil {
+	// 原子替换: CreateTemp 真唯一临时文件 + rename(O_EXCL 随机名, 不跟随符号链接)
+	tmp, err := os.CreateTemp(filepath.Dir(m.path), filepath.Base(m.path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create temp config: %w", err)
+	}
+	defer os.Remove(tmp.Name()) // rename 失败/异常时清理残留
+	if _, err := tmp.Write(buf.Bytes()); err != nil {
+		tmp.Close()
 		return fmt.Errorf("write tmp config: %w", err)
 	}
-	if err := os.Rename(tmp, m.path); err != nil {
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close temp config: %w", err)
+	}
+	if err := os.Rename(tmp.Name(), m.path); err != nil {
 		return fmt.Errorf("replace config: %w", err)
 	}
 	return nil

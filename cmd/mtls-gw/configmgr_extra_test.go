@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -210,4 +211,52 @@ func TestConfigManagerEphemeralNoBackup(t *testing.T) {
 			t.Fatal("ephemeral mapping persisted across reload")
 		}
 	}
+}
+
+// 第九批: persist 原子写(临时文件唯一/无残留/权限/内容 round-trip)
+func TestConfigManagerPersistAtomic(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "gw.toml")
+	cm := NewConfigManager(path, Config{ConfigMode: "mutable"}, nil)
+	if err := cm.AddRole("svc-x"); err != nil {
+		t.Fatal(err)
+	}
+	// 无 tmp-* 残留 + 权限 0600
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		if strings.Contains(e.Name(), ".tmp-") {
+			t.Fatalf("stale tmp: %s", e.Name())
+		}
+	}
+	st, _ := os.Stat(path)
+	if st.Mode().Perm() != 0o600 {
+		t.Fatalf("perm %v, want 0600", st.Mode().Perm())
+	}
+	// round-trip
+	data, _ := os.ReadFile(path)
+	if !strings.Contains(string(data), "svc-x") {
+		t.Fatalf("config content missing role: %s", data)
+	}
+	// 备份限量: 多次 persist 后 .bak-* ≤ 6(限量5+可能本次)
+	for i := 0; i < 8; i++ {
+		cm.AddRole(fmt.Sprintf("r%d", i))
+	}
+	baks := 0
+	for _, e := range entries2(dir) {
+		if strings.Contains(e, ".bak-") {
+			baks++
+		}
+	}
+	if baks > 6 {
+		t.Fatalf("backups = %d, want ≤6", baks)
+	}
+}
+
+func entries2(dir string) []string {
+	var out []string
+	es, _ := os.ReadDir(dir)
+	for _, e := range es {
+		out = append(out, e.Name())
+	}
+	return out
 }

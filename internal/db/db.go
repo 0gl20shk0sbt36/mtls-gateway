@@ -119,10 +119,28 @@ func (s *Store) List() []CertRecord {
 	return out
 }
 
+// InsertUniqueName 按名称唯一插入: 已有同名(含吊销)则失败 — 原子防并发同名签发 TOCTOU
+func (s *Store) InsertUniqueName(r CertRecord) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, e := range s.table {
+		if e.Name == r.Name {
+			return fmt.Errorf("name %s already exists (%d record(s))", r.Name, len(s.table))
+		}
+	}
+	return s.upsertLocked(r)
+}
+
 // Upsert 新增或更新记录: 内存 + SQLite 同步
 func (s *Store) Upsert(r CertRecord) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.upsertLocked(r)
+}
+
+// upsertLocked 持锁前提的落库实现
+func (s *Store) upsertLocked(r CertRecord) error {
+	r.Purposes = append([]string(nil), r.Purposes...) // 深拷贝入表: 防调用方切片复用污染授权表
 	if r.IssuedAt == "" {
 		r.IssuedAt = time.Now().UTC().Format(time.RFC3339)
 	}

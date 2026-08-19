@@ -1,7 +1,9 @@
 package db
 
 import (
+	"fmt"
 	"path/filepath"
+	"sync"
 	"testing"
 )
 
@@ -164,5 +166,34 @@ func TestPurposesDeepCopy(t *testing.T) {
 	f2 := s.FindByName("dev")
 	if f2[0].Purposes[0] != "dsh" {
 		t.Fatalf("FindByName Purposes polluted: %v", f2[0].Purposes)
+	}
+}
+
+// 第九批: InsertUniqueName 原子性 — 并发同名只有一个成功
+func TestInsertUniqueNameConcurrent(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(filepath.Join(dir, "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	var wg sync.WaitGroup
+	okCount := 0
+	var mu sync.Mutex
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			err := s.InsertUniqueName(CertRecord{Serial: fmt.Sprintf("%d", i), Name: "same", Purposes: []string{"dsh"}, Status: "enabled"})
+			if err == nil {
+				mu.Lock()
+				okCount++
+				mu.Unlock()
+			}
+		}(i)
+	}
+	wg.Wait()
+	if okCount != 1 {
+		t.Fatalf("concurrent same-name inserts: %d succeeded, want exactly 1", okCount)
 	}
 }
