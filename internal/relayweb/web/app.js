@@ -225,6 +225,7 @@ async function loadTunnels() {
           await api("/api/tunnels/" + encodeURIComponent(btn.dataset.del), { method: "DELETE" });
           toast(t("delDone"));
           loadTunnels();
+          refreshServiceList(); // 服务回到下拉, 可重新添加
         } catch (e) { toast(e.message, true); }
       };
     }
@@ -322,6 +323,7 @@ async function init() {
       const r = await api("/api/tunnels", jpost(body));
       toast(t("addedService", { s: r.service, n: r.count }));
       loadTunnels();
+      refreshServiceList(); // 已添加的服务移出下拉
     } catch (e) { toast(e.message, true); }
   };
   await Promise.all([loadCerts(), loadTunnels()]);
@@ -329,6 +331,24 @@ async function init() {
 }
 
 init();
+
+// refreshServiceList: 服务下拉过滤已建隧道的服务(防止重复添加); 保留当前选中
+async function refreshServiceList() {
+  if (!SERVICES.length) { setSel("newServiceList", []); return; }
+  const prev = getSel("newServiceList");
+  try {
+    const cfg = await api("/api/config");
+    const done = new Set((cfg.tunnels || []).map((t) => t.service));
+    const list = SERVICES.filter((s) => !done.has(s.name));
+    setSel("newServiceList", list.map((s) => ({ value: s.name, label: s.name, raw: s })));
+    $("serviceHint").textContent = list.length ? t("svcHint", { n: list.length }) : t("svcHintNone");
+    if (prev && list.some((s) => s.name === prev)) {
+      pickSel("newServiceList", list.findIndex((s) => s.name === prev)); // 保留原选中
+    } else {
+      renderSvcChannels(null);
+    }
+  } catch (e) { /* 拉不到配置就不过滤 */ }
+}
 
 async function verifyAdmin() {
   const cert = getSel("adminCertList");
@@ -338,10 +358,7 @@ async function verifyAdmin() {
     const res = await api("/api/verify", jpost({ cert_id: cert, load_pwd: ADMIN_PWD }));
     // 服务列表(用该证书的 /info, v4: 服务+通道)
     SERVICES = res.services || [];
-    setSel("newServiceList", SERVICES.map((s) => ({ value: s.name, label: s.name, raw: s })));
-    $("serviceHint").textContent = SERVICES.length
-      ? t("svcHint", { n: SERVICES.length })
-      : t("svcHintNone");
+    await refreshServiceList(); // 过滤已建隧道的服务
     // 普通证书 → 新增隧道; admin 证书 → 证书管理
     if (res.admin) {
       $("tunnelSection").style.display = "none";
