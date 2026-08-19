@@ -145,7 +145,9 @@ function toast(msg, isErr) {
 function localizeServerError(msg) { return msg; }
 
 async function api(path, opts) {
-  const resp = await fetch(path, opts);
+  // 携带当前界面语言 → 后端按 X-Lang 返回错误消息
+  const headers = Object.assign({}, (opts && opts.headers) || {}, { "X-Lang": I18N.currentLang() });
+  const resp = await fetch(path, Object.assign({}, opts, { headers }));
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) throw new Error(data.error || ("HTTP " + resp.status));
   if (data && data.error) throw new Error(data.error);

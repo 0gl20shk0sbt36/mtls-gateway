@@ -21,6 +21,7 @@ import (
 	"mtls-gateway/internal/auth"
 	"mtls-gateway/internal/db"
 	"mtls-gateway/internal/eventlog"
+	"mtls-gateway/internal/i18n"
 	"mtls-gateway/internal/proxy"
 )
 
@@ -271,6 +272,23 @@ func resolveListen(bindHost, spec string) string {
 }
 
 // adminHandler 管理 TCP handler: 认证 + 只允许 admin_role
+// gwErrLang 按请求 X-Lang 返回错误字典(默认 zh)
+func gwErrLang(r *http.Request) *i18n.L {
+	if lang := r.Header.Get("X-Lang"); lang == "en" || lang == "zh" {
+		return i18n.New(lang)
+	}
+	return i18n.New("zh")
+}
+
+// gwErr 输出错误; 已知错误(immutable)按请求语言重翻, 其余原样
+func gwErr(w http.ResponseWriter, r *http.Request, err error) {
+	msg := err.Error()
+	if msg == i18n.New("zh").S("errImmutable") || msg == i18n.New("en").S("errImmutable") {
+		msg = gwErrLang(r).E("errImmutable").Error()
+	}
+	http.Error(w, msg, http.StatusBadRequest)
+}
+
 // 提供: 证书签发/吊销 (mgr) + 通道/服务/角色 CRUD (cm, 尊重 config_mode)
 func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *ConfigManager, ev *eventlog.Logger) http.Handler {
 	mux := http.NewServeMux()
@@ -301,11 +319,11 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *ConfigManager, ev *eve
 			Roles    []string           `json:"roles"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			gwErr(w, r, err)
 			return
 		}
 		if err := cm.ReplaceAll(b.Mappings, b.Services, b.Roles); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			gwErr(w, r, err)
 			return
 		}
 		mgr.SetDeclaredRoles(cm.Roles())
@@ -319,11 +337,11 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *ConfigManager, ev *eve
 			Name string `json:"name"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			gwErr(w, r, err)
 			return
 		}
 		if err := cm.AddRole(b.Name); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			gwErr(w, r, err)
 			return
 		}
 		mgr.SetDeclaredRoles(cm.Roles())
@@ -332,7 +350,7 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *ConfigManager, ev *eve
 	})
 	mux.HandleFunc("DELETE /admin/roles", func(w http.ResponseWriter, r *http.Request) {
 		if err := cm.DeleteRole(r.URL.Query().Get("name")); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			gwErr(w, r, err)
 			return
 		}
 		mgr.SetDeclaredRoles(cm.Roles())
@@ -347,11 +365,11 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *ConfigManager, ev *eve
 	mux.HandleFunc("POST /admin/mappings", func(w http.ResponseWriter, r *http.Request) {
 		var m proxy.Mapping
 		if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			gwErr(w, r, err)
 			return
 		}
 		if err := cm.AddMapping(m); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			gwErr(w, r, err)
 			return
 		}
 		cfgChanged("通道/服务/角色已变更")
@@ -360,11 +378,11 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *ConfigManager, ev *eve
 	mux.HandleFunc("PUT /admin/mappings", func(w http.ResponseWriter, r *http.Request) {
 		var m proxy.Mapping
 		if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			gwErr(w, r, err)
 			return
 		}
 		if err := cm.UpdateMapping(r.URL.Query().Get("id"), m); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			gwErr(w, r, err)
 			return
 		}
 		cfgChanged("通道/服务/角色已变更")
@@ -372,7 +390,7 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *ConfigManager, ev *eve
 	})
 	mux.HandleFunc("DELETE /admin/mappings", func(w http.ResponseWriter, r *http.Request) {
 		if err := cm.DeleteMapping(r.URL.Query().Get("id")); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			gwErr(w, r, err)
 			return
 		}
 		cfgChanged("通道/服务/角色已变更")
@@ -386,11 +404,11 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *ConfigManager, ev *eve
 	mux.HandleFunc("POST /admin/services", func(w http.ResponseWriter, r *http.Request) {
 		var s proxy.ServiceCfg
 		if err := json.NewDecoder(r.Body).Decode(&s); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			gwErr(w, r, err)
 			return
 		}
 		if err := cm.AddService(s); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			gwErr(w, r, err)
 			return
 		}
 		cfgChanged("通道/服务/角色已变更")
@@ -399,11 +417,11 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *ConfigManager, ev *eve
 	mux.HandleFunc("PUT /admin/services", func(w http.ResponseWriter, r *http.Request) {
 		var s proxy.ServiceCfg
 		if err := json.NewDecoder(r.Body).Decode(&s); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			gwErr(w, r, err)
 			return
 		}
 		if err := cm.UpdateService(r.URL.Query().Get("name"), s); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			gwErr(w, r, err)
 			return
 		}
 		cfgChanged("通道/服务/角色已变更")
@@ -411,7 +429,7 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *ConfigManager, ev *eve
 	})
 	mux.HandleFunc("DELETE /admin/services", func(w http.ResponseWriter, r *http.Request) {
 		if err := cm.DeleteService(r.URL.Query().Get("name")); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			gwErr(w, r, err)
 			return
 		}
 		cfgChanged("通道/服务/角色已变更")

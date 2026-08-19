@@ -59,18 +59,40 @@ func New(cfgPath string, src certsource.Source) *Relay {
 	}
 }
 
-// localizeLoadErr 证书加载错误本地化(私钥需密码/证书不存在)
-func (r *Relay) localizeLoadErr(certID string, err error) error {
+// localizeLoadErr 证书加载错误本地化(私钥需密码/证书不存在), 按给定语言
+func localizeLoadErr(l *i18n.L, certID string, err error) error {
 	s := err.Error()
 	switch {
 	case strings.Contains(s, "private key needs password"), strings.Contains(s, "failed to parse private key"):
-		return r.L.E("errPwdNeeded", certID)
+		return l.E("errPwdNeeded", certID)
 	case strings.Contains(s, "not found"):
-		return r.L.E("errCertNotFound", certID)
+		return l.E("errCertNotFound", certID)
 	case strings.Contains(s, "expired"):
-		return r.L.E("errExpired")
+		return l.E("errExpired")
 	}
 	return err
+}
+
+// loadCertLang 按指定语言加载证书(错误消息语言化); lang 空=进程默认
+func (r *Relay) loadCertLang(certID, lang string) (tls.Certificate, error) {
+	l := r.L
+	if lang == "en" || lang == "zh" {
+		l = i18n.New(lang)
+	}
+	r.mu.Lock()
+	c, ok := r.certCache[certID]
+	r.mu.Unlock()
+	if ok {
+		return c, nil
+	}
+	c, err := r.src.Load(certID)
+	if err != nil {
+		return tls.Certificate{}, localizeLoadErr(l, certID, err)
+	}
+	r.mu.Lock()
+	r.certCache[certID] = c
+	r.mu.Unlock()
+	return c, nil
 }
 
 // cfgListenHost 返回当前本地监听地址
@@ -111,7 +133,7 @@ func (r *Relay) loadCert(certID string) (tls.Certificate, error) {
 	}
 	c, err := r.src.Load(certID)
 	if err != nil {
-		return tls.Certificate{}, r.localizeLoadErr(certID, err)
+		return tls.Certificate{}, localizeLoadErr(r.L, certID, err)
 	}
 	r.certCache[certID] = c
 	return c, nil

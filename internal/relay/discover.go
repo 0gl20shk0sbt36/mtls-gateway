@@ -100,9 +100,10 @@ func (r *Relay) DiscoverWithCert(cert tls.Certificate) ([]ServiceInfo, error) {
 	return out.Services, nil
 }
 
-// DiscoverWithCertOf 用指定证书(从来源加载, 无密码)做发现 — 建隧道时按用户所选证书
-func (r *Relay) DiscoverWithCertOf(certID string) ([]ServiceInfo, error) {
-	cert, err := r.loadCert(certID)
+// DiscoverWithCertOf 用指定证书(从来源加载)做发现 — 建隧道时按用户所选证书
+// lang: 请求语言(zh/en; 空=进程默认)
+func (r *Relay) DiscoverWithCertOf(certID, lang string) ([]ServiceInfo, error) {
+	cert, err := r.loadCertLang(certID, lang)
 	if err != nil {
 		return nil, err
 	}

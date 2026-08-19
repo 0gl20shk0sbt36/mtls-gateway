@@ -11,6 +11,7 @@ import (
 
 	"mtls-gateway/internal/certsource"
 	"mtls-gateway/internal/eventlog"
+	"mtls-gateway/internal/i18n"
 )
 
 // Manager 中继管理入口: 外壳(CLI/WebUI/GUI)唯一接口。
@@ -133,9 +134,10 @@ func (m *Manager) ListCerts() ([]certsource.IdentityMeta, error) { return m.rela
 // Services 从服务端 /info 拉取可用服务 (供外壳选择)
 func (m *Manager) Services() ([]ServiceInfo, error) { return m.relay.Discover() }
 
-// ServicesForCert 用指定证书(无密码)做服务发现 — 建隧道时用所选证书, 避免误用证书源第一枚
-func (m *Manager) ServicesForCert(certID string) ([]ServiceInfo, error) {
-	return m.relay.DiscoverWithCertOf(certID)
+// ServicesForCert 用指定证书做服务发现 — 建隧道时用所选证书, 避免误用证书源第一枚
+// lang: 请求语言(zh/en; 空=进程默认)
+func (m *Manager) ServicesForCert(certID, lang string) ([]ServiceInfo, error) {
+	return m.relay.DiscoverWithCertOf(certID, lang)
 }
 
 // —— 服务端管理桥 (证书管理台用; 需 admin 证书) ——
@@ -262,7 +264,12 @@ func (m *Manager) AdminMappings(certID, password string) ([]ServiceInfo, error) 
 
 // BuildServiceTunnels 依据服务端服务定义生成一条服务级隧道(含全部通道的本地路由)。
 // locals: 通道 listen → 本地路由 (缺省 = 通道 listen 原样, 含冒号)
-func (m *Manager) BuildServiceTunnels(svc ServiceInfo, locals map[string]string, certID string) (Tunnel, error) {
+// lang: 错误语言(zh/en; 空=进程默认)
+func (m *Manager) BuildServiceTunnels(svc ServiceInfo, locals map[string]string, certID, lang string) (Tunnel, error) {
+	l := m.relay.L
+	if lang == "en" || lang == "zh" {
+		l = i18n.New(lang)
+	}
 	t := Tunnel{Service: svc.Name, CertID: certID, Enabled: true}
 	for _, ch := range svc.Channels {
 		local := ""
@@ -275,9 +282,17 @@ func (m *Manager) BuildServiceTunnels(svc ServiceInfo, locals map[string]string,
 		t.Routes = append(t.Routes, TunnelRoute{Channel: ch.Listen, Local: local})
 	}
 	if len(t.Routes) == 0 {
-		return Tunnel{}, m.relay.L.E("errNoChannels", svc.Name)
+		return Tunnel{}, l.E("errNoChannels", svc.Name)
 	}
 	return t, nil
+}
+
+// reqL 按请求 X-Lang 返回错误字典(空=进程默认)
+func (m *Manager) reqL(r *http.Request) *i18n.L {
+	if lang := r.Header.Get("X-Lang"); lang == "en" || lang == "zh" {
+		return i18n.New(lang)
+	}
+	return m.relay.L
 }
 
 // webUILogger 懒创建 WebUI 事件日志(从配置 webui_log_file; 空=禁用)
@@ -495,10 +510,10 @@ func (m *Manager) Handler() http.Handler {
 			return
 		}
 		if b.Service == "" || b.CertID == "" {
-			writeErr(w, m.relay.L.E("errNeedSvcCert"))
+			writeErr(w, m.reqL(r).E("errNeedSvcCert"))
 			return
 		}
-		svcs, err := m.ServicesForCert(b.CertID)
+		svcs, err := m.ServicesForCert(b.CertID, r.Header.Get("X-Lang"))
 		if err != nil {
 			writeErr(w, err)
 			return
@@ -511,10 +526,10 @@ func (m *Manager) Handler() http.Handler {
 			}
 		}
 		if svc == nil {
-			writeErr(w, m.relay.L.E("errSvcNotFound", b.Service))
+			writeErr(w, m.reqL(r).E("errSvcNotFound", b.Service))
 			return
 		}
-		t, err := m.BuildServiceTunnels(*svc, b.Locals, b.CertID)
+		t, err := m.BuildServiceTunnels(*svc, b.Locals, b.CertID, r.Header.Get("X-Lang"))
 		if err != nil {
 			writeErr(w, err)
 			return
@@ -530,7 +545,7 @@ func (m *Manager) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/tunnels/", func(w http.ResponseWriter, r *http.Request) {
 		id := strings.TrimPrefix(r.URL.Path, "/api/tunnels/")
 		if id == "" {
-			writeErr(w, m.relay.L.E("errNeedTunnelID"))
+			writeErr(w, m.reqL(r).E("errNeedTunnelID"))
 			return
 		}
 		ok, err := m.DelTunnel(id)
