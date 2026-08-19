@@ -1,4 +1,10 @@
 // mtls-relay WebUI 前端 — 直接调用本地管理 API (/api/*)
+function initPwdEye(btnId, inputId) {
+  $(btnId).onclick = () => {
+    const i = $(inputId);
+    i.type = i.type === "password" ? "text" : "password";
+  };
+}
 const $ = (id) => document.getElementById(id);
 
 // —— 自绘下拉(替代原生 select, 暗色全浏览器可控) ——
@@ -184,6 +190,8 @@ async function init() {
   $("adminVerify").onclick = verifyAdmin;
   $("adminIssue").onclick = adminIssue;
   $("adminRevoke").onclick = adminRevoke;
+  initPwdEye("adminPwdEye", "adminPwd");
+  initPwdEye("newCertPwdEye", "newCertPwd");
   $("btnStart").onclick = async () => { try { await api("/api/start", jpost(null)); toast("已启动"); loadTunnels(); } catch (e) { toast(e.message, true); } };
   $("btnReload").onclick = async () => { try { await api("/api/reload", jpost(null)); toast("已 reload"); loadTunnels(); } catch (e) { toast(e.message, true); } };
   $("btnStop").onclick = async () => { try { await api("/api/stop", jpost(null)); toast("已停止"); loadTunnels(); } catch (e) { toast(e.message, true); } };
