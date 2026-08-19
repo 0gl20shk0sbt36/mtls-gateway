@@ -344,7 +344,7 @@ func gatewayHandler(gw *auth.Gateway, cm *ConfigManager, port string, acc *event
 		if acc != nil {
 			code := sw.status
 			if code == 0 {
-				code = http.StatusOK // Hijack/未写头时记 200
+				code = http.StatusOK // 未写头时记 200(Hijack 已记 101)
 			}
 			acc.Write(accessEvent(rec, rt.Listen(), r.Method, r.URL.Path, code, r.ContentLength, sw.bytes))
 		}

@@ -34,8 +34,8 @@ type tunnelRuntime struct {
 	route       TunnelRoute
 	certID      string
 	listener    net.Listener
-	srv         *http.Server    // 本地路径模式时的 HTTP 服务
-	rpTransport *http.Transport // 本地路径模式的反代 Transport(stop 时释放)
+	srv         *http.Server                   // 本地路径模式时的 HTTP 服务
+	rpTransport atomic.Pointer[http.Transport] // 本地路径模式的反代 Transport(stop 时释放)
 	ctx         context.Context
 	cancel      context.CancelFunc
 	metrics     tunnelMetrics
@@ -133,6 +133,13 @@ func (rt *tunnelRuntime) localHTTPHandler(localPath string) http.Handler {
 		}
 		// Director/Transport 捕获本地快照(up/tc 不可变), 避免共享变量被重建改写的错配
 		upCopy, tcCopy := up, tc
+		tr := &http.Transport{
+			TLSClientConfig:       tcCopy,
+			DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+			ResponseHeaderTimeout: 30 * time.Second,
+			IdleConnTimeout:       90 * time.Second,
+		}
+		rt.rpTransport.Store(tr) // stop 时释放(stop 与 init 并发安全)
 		rp = &httputil.ReverseProxy{
 			Director: func(req *http.Request) {
 				rest := strings.TrimPrefix(req.URL.Path, localPath)
@@ -145,12 +152,7 @@ func (rt *tunnelRuntime) localHTTPHandler(localPath string) http.Handler {
 				req.URL.RawPath = ""
 				req.Host = upCopy.Host
 			},
-			Transport: &http.Transport{
-				TLSClientConfig:       tcCopy,
-				DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
-				ResponseHeaderTimeout: 30 * time.Second,
-				IdleConnTimeout:       90 * time.Second,
-			},
+			Transport: tr,
 		}
 		builtHost = host
 		builtAt = time.Now()
@@ -163,18 +165,13 @@ func (rt *tunnelRuntime) localHTTPHandler(localPath string) http.Handler {
 			http.Error(w, "local path prefix mismatch: "+p, http.StatusNotFound)
 			return
 		}
+		init() // 每次请求: 内部按 serverAddr/证书轮换条件判断是否重建
 		mu.RLock()
 		r := rp
 		mu.RUnlock()
 		if r == nil {
-			init()
-			mu.RLock()
-			r = rp
-			mu.RUnlock()
-			if r == nil {
-				http.Error(w, "upstream not ready (retry later)", http.StatusBadGateway)
-				return
-			}
+			http.Error(w, "upstream not ready (retry later)", http.StatusBadGateway)
+			return
 		}
 		r.ServeHTTP(w, req)
 	})
@@ -322,8 +319,8 @@ func (rt *tunnelRuntime) handleConn(local net.Conn) {
 
 // stop closes the listener and all active connections for this tunnel.
 func (rt *tunnelRuntime) stop() {
-	if rt.rpTransport != nil {
-		rt.rpTransport.CloseIdleConnections() // 反代空闲连接释放
+	if tr := rt.rpTransport.Load(); tr != nil {
+		tr.CloseIdleConnections() // 反代空闲连接释放
 	}
 	rt.cancel()
 	rt.listener.Close()

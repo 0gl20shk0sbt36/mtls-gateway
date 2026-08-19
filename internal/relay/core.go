@@ -273,8 +273,8 @@ func (r *Relay) Reload(cfg RelayConfig) error {
 				old.stop()
 				rt := &tunnelRuntime{r: r, key: spec.key, service: spec.service, idle: r.idleTimeout, route: spec.route, certID: spec.certID, conns: map[net.Conn]struct{}{}}
 				if err := r.startTunnel(rt); err != nil {
-					// 回滚: 恢复旧隧道(避免服务中断 + 状态虚报); 复用旧 metrics 防状态清零
-					oldRT := &tunnelRuntime{r: r, key: spec.key, service: spec.service, idle: r.idleTimeout, route: old.route, certID: old.certID, conns: map[net.Conn]struct{}{}, metrics: old.metrics}
+					// 回滚: 恢复旧隧道(避免服务中断 + 状态虚报); metrics 归零符合"重启归零"语义
+					oldRT := &tunnelRuntime{r: r, key: spec.key, service: spec.service, idle: r.idleTimeout, route: old.route, certID: old.certID, conns: map[net.Conn]struct{}{}}
 					if rerr := r.startTunnel(oldRT); rerr != nil {
 						delete(r.tunnels, key) // 恢复也失败: 删除条目, 不虚报 Running
 					} else {
