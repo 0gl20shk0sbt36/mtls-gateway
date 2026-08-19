@@ -13,8 +13,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
-	"time"
 
 	"github.com/BurntSushi/toml"
 
@@ -404,6 +402,4 @@ func loadConfig(path string) Config {
 	return cfg
 }
 
-var cfgPath = flag.String("config", "/etc/mtls-gw/config.toml", "配置文件路径")
-var _ = strings.TrimSpace
-var _ = time.Now
+var cfgPath *string
