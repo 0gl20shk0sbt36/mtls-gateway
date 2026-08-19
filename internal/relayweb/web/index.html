@@ -62,10 +62,14 @@
   input:focus, select:focus{ outline:none; border-color:var(--accent2); box-shadow:var(--shadow-focus); }
   html{ color-scheme: dark; } /* 原生控件(滚动条等)走暗色 */
   /* 自绘密码框: 常驻"显示/隐藏"眼睛(规避浏览器原生密码框怪癖) */
+  input[type="password"]::-ms-reveal, input[type="password"]::-ms-clear{ display:none; } /* 隐藏 Edge 原生眼睛 */
   .pwd-wrap{ position:relative; display:inline-flex; align-items:center; min-width:150px; }
-  .pwd-wrap input{ width:100%; padding-right:32px; }
-  .pwd-wrap .eye{ position:absolute; right:6px; background:none; border:none; color:var(--text3); cursor:pointer; font-size:14px; padding:0; line-height:1; }
+  .pwd-wrap input{ width:100%; padding-right:34px; }
+  .pwd-wrap .eye{ position:absolute; right:2px; top:50%; transform:translateY(-50%);
+    width:28px; height:26px; display:flex; align-items:center; justify-content:center;
+    background:var(--bg2); border:none; border-radius:6px; color:var(--text3); cursor:pointer; z-index:2; }
   .pwd-wrap .eye:hover{ color:var(--text); }
+  .pwd-wrap .eye svg{ display:block; }
   /* ===== 自绘下拉(替代原生 select, 全浏览器暗色可控) ===== */
   .sel{ position:relative; }
   .sel .sel-btn{ width:100%; display:flex; justify-content:space-between; align-items:center;
@@ -158,7 +162,7 @@
       </div>
       <div class="pwd-wrap">
         <input id="adminPwd" type="password" placeholder="证书密码(如有)" class="inp" autocomplete="new-password">
-        <button type="button" class="eye" id="adminPwdEye" title="显示/隐藏密码">👁</button>
+        <button type="button" class="eye" id="adminPwdEye" title="显示/隐藏密码"></button>
       </div>
       <button type="button" class="primary small" id="adminVerify">验证</button>
     </div>
@@ -195,7 +199,7 @@
       <div class="row" style="margin-top:8px">
         <div class="pwd-wrap" style="flex:1.4">
         <input id="newCertPwd" type="password" placeholder="p12 密码 (可选, 留空自动生成)" class="inp" autocomplete="new-password">
-        <button type="button" class="eye" id="newCertPwdEye" title="显示/隐藏密码">👁</button>
+        <button type="button" class="eye" id="newCertPwdEye" title="显示/隐藏密码"></button>
       </div>
         <button type="button" class="primary small" id="adminIssue">签发</button>
       </div>
