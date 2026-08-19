@@ -114,8 +114,12 @@ func SaveConfig(path string, cfg RelayConfig) error {
 		return fmt.Errorf("create temp config: %w", err)
 	}
 	defer os.Remove(tmp.Name()) // rename 失败/异常时清理残留
-	if err := os.WriteFile(tmp.Name(), data, 0o600); err != nil {
+	if _, err := tmp.Write(data); err != nil { // 用句柄写(避免二次打开 + fd 泄漏)
+		tmp.Close()
 		return fmt.Errorf("write config %s: %w", path, err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close temp config: %w", err)
 	}
 	if err := os.Rename(tmp.Name(), path); err != nil {
 		return fmt.Errorf("replace config %s: %w", path, err)

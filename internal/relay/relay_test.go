@@ -420,3 +420,30 @@ func TestApplyServerCARejectsBad(t *testing.T) {
 		t.Fatalf("valid server_ca should pass: %v", err)
 	}
 }
+
+// 第八批: LoadCertWithPassword 回退分支(源不实现 LoaderWithPassword → loadCert 自锁路径, 防死锁回归)
+type noPwdSource struct{ certSource certsource.Source }
+
+func (n noPwdSource) List() ([]certsource.IdentityMeta, error) { return n.certSource.List() }
+func (n noPwdSource) Load(id string) (tls.Certificate, error) {
+	return n.certSource.Load(id)
+}
+
+func TestLoadCertWithPasswordFallback(t *testing.T) {
+	h := newHarness(t)
+	defer h.close()
+	src, err := certsource.OpenFile(h.clientPairPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := New("", noPwdSource{src})
+	defer r.Close()
+	// 无密码证书: 回退到 loadCert(自锁), 不持外层锁 → 不死锁
+	cert, err := r.LoadCertWithPassword(h.clientPairPath, "")
+	if err != nil {
+		t.Fatalf("fallback load should succeed: %v", err)
+	}
+	if len(cert.Certificate) == 0 {
+		t.Fatal("empty cert")
+	}
+}

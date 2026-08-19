@@ -103,6 +103,7 @@ func (s *Store) Get(serial string) (CertRecord, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	r, ok := s.table[serial]
+	r.Purposes = append([]string(nil), r.Purposes...) // 深拷贝: 防调用方就地改写污染授权表
 	return r, ok
 }
 
@@ -148,6 +149,7 @@ func (s *Store) FindByName(name string) []CertRecord {
 	var out []CertRecord
 	for _, r := range s.table {
 		if r.Name == name {
+			r.Purposes = append([]string(nil), r.Purposes...) // 深拷贝: 防调用方就地改写污染授权表
 			out = append(out, r)
 		}
 	}

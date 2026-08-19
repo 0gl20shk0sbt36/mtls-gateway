@@ -152,3 +152,13 @@ func TestSaveConfigAtomicRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+// 第八批: writeErr Content-Type 断言
+func TestWriteErrContentType(t *testing.T) {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	writeErr(rec, req, errors.New("boom"))
+	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "application/json") {
+		t.Fatalf("Content-Type = %q, want application/json", ct)
+	}
+}

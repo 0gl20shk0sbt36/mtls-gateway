@@ -235,6 +235,7 @@ func TestNewRouterDeepCopy(t *testing.T) {
 	// 就地改写输入切片(模拟 configmgr Delete/Update 行为)
 	ms[0].Listen = ":9999"
 	ss[0].Roles[0] = "hacked"
+	ss[0].Channels[0] = "hacked-ch"
 	// router 内部不受影响
 	if got := r.Routes(); len(got) != 1 || got[0].ID != "m1" {
 		t.Fatalf("routes polluted: %+v", got)

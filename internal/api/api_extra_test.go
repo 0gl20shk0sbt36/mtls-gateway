@@ -48,3 +48,13 @@ func TestIssueCertDaysBoundary(t *testing.T) {
 		t.Fatal("3651 should be rejected")
 	}
 }
+
+// 第八批: apiErrStatus 中文 404
+func TestAPIErrStatusCN(t *testing.T) {
+	if got := apiErrStatus(errors.New("证书 不存在")); got != 404 {
+		t.Fatalf("证书 不存在 → %d, want 404", got)
+	}
+	if got := apiErrStatus(errors.New("未找到")); got != 404 {
+		t.Fatalf("未找到 → %d, want 404", got)
+	}
+}

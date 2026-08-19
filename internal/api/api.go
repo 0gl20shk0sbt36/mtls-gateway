@@ -442,6 +442,7 @@ func (m *Manager) handler(isLocal bool) http.Handler {
 			http.Error(w, err.Error(), apiErrStatus(err))
 			return
 		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 	})
 	mux.HandleFunc("GET /admin/certs", func(w http.ResponseWriter, r *http.Request) {
@@ -449,6 +450,7 @@ func (m *Manager) handler(isLocal bool) http.Handler {
 			http.Error(w, "admin required", http.StatusForbidden)
 			return
 		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		json.NewEncoder(w).Encode(m.store.List())
 	})
 	mux.HandleFunc("GET /admin/health", func(w http.ResponseWriter, r *http.Request) {

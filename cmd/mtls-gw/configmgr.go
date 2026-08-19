@@ -58,7 +58,13 @@ func (m *ConfigManager) Mappings() []proxy.Mapping {
 func (m *ConfigManager) Services() []proxy.ServiceCfg {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return append([]proxy.ServiceCfg(nil), m.cfg.Services...)
+	out := make([]proxy.ServiceCfg, len(m.cfg.Services))
+	for i := range m.cfg.Services {
+		out[i] = m.cfg.Services[i]
+		out[i].Roles = append([]string(nil), m.cfg.Services[i].Roles...)
+		out[i].Channels = append([]string(nil), m.cfg.Services[i].Channels...)
+	}
+	return out
 }
 
 func (m *ConfigManager) Roles() []string {

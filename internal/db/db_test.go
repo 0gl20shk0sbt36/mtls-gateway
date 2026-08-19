@@ -131,3 +131,38 @@ func TestFindByNameAndListOrder(t *testing.T) {
 		t.Fatalf("List: %d", len(all))
 	}
 }
+
+// 第八批: Get/List/FindByName Purposes 深拷贝 — 改返回切片不污染表
+func TestPurposesDeepCopy(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(filepath.Join(dir, "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	rec := CertRecord{Serial: "1", Name: "dev", Purposes: []string{"dsh"}, Status: "enabled"}
+	if err := s.Upsert(rec); err != nil {
+		t.Fatal(err)
+	}
+	// Get
+	g, _ := s.Get("1")
+	g.Purposes[0] = "MUTATED"
+	g2, _ := s.Get("1")
+	if g2.Purposes[0] != "dsh" {
+		t.Fatalf("Get Purposes polluted: %v", g2.Purposes)
+	}
+	// List
+	ls := s.List()
+	ls[0].Purposes[0] = "MUTATED2"
+	l2 := s.List()
+	if l2[0].Purposes[0] != "dsh" {
+		t.Fatalf("List Purposes polluted: %v", l2[0].Purposes)
+	}
+	// FindByName
+	fn := s.FindByName("dev")
+	fn[0].Purposes[0] = "MUTATED3"
+	f2 := s.FindByName("dev")
+	if f2[0].Purposes[0] != "dsh" {
+		t.Fatalf("FindByName Purposes polluted: %v", f2[0].Purposes)
+	}
+}
