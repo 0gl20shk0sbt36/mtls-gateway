@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -101,7 +102,7 @@ func (a *AdminClient) List() (json.RawMessage, error) {
 	return raw, err
 }
 
-// ListMappings 拉取全部映射(签发时选用途)
+// ListMappings 拉取全部映射(admin 用; 供签发时选用途)
 func (a *AdminClient) ListMappings() ([]ServiceInfo, error) {
 	var out struct {
 		Mappings []ServiceInfo `json:"mappings"`
@@ -110,6 +111,35 @@ func (a *AdminClient) ListMappings() ([]ServiceInfo, error) {
 		return nil, err
 	}
 	return out.Mappings, nil
+}
+
+// Cfg 拉取服务端配置总览 (mode + mappings + services)
+func (a *AdminClient) Cfg() (json.RawMessage, error) {
+	var raw json.RawMessage
+	err := a.do("GET", "/admin/config", nil, &raw)
+	return raw, err
+}
+
+// Mapping 通道 CRUD (method: POST/PUT/DELETE)
+func (a *AdminClient) Mapping(method, id string, body json.RawMessage) (json.RawMessage, error) {
+	path := "/admin/mappings"
+	if id != "" {
+		path += "?id=" + url.QueryEscape(id)
+	}
+	var raw json.RawMessage
+	err := a.do(method, path, body, &raw)
+	return raw, err
+}
+
+// Service 服务 CRUD (method: POST/PUT/DELETE)
+func (a *AdminClient) Service(method, name string, body json.RawMessage) (json.RawMessage, error) {
+	path := "/admin/services"
+	if name != "" {
+		path += "?name=" + url.QueryEscape(name)
+	}
+	var raw json.RawMessage
+	err := a.do(method, path, body, &raw)
+	return raw, err
 }
 
 // Issue 向服务端申请签发一张新证书 (由 admin 授权)

@@ -189,6 +189,33 @@ func (m *Manager) AdminRevoke(certID, password, serial string) error {
 	return ac.Revoke(serial)
 }
 
+// AdminConfig 服务端配置总览 (mode + mappings + services)
+func (m *Manager) AdminConfig(certID, password string) (json.RawMessage, error) {
+	ac, err := m.adminClientFor(certID, password)
+	if err != nil {
+		return nil, err
+	}
+	return ac.Cfg()
+}
+
+// AdminMapping 通道 CRUD 透传 (method: POST/PUT/DELETE)
+func (m *Manager) AdminMapping(certID, password, method, id string, body json.RawMessage) (json.RawMessage, error) {
+	ac, err := m.adminClientFor(certID, password)
+	if err != nil {
+		return nil, err
+	}
+	return ac.Mapping(method, id, body)
+}
+
+// AdminService 服务 CRUD 透传 (method: POST/PUT/DELETE)
+func (m *Manager) AdminService(certID, password, method, name string, body json.RawMessage) (json.RawMessage, error) {
+	ac, err := m.adminClientFor(certID, password)
+	if err != nil {
+		return nil, err
+	}
+	return ac.Service(method, name, body)
+}
+
 // AdminListCerts 拉取服务端全部证书(供吊销下拉)
 func (m *Manager) AdminListCerts(certID, password string) (json.RawMessage, error) {
 	ac, err := m.adminClientFor(certID, password)
@@ -349,6 +376,55 @@ func (m *Manager) Handler() http.Handler {
 			return
 		}
 		writeJSON(w, map[string]any{"ok": true})
+	})
+
+	// POST /api/admin/config — 服务端配置总览(mode+mappings+services)
+	mux.HandleFunc("POST /api/admin/config", func(w http.ResponseWriter, r *http.Request) {
+		var b adminVerifyReq
+		json.NewDecoder(r.Body).Decode(&b)
+		raw, err := m.AdminConfig(b.CertID, b.LoadPwd)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(raw)
+	})
+	// POST /api/admin/mapping — 通道 CRUD 透传 {cert_id, load_pwd, method, id?, mapping}
+	mux.HandleFunc("POST /api/admin/mapping", func(w http.ResponseWriter, r *http.Request) {
+		var b struct {
+			CertID  string          `json:"cert_id"`
+			LoadPwd string          `json:"load_pwd"`
+			Method  string          `json:"method"`
+			ID      string          `json:"id"`
+			Mapping json.RawMessage `json:"mapping"`
+		}
+		json.NewDecoder(r.Body).Decode(&b)
+		raw, err := m.AdminMapping(b.CertID, b.LoadPwd, b.Method, b.ID, b.Mapping)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(raw)
+	})
+	// POST /api/admin/service — 服务 CRUD 透传 {cert_id, load_pwd, method, name?, service}
+	mux.HandleFunc("POST /api/admin/service", func(w http.ResponseWriter, r *http.Request) {
+		var b struct {
+			CertID  string          `json:"cert_id"`
+			LoadPwd string          `json:"load_pwd"`
+			Method  string          `json:"method"`
+			Name    string          `json:"name"`
+			Service json.RawMessage `json:"service"`
+		}
+		json.NewDecoder(r.Body).Decode(&b)
+		raw, err := m.AdminService(b.CertID, b.LoadPwd, b.Method, b.Name, b.Service)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(raw)
 	})
 
 	mux.HandleFunc("GET /api/config", func(w http.ResponseWriter, r *http.Request) {
