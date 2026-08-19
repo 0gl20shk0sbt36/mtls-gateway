@@ -4,13 +4,14 @@
 #       Windows echo 9087 (schtasks mtls-echo); 本机共享 certs /tmp/e2e/win2/certs
 set -euo pipefail
 
-GW_IP="${GW_IP:-100.64.0.2}"
-ADMIN_PWD="${ADMIN_PWD:-dandan070804}"
+# 环境变量注入(不落库): GW_IP / ADMIN_PWD / CERTS_DIR / CA_FILE
+GW_IP="${GW_IP:?需要 GW_IP(Windows gw Tailscale IP)}"
+ADMIN_PWD="${ADMIN_PWD:?需要 ADMIN_PWD(admin 证书私钥密码)}"
 RELAY_PORT=28190
 LOCAL_PORT=48191
-CERTS=/tmp/e2e/win2/certs
+CERTS="${CERTS_DIR:-/tmp/e2e/win2/certs}"
 RELAY_BIN=/tmp/e2e/m2/mtls-relay2
-CA=/tmp/e2e/win2/ca.crt
+CA="${CA_FILE:-/tmp/e2e/win2/ca.crt}"
 
 fail() { echo "✘ $*"; exit 1; }
 ok()   { echo "✔ $*"; }
@@ -66,7 +67,16 @@ BARE=$(curl -sk -o /dev/null -w "%{http_code}" --connect-timeout 5 https://$GW_I
 [ "$BARE" = "000" ] || fail "无证书直连应被拒, got $BARE"
 ok "mTLS: 无证书直连 = 000 (握手拒绝)"
 
-BADCERT=$(curl -sk --cert /tmp/mtls-e2e-ci/bad-client.pem --key /tmp/mtls-e2e-ci/bad-client.pem -o /dev/null -w "%{http_code}" --connect-timeout 5 https://$GW_IP:29992/ || true)
+BAD_CERT="${BAD_CERT:-$CERTS/../bad-client.pem}"
+if [ ! -f "$BAD_CERT" ]; then
+  BAD_DIR="$(dirname "$BAD_CERT")"; mkdir -p "$BAD_DIR"
+  openssl req -x509 -newkey rsa:2048 -nodes -keyout "$BAD_DIR/bad-ca.key" -out "$BAD_DIR/bad-ca.crt" -days 3650 -subj "/CN=bad-ca" 2>/dev/null
+  openssl req -new -newkey rsa:2048 -nodes -keyout "$BAD_DIR/bad-client.key" -out "$BAD_DIR/bad-client.csr" -subj "/CN=bad-client" 2>/dev/null
+  openssl x509 -req -in "$BAD_DIR/bad-client.csr" -CA "$BAD_DIR/bad-ca.crt" -CAkey "$BAD_DIR/bad-ca.key" -days 365 -out "$BAD_DIR/bad-client.crt" 2>/dev/null
+  cat "$BAD_DIR/bad-client.crt" "$BAD_DIR/bad-client.key" > "$BAD_CERT"
+  rm -f "$BAD_DIR/bad-client.csr"
+fi
+BADCERT=$(curl -sk --cert "$BAD_CERT" --key "$BAD_CERT" -o /dev/null -w "%{http_code}" --connect-timeout 5 https://$GW_IP:29992/ || true)
 [ "$BADCERT" = "000" ] || fail "坏 CA 证书应被拒, got $BADCERT"
 ok "mTLS: 错误 CA 证书 = 000 (拒绝)"
 

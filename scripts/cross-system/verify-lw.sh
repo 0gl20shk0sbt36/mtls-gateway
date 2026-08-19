@@ -5,12 +5,13 @@
 # 本脚本在 Linux 执行, 通过 sshpass 操作 Windows relay API。
 set -euo pipefail
 
-WIN_IP="${WIN_IP:-100.64.0.2}"
-WIN_USER=yyx
-WIN_PASS="${WIN_PASS:-$(cat ~/.winpass 2>/dev/null || echo dandan070804)}"
-RELAY_PORT=28184
-LOCAL_PORT=48391
-GW_IP=100.64.0.1
+# 环境变量注入(不落库): WIN_IP / WIN_USER / WIN_PASS / GW_IP
+WIN_IP="${WIN_IP:?需要 WIN_IP(Windows Tailscale IP)}"
+WIN_USER="${WIN_USER:-yyx}"
+WIN_PASS="${WIN_PASS:?需要 WIN_PASS(Windows ssh 密码)}"
+RELAY_PORT="${RELAY_PORT:-28184}"
+LOCAL_PORT="${LOCAL_PORT:-48391}"
+GW_IP="${GW_IP:?需要 GW_IP(Linux gw Tailscale IP)}"
 SSH="sshpass -p $WIN_PASS ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 $WIN_USER@$WIN_IP"
 
 fail() { echo "✘ $*"; exit 1; }

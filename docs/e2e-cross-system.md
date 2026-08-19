@@ -48,7 +48,7 @@ Windows 100.64.0.2 (Tailscale)          Linux VM 100.64.0.1 (Tailscale)
 bash scripts/cross-system/verify-wl.sh
 ```
 
-验证内容: Linux relay 连 Windows gw → admin 证书验证 (密码 dandan070804)
+验证内容: Linux relay 连 Windows gw → admin 证书验证 (密码来自环境变量 ADMIN_PWD, 不落库)
 → 签发无密码业务证书 → 建隧道 → 本地路由转发 → Windows echo 9087 → 无证书/坏 CA 直连被拒。
 
 ### 方向 L-W (Linux gw + Windows relay)

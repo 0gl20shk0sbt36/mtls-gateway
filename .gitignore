@@ -44,3 +44,5 @@ certs/
 .idea/
 .vscode/
 node_modules/
+# 跨系统复跑凭据(本地, 不提交)
+scripts/cross-system/.env
