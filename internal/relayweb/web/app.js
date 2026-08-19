@@ -399,7 +399,7 @@ async function loadAdminData() {
     // 吊销下拉: 服务端证书列表
     const arr = Array.isArray(cs) ? cs : (cs.certs || []);
     setSel("revokeCertList", arr.map((c) => ({ value: c.serial || "", label: `${c.name || "(无名)"} · ${c.serial || ""}` })));
-  } catch (e) { /* 加载失败不阻塞 */ }
+  } catch (e) { console.error("loadAdminData:", e); /* 加载失败不阻塞 */ }
 }
 
 // 新建通道的 target 自动联动: 填 listen 时自动拼到 http://127.0.0.1 后面;
