@@ -2,7 +2,6 @@ package eventlog
 
 import (
 	"bufio"
-	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
