@@ -78,6 +78,7 @@ func (m *Manager) AddTunnel(t Tunnel) error {
 	m.mu.Lock()
 	m.cfg.UpsertTunnel(t)
 	cfg := m.cfg
+	cfg.Tunnels = append([]Tunnel(nil), m.cfg.Tunnels...) // 深拷贝: 防锁外 marshal 与并发修改竞态
 	np := m.noPersist
 	m.mu.Unlock()
 	if !np {
@@ -101,6 +102,7 @@ func (m *Manager) DelTunnel(id string) (bool, error) {
 	m.mu.Lock()
 	ok := m.cfg.DelTunnel(id)
 	cfg := m.cfg
+	cfg.Tunnels = append([]Tunnel(nil), m.cfg.Tunnels...) // 深拷贝: 防锁外 marshal 与并发修改竞态
 	np := m.noPersist
 	m.mu.Unlock()
 	if !ok {
@@ -163,7 +165,7 @@ func (m *Manager) adminClientFor(certID, password string) (*AdminClient, error) 
 	if err != nil {
 		return nil, err
 	}
-	return NewAdminClient(addr, cert, m.relay.rootCAs), nil
+	return NewAdminClient(addr, cert, m.relay.rootCAsCopy()), nil
 }
 
 func (m *Manager) AdminVerify(certID, password string) error {
@@ -192,7 +194,7 @@ func (m *Manager) Verify(certID, password string) (*VerifyResult, error) {
 	}
 	res := &VerifyResult{Services: svcs}
 	if addr := m.adminAddr(); addr != "" {
-		if err := NewAdminClient(addr, cert, m.relay.rootCAs).Verify(); err == nil {
+		if err := NewAdminClient(addr, cert, m.relay.rootCAsCopy()).Verify(); err == nil {
 			res.Admin = true
 		}
 	}
@@ -644,14 +646,13 @@ func writeErr(w http.ResponseWriter, r *http.Request, err error) {
 		code = http.StatusForbidden
 	case strings.Contains(msg, "required"), strings.Contains(msg, "必填"), strings.Contains(msg, "不能为空"),
 		strings.Contains(msg, "格式"), strings.Contains(msg, "invalid"), strings.Contains(msg, "非法"),
-		strings.Contains(msg, "保留字"), strings.Contains(msg, "禁"):
+		strings.Contains(msg, "保留字"):
 		code = http.StatusBadRequest
 	case strings.Contains(msg, "已存在"), strings.Contains(msg, "already exists"):
 		code = http.StatusConflict
 	case strings.Contains(msg, "not found"), strings.Contains(msg, "未找到"), strings.Contains(msg, "不存在"):
 		code = http.StatusNotFound
-	case strings.Contains(msg, "forbidden"), strings.Contains(msg, "无权"), strings.Contains(msg, "拒绝"),
-		strings.Contains(msg, "未声明"):
+	case strings.Contains(msg, "forbidden"), strings.Contains(msg, "无权"), strings.Contains(msg, "拒绝"):
 		code = http.StatusForbidden
 	}
 	w.WriteHeader(code) // 保持 JSON 响应体(前端 api() 依赖)

@@ -246,6 +246,9 @@ func (m *Manager) IssueCert(req IssueRequest) (*IssueResponse, error) {
 			req.Days = m.tmpl.DefaultDays
 		}
 	}
+	if req.Days > 3650 { // 上限 10 年: 保证"过期"吊销兜底有效
+		return nil, fmt.Errorf("certificate validity too long: %d days (max 3650)", req.Days)
+	}
 	// 禁止同名证书(含已吊销的): 避免同名多条记录混淆
 	if recs := m.store.FindByName(req.Name); len(recs) > 0 {
 		return nil, fmt.Errorf("certificate name %s already exists (%d record(s)), 禁止同名签发", req.Name, len(recs))
@@ -381,13 +384,16 @@ func (m *Manager) ServeUnixSocket() error {
 func apiErrStatus(err error) int {
 	msg := err.Error()
 	switch {
+	case strings.Contains(msg, "admin required"): // 403 语义优先于 400 的 "required"
+		return http.StatusForbidden
 	case strings.Contains(msg, "required"), strings.Contains(msg, "必填"), strings.Contains(msg, "不能为空"),
 		strings.Contains(msg, "invalid"), strings.Contains(msg, "非法"), strings.Contains(msg, "格式"),
-		strings.Contains(msg, "保留字"), strings.Contains(msg, "未在 roles 声明列表"), strings.Contains(msg, "not declared"):
+		strings.Contains(msg, "保留字"), strings.Contains(msg, "未声明"), strings.Contains(msg, "未在 roles 声明列表"),
+		strings.Contains(msg, "not declared"):
 		return http.StatusBadRequest
 	case strings.Contains(msg, "already exists"), strings.Contains(msg, "已存在"):
 		return http.StatusConflict
-	case strings.Contains(msg, "未声明"), strings.Contains(msg, "not declared"), strings.Contains(msg, "not found"):
+	case strings.Contains(msg, "not found"):
 		return http.StatusNotFound
 	case strings.Contains(msg, "forbidden"), strings.Contains(msg, "无权"), strings.Contains(msg, "拒绝"):
 		return http.StatusForbidden

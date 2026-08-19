@@ -2,8 +2,12 @@ package relay
 
 import (
 	"errors"
+	"fmt"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -69,5 +73,79 @@ func TestWriteErrStatusCodes(t *testing.T) {
 		if !strings.Contains(rec.Body.String(), `"error"`) {
 			t.Errorf("writeErr(%q) body should be JSON: %s", c.msg, rec.Body.String())
 		}
+	}
+}
+
+// 第六批: writeErr 新增分支(保留字→400 / 已存在→409)
+func TestWriteErrConflictAndReserved(t *testing.T) {
+	cases := []struct {
+		msg  string
+		want int
+	}{
+		{"角色 any 是内置保留字, 只可用于服务声明, 不能签发给证书", 400},
+		{"certificate name dev already exists (1 record(s)), 禁止同名签发", 409},
+		{"证书名 dev 已存在, 禁止同名签发", 409}, // 注意: 不含"禁"单字分支前置于"禁止" — 走 already exists/已存在 → 409
+	}
+	for _, c := range cases {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest("GET", "/", nil)
+		writeErr(rec, req, errors.New(c.msg))
+		if rec.Code != c.want {
+			t.Errorf("writeErr(%q) = %d, want %d", c.msg, rec.Code, c.want)
+		}
+	}
+}
+
+// 第六批: Manager 并发 AddTunnel/DelTunnel(SaveConfig 深拷贝后无竞态)
+func TestManagerConcurrentTunnelCRUD(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "relay.json")
+	SaveConfig(cfgPath, RelayConfig{})
+	m, err := NewManager(nil, cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.SetNoPersist(true) // 纯内存, 测 cfg 层并发
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			id := fmt.Sprintf("svc-%d", i)
+			m.AddTunnel(Tunnel{Service: id, CertID: "c", Enabled: true, Routes: []TunnelRoute{{Channel: ":1", Local: ":2"}}})
+			m.DelTunnel(id)
+		}(i)
+	}
+	wg.Wait()
+	if got := len(m.Config().Tunnels); got != 0 {
+		t.Fatalf("all tunnels should be deleted, got %d", got)
+	}
+}
+
+// 第六批: SaveConfig 原子写 round-trip + 权限
+func TestSaveConfigAtomicRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sub", "relay.json") // 子目录: 验证自动创建
+	cfg := RelayConfig{ListenHost: "127.0.0.1", ServerAddr: "gw:9999",
+		Tunnels: []Tunnel{{Service: "s1", CertID: "c", Enabled: true}}}
+	if err := SaveConfig(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	// round-trip
+	loaded, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.ServerAddr != "gw:9999" || len(loaded.Tunnels) != 1 || loaded.Tunnels[0].Service != "s1" {
+		t.Fatalf("round-trip mismatch: %+v", loaded)
+	}
+	// 权限 0600
+	st, _ := os.Stat(path)
+	if st.Mode().Perm() != 0o600 {
+		t.Fatalf("config perm = %v, want 0600", st.Mode().Perm())
+	}
+	// 无 .tmp 残留
+	if _, err := os.Stat(path + ".tmp"); !os.IsNotExist(err) {
+		t.Fatal("stale .tmp should not exist")
 	}
 }

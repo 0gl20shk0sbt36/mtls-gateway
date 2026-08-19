@@ -86,7 +86,7 @@ func NewRouter(ms []Mapping, ss []ServiceCfg, declaredRoles []string) (*Router, 
 		}
 		declared[r] = true
 	}
-	r := &Router{byPort: map[string]*portRouter{}, mappings: ms, services: ss}
+	r := &Router{byPort: map[string]*portRouter{}, mappings: append([]Mapping(nil), ms...), services: append([]ServiceCfg(nil), ss...)} // 深拷贝: 防 UpdateService/DeleteService 就地写污染
 	seenListen, seenID := map[string]bool{}, map[string]bool{}
 	for i := range ms {
 		m := &ms[i]

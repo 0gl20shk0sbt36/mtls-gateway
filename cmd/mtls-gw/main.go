@@ -218,7 +218,10 @@ func main() {
 	log.Println("shutting down...")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	for _, s := range servers {
+	serversMu.Lock()
+	snapshot := append([]*http.Server(nil), servers...)
+	serversMu.Unlock()
+	for _, s := range snapshot {
 		s.Shutdown(ctx)
 	}
 }
