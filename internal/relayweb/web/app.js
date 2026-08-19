@@ -290,6 +290,7 @@ async function init() {
     $("adminCertHint").textContent = "已切换证书 — 请重新验证。";
   });
   $("adminVerify").onclick = verifyAdmin;
+  $("adminPwd").onkeydown = (e) => { if (e.key === "Enter") verifyAdmin(); }; // 回车即验证
   $("adminIssue").onclick = adminIssue;
   $("adminRevoke").onclick = adminRevoke;
   $("cfgSave").onclick = cfgSave;
