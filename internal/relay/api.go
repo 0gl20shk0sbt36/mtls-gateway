@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -627,9 +628,9 @@ func localizeKnown(lang string, err error) error {
 	s := err.Error()
 	switch {
 	case strings.Contains(s, "private key needs password"), strings.Contains(s, "failed to parse private key"):
-		return l.E("errPwdNeeded", tailName(s))
+		return l.E("errPwdNeeded", errCertName(s))
 	case strings.Contains(s, "decryption password incorrect"), strings.Contains(s, "password incorrect"):
-		return l.E("errBadPwd", tailName(s))
+		return l.E("errBadPwd", errCertName(s))
 	case strings.Contains(s, "expired certificate"), strings.Contains(s, "certificate has expired"):
 		return l.E("errExpired")
 	case strings.Contains(s, "no certificates in source"), strings.Contains(s, "no client cert"):
@@ -655,9 +656,19 @@ func localizeKnown(lang string, err error) error {
 	case strings.Contains(s, "forbidden"):
 		return l.E("errDenied")
 	case strings.Contains(s, "not found"):
-		return l.E("errNotFound", tailName(s))
+		return l.E("errNotFound", errCertName(s))
 	}
 	return err
+}
+
+// errCertName 从错误消息提取证书名("decrypt key admin"/"cert admin not found"/"private key needs password: admin")
+func errCertName(s string) string {
+	for _, pat := range []string{`decrypt key (\S+)`, `private key needs password: (\S+)`, `cert (\S+) not found`} {
+		if m := regexp.MustCompile(pat).FindStringSubmatch(s); len(m) == 2 {
+			return m[1]
+		}
+	}
+	return tailName(s)
 }
 
 // tailName 取错误消息最后一段(: 之后)
