@@ -19,14 +19,13 @@ import (
 // Manager 中继管理入口: 外壳(CLI/WebUI/GUI)唯一接口。
 // 持有当前 RelayConfig 并持久化到磁盘; 提供 HTTP 管理 API 及便捷方法。
 type Manager struct {
-	relay          *Relay
-	cfgPath        string
-	mu             sync.Mutex
-	cfg            RelayConfig
-	noPersist      bool   // 只改内存、不落盘 (临时会话)
-	serverOverride string // --server 覆盖的发现端点
-	webUIOnce      sync.Once
-	webUI          *eventlog.Logger // WebUI 界面事件日志(客户端侧, 单独文件)
+	relay     *Relay
+	cfgPath   string
+	mu        sync.Mutex
+	cfg       RelayConfig
+	noPersist bool // 只改内存、不落盘 (临时会话)
+	webUIOnce sync.Once
+	webUI     *eventlog.Logger // WebUI 界面事件日志(客户端侧, 单独文件)
 }
 
 // NewManager 创建管理入口。加载已有配置(若无则用默认)。
@@ -69,11 +68,11 @@ func (m *Manager) SetNoPersist(v bool) {
 	m.noPersist = v
 }
 
-// SetServerAddr 覆盖服务端发现端点 (--server; 供 Discover 与按服务建隧道)
+// SetServerAddr 已废弃: --server 覆盖发现端点只需调 relay.SetServerAddr,
+// admin 桥(签发/吊销/验证)必须走独立 admin_addr, 不可混用 — 此方法不再生效
 func (m *Manager) SetServerAddr(addr string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.serverOverride = addr
+	// 保留空实现避免破坏调用方; 语义见注释
+	_ = addr
 }
 
 // AddTunnel 新增或覆盖隧道并持久化 (noPersist 时仅内存)
@@ -158,9 +157,8 @@ func (m *Manager) ServicesForCert(certID, lang string) ([]ServiceInfo, error) {
 func (m *Manager) adminAddr() string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.serverOverride != "" {
-		return m.serverOverride // --server 覆盖(优先于配置)
-	}
+	// 注意: serverOverride(--server) 是【发现端点】覆盖, 不是 admin 端点 —
+	// admin 桥(签发/吊销/验证)必须走独立的 admin_addr, 混用会导致管理功能打到 /info 假成功
 	return m.cfg.AdminAddr
 }
 
@@ -680,10 +678,14 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 	return true
 }
 
-// 错误串提取正则(包级预编译)
+// 错误串提取正则(包级预编译; 每正则单捕获组, len(m)==2 判定)
 var (
-	reErrName   = regexp.MustCompile(`decrypt key ([^:\s]+)|certificate name (\S+) already exists|name (\S+) already exists|not found: (\S+)|expired: (\S+)|status=(\S+)|not registered: (\S+)`)
-	reErrRecord = regexp.MustCompile(`\((\d+) record`)
+	reErrName       = regexp.MustCompile(`decrypt key ([^:\s]+)`)
+	reErrNamePwd    = regexp.MustCompile(`private key needs password: (\S+)`)
+	reErrNameCert   = regexp.MustCompile(`cert (\S+) not found`)
+	reErrNameExist  = regexp.MustCompile(`certificate name (\S+) already exists`)
+	reErrNameExist2 = regexp.MustCompile(`name (\S+) already exists`)
+	reErrRecord     = regexp.MustCompile(`\((\d+) record`)
 )
 
 // localizeKnown 已知错误按语言兜底翻译(所有 API 错误出口)
@@ -739,11 +741,8 @@ func localizeKnown(lang string, err error) error {
 
 // errCertName 从错误消息提取证书名("decrypt key admin"/"cert admin not found"/"private key needs password: admin")
 func errCertName(s string) string {
-	if m := reErrName.FindStringSubmatch(s); len(m) == 2 {
-		return m[1]
-	}
-	for _, pat := range []string{`private key needs password: (\S+)`, `cert (\S+) not found`} {
-		if m := regexp.MustCompile(pat).FindStringSubmatch(s); len(m) == 2 {
+	for _, re := range []*regexp.Regexp{reErrName, reErrNamePwd, reErrNameCert, reErrNameExist, reErrNameExist2} {
+		if m := re.FindStringSubmatch(s); len(m) == 2 {
 			return m[1]
 		}
 	}

@@ -203,3 +203,19 @@ func TestWriteErrENStatusCodes(t *testing.T) {
 		}
 	}
 }
+
+// 第二十四批: errCertName 提取精确性(回归: 多组正则合并曾致 len(m)==2 恒假)
+func TestErrCertNamePrecision(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"decrypt key admin: x509: decryption password incorrect", "admin"},
+		{"certificate name dev already exists (1 record(s)), 禁止同名签发", "dev"},
+		{"name ghost already exists", "ghost"},
+		{"cert ghost not found", "ghost"},
+		{"private key needs password: admin", "admin"},
+	}
+	for _, c := range cases {
+		if got := errCertName(c.in); got != c.want {
+			t.Errorf("errCertName(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}

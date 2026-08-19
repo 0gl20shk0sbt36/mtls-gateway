@@ -60,8 +60,7 @@ func main() {
 		mgr.SetNoPersist(true)
 	}
 	if *server != "" {
-		r.SetServerAddr(*server)
-		mgr.SetServerAddr(*server)
+		r.SetServerAddr(*server) // 覆盖发现端点(relay 层生效; admin 桥仍走独立 admin_addr)
 	}
 
 	// 若已有启用的隧道配置, 启动即运行
