@@ -295,6 +295,17 @@ func (m *Manager) reqL(r *http.Request) *i18n.L {
 	return m.relay.L
 }
 
+// localizeErr 通用错误本地化: 证书加载类错误(私钥密码/不存在/过期)按语言翻译, 其余原样
+func (m *Manager) localizeErr(lang string, certID string, err error) error {
+	if err == nil {
+		return nil
+	}
+	if lang == "en" || lang == "zh" {
+		return localizeLoadErr(i18n.New(lang), certID, err)
+	}
+	return localizeLoadErr(m.relay.L, certID, err)
+}
+
 // webUILogger 懒创建 WebUI 事件日志(从配置 webui_log_file; 空=禁用)
 func (m *Manager) webUILogger() *eventlog.Logger {
 	cfg := m.Config()
@@ -346,7 +357,7 @@ func (m *Manager) Handler() http.Handler {
 		json.NewDecoder(r.Body).Decode(&b)
 		res, err := m.Verify(b.CertID, b.LoadPwd)
 		if err != nil {
-			writeErr(w, err)
+			writeErr(w, m.localizeErr(r.Header.Get("X-Lang"), b.CertID, err))
 			return
 		}
 		writeJSON(w, res)
