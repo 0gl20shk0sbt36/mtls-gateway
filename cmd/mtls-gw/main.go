@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/BurntSushi/toml"
 
@@ -121,7 +122,11 @@ func main() {
 				log.Fatalf("listen %s: %v", addr, err)
 			}
 			log.Printf("mtls gateway listening on %s (mTLS)", addr)
-			srv := &http.Server{Handler: gatewayHandler(gateway, cm, port, accLog)}
+			srv := &http.Server{
+				Handler:           gatewayHandler(gateway, cm, port, accLog),
+				ReadHeaderTimeout: 10 * time.Second,
+				IdleTimeout:       60 * time.Second,
+			}
 			if err := srv.Serve(tlsListener(ln, gateway.ServerTLSConfig())); err != nil {
 				log.Fatalf("gateway serve %s: %v", addr, err)
 			}
@@ -136,7 +141,11 @@ func main() {
 				log.Fatalf("info listen %s: %v", infoListen, err)
 			}
 			log.Printf("mtls /info listening on %s (registered cert only)", infoListen)
-			infoSrv := &http.Server{Handler: infoHandler(gateway, cm, accLog)}
+			infoSrv := &http.Server{
+				Handler:           infoHandler(gateway, cm, accLog),
+				ReadHeaderTimeout: 10 * time.Second,
+				IdleTimeout:       60 * time.Second,
+			}
 			if err := infoSrv.Serve(tlsListener(ln, gateway.ServerTLSConfig())); err != nil {
 				log.Fatalf("info serve: %v", err)
 			}
@@ -170,7 +179,11 @@ func main() {
 				log.Fatalf("admin listen: %v", err)
 			}
 			log.Printf("admin api listening on %s (mTLS, admin cert required)", admListen)
-			admSrv := &http.Server{Handler: adminHandler(gateway, mgr, cm, evLog)}
+			admSrv := &http.Server{
+				Handler:           adminHandler(gateway, mgr, cm, evLog),
+				ReadHeaderTimeout: 10 * time.Second,
+				IdleTimeout:       60 * time.Second,
+			}
 			if err := admSrv.Serve(tlsListener(ln, gateway.ServerTLSConfig())); err != nil {
 				log.Fatalf("admin serve: %v", err)
 			}

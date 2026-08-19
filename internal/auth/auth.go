@@ -155,8 +155,8 @@ func (g *Gateway) AuthorizePurposes(r *http.Request) ([]string, error) {
 	return rec.Purposes, nil
 }
 
-// IsAdminPurpose 判断用途是否 admin
-func IsAdminPurpose(purpose string) bool { return purpose == DefaultAdminRole }
+// IsAdminPurpose 判断用途是否管理角色(不硬编码默认值; adminRole 由配置注入)
+func IsAdminPurpose(purpose, adminRole string) bool { return purpose == adminRole }
 
 // IsAdmin 判断记录是否持有内置管理角色(实例化后的 admin_role)
 func (g *Gateway) IsAdmin(rec *db.CertRecord) bool { return rec.HasPurpose(g.AdminRole) }

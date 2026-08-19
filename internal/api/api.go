@@ -178,12 +178,12 @@ func (r *IssueRequest) normalizePurposes(adminRole string) (warnings []string) {
 			if i == 0 {
 				// admin_role 在首位: 若还有其他, 剔除其他
 				if len(r.Purposes) > 1 {
-					warnings = append(warnings, adminRole+" 与其他用途混用, 已忽略其他用途, 仅保留 "+adminRole)
+					warnings = append(warnings, "admin 与其他用途混用, 已忽略其他用途, 仅保留 admin")
 					r.Purposes = []string{adminRole}
 				}
 			} else {
 				// admin_role 不在首位: 剔除, 保留其他
-				warnings = append(warnings, adminRole+" 不在首位, 已剔除 "+adminRole+", 保留其他用途")
+				warnings = append(warnings, "admin 不在首位, 已剔除 admin, 保留其他用途")
 				others := []string{}
 				for _, x := range r.Purposes {
 					if x != adminRole {
@@ -306,6 +306,13 @@ func (m *Manager) IssueCert(req IssueRequest) (*IssueResponse, error) {
 	if err := os.MkdirAll(outDir, 0o700); err != nil {
 		return nil, err
 	}
+	// 失败回滚: 清理已写的证书/私钥文件(避免孤儿文件)
+	committed := false
+	defer func() {
+		if !committed {
+			os.RemoveAll(outDir)
+		}
+	}()
 	if err := os.WriteFile(filepath.Join(outDir, "cert.pem"), certPEM, 0o600); err != nil {
 		return nil, err
 	}
@@ -331,6 +338,7 @@ func (m *Manager) IssueCert(req IssueRequest) (*IssueResponse, error) {
 	if err := m.store.Upsert(rec); err != nil {
 		return nil, err
 	}
+	committed = true
 	return &IssueResponse{
 		Name:        req.Name,
 		Serial:      serial.String(),
@@ -415,12 +423,10 @@ func (m *Manager) handler(isLocal bool) http.Handler {
 // 外层认证通过后设置 X-Auth-Purpose 头, 这里按用途放行
 func (m *Manager) HTTPHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// 管理路径只允许 admin 用途
-		if strings.HasPrefix(r.URL.Path, "/api/") {
-			if r.Header.Get("X-Auth-Purpose") != m.AdminRole {
-				http.Error(w, "admin required", http.StatusForbidden)
-				return
-			}
+		// 管理路径只允许 admin 用途(端点均为 /admin/*)
+		if r.Header.Get("X-Auth-Purpose") != m.AdminRole {
+			http.Error(w, "admin required", http.StatusForbidden)
+			return
 		}
 		m.handler(false).ServeHTTP(w, r)
 	})
@@ -476,10 +482,16 @@ func (m *Manager) newClientKey() (crypto.PrivateKey, any, error) {
 
 func randPassword(n int) string {
 	const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	// 无模偏差: crypto/rand.Int 均匀采样
+	max := big.NewInt(int64(len(chars)))
 	b := make([]byte, n)
-	rand.Read(b)
 	for i := range b {
-		b[i] = chars[int(b[i])%len(chars)]
+		idx, err := rand.Int(rand.Reader, max)
+		if err != nil {
+			// 熵源失败时退化为时间种子(仅应急, 正常路径不会发生)
+			idx = big.NewInt(int64(time.Now().UnixNano() % int64(len(chars))))
+		}
+		b[i] = chars[idx.Int64()]
 	}
 	return string(b)
 }

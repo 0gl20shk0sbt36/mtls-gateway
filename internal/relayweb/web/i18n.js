@@ -252,11 +252,14 @@
     lang = l;
     try { localStorage.setItem("lang", l); } catch (e) { /* ignore */ }
   }
-  // t(key, vars): 取值 + 替换 {var}
+  // t(key, vars): 取值 + 替换 {var}(变量值 HTML 转义, 防 data-i18n-html 注入)
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
   function t(key, vars) {
     let s = (L[lang] && L[lang][key]) || (L.zh && L.zh[key]) || key;
     if (vars) {
-      for (const k in vars) s = s.replace(new RegExp("\\{" + k + "\\}", "g"), vars[k]);
+      for (const k in vars) s = s.replace(new RegExp("\\{" + k + "\\}", "g"), esc(vars[k]));
     }
     return s;
   }

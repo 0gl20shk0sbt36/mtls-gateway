@@ -3,7 +3,6 @@ package relay
 import (
 	"context"
 	"crypto/tls"
-	"io"
 	"log"
 	"net"
 	"net/http"
@@ -12,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 // tunnelMetrics 单路由运行指标
@@ -160,6 +160,7 @@ func joinSlash(a, b string) string {
 // acceptLoop accepts local connections and proxies each to the mTLS upstream.
 func (rt *tunnelRuntime) acceptLoop() {
 	defer rt.listener.Close()
+	var backoff time.Duration
 	for {
 		conn, err := rt.listener.Accept()
 		if err != nil {
@@ -167,10 +168,22 @@ func (rt *tunnelRuntime) acceptLoop() {
 			case <-rt.ctx.Done():
 				return // 关闭
 			default:
-				log.Printf("tunnel[%s] accept: %v", rt.key, err)
+				// 临时错误(EMFILE 等): 指数退避, 防 100% CPU 自旋 + 刷屏
+				if backoff == 0 {
+					backoff = 10 * time.Millisecond
+				} else if backoff < time.Second {
+					backoff *= 2
+				}
+				log.Printf("tunnel[%s] accept: %v (retry in %v)", rt.key, err, backoff)
+				select {
+				case <-time.After(backoff):
+				case <-rt.ctx.Done():
+					return
+				}
 				continue
 			}
 		}
+		backoff = 0
 		atomic.AddInt64(&rt.metrics.activeConns, 1)
 		atomic.AddInt64(&rt.metrics.connsTotal, 1)
 		rt.mu.Lock()
@@ -181,6 +194,7 @@ func (rt *tunnelRuntime) acceptLoop() {
 }
 
 // handleConn proxies a single accepted local connection to the upstream.
+// TCP 透传: 空闲超时(防连接/goroutine 永久占用) + 半关闭传播(客户端 EOF 传导上游)
 func (rt *tunnelRuntime) handleConn(local net.Conn) {
 	defer func() {
 		local.Close()
@@ -198,19 +212,64 @@ func (rt *tunnelRuntime) handleConn(local net.Conn) {
 	}
 	defer upstream.Close()
 
+	// 空闲超时: 120s 无数据传输则关闭(隧道为按需建连, 不维护长连接)
+	idle := 120 * time.Second
 	var wg sync.WaitGroup
 	wg.Add(2)
+	stop := make(chan struct{})
 	go func() {
 		defer wg.Done()
-		n, _ := io.Copy(upstream, local)
-		atomic.AddInt64(&rt.metrics.bytesIn, n)
+		buf := make([]byte, 32*1024)
+		for {
+			n, err := local.Read(buf)
+			if n > 0 {
+				if _, werr := upstream.Write(buf[:n]); werr != nil {
+					return
+				}
+				atomic.AddInt64(&rt.metrics.bytesIn, int64(n))
+			}
+			if err != nil {
+				// 本地 EOF: 半关闭传播到上游(CloseWrite), 让对端读到 EOF
+				if tc, ok := upstream.(*net.TCPConn); ok {
+					tc.CloseWrite()
+				}
+				return
+			}
+		}
 	}()
 	go func() {
 		defer wg.Done()
-		n, _ := io.Copy(local, upstream)
-		atomic.AddInt64(&rt.metrics.bytesOut, n)
+		buf := make([]byte, 32*1024)
+		for {
+			n, err := upstream.Read(buf)
+			if n > 0 {
+				if _, werr := local.Write(buf[:n]); werr != nil {
+					return
+				}
+				atomic.AddInt64(&rt.metrics.bytesOut, int64(n))
+			}
+			if err != nil {
+				return
+			}
+		}
 	}()
-	wg.Wait()
+	// 空闲超时监控
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	timer := time.NewTimer(idle)
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-timer.C:
+		// 空闲超时: 关闭两侧连接, 释放资源
+		local.Close()
+		upstream.Close()
+		<-done
+	case <-stop:
+	}
 }
 
 // stop closes the listener and all active connections for this tunnel.

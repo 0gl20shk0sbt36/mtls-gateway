@@ -5,6 +5,7 @@ const t = I18N.t;
 // 全局状态(提前声明, 避免 TDZ: init 早于这些声明执行时抛 "Cannot access before initialization")
 let SERVICES = [];
 let CFG = null;
+let ADMIN_PWD = ""; // 显式声明(避免隐式全局)
 let DRAFT = null;
 let CFG_ADMIN_ROLE = "mtls-superadmin";
 let CERT_LIST = []; // 服务端全部证书(签发同名检查用)
@@ -134,12 +135,14 @@ function updateMultiLabel(listId) {
 }
 function getMultiSel(listId) { return [...(SEL_MULTI[listId] || [])]; }
 
+let TOAST_TIMER = null;
 function toast(msg, isErr) {
   const t2 = $("toast");
+  if (TOAST_TIMER) clearTimeout(TOAST_TIMER); // 去重: 旧 timer 不提前隐藏新 toast
   t2.textContent = (isErr ? t("errPrefix") : "") + msg;
   t2.classList.toggle("error", !!isErr);
   t2.style.display = "block";
-  setTimeout(() => (t2.style.display = "none"), 3000);
+  TOAST_TIMER = setTimeout(() => (t2.style.display = "none"), 3000);
 }
 
 // localizeServerError: 服务端错误由后端按 lang 返回(不再前端翻译); 此函数保留用于兜底
@@ -332,7 +335,7 @@ async function init() {
     } catch (e) { toast(e.message, true); }
   };
   await Promise.all([loadCerts(), loadTunnels()]);
-  setInterval(loadTunnels, 2000); // 状态轮询
+  setInterval(() => { if (!document.hidden) loadTunnels(); }, 2000); // 状态轮询(页面隐藏时暂停)
 }
 
 init();

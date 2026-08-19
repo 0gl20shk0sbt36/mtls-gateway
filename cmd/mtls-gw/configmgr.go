@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
@@ -86,7 +88,7 @@ func (m *ConfigManager) rebuild() error {
 	return nil
 }
 
-// persist 落盘 (ephemeral 跳过; mutable 先备份再写)
+// persist 落盘 (ephemeral 跳过; mutable 先备份再写; 原子替换 + 备份限量)
 func (m *ConfigManager) persist() error {
 	if m.mode == "ephemeral" {
 		return nil
@@ -94,11 +96,36 @@ func (m *ConfigManager) persist() error {
 	if err := copyFile(m.path, m.path+".bak-"+time.Now().Format("20060102-150405")); err != nil {
 		log.Printf("config backup failed: %v (仍继续写入)", err)
 	}
+	// 备份限量: 只留最近 5 份, 防无限累积
+	pruneBackups(m.path, 5)
 	var buf bytes.Buffer
 	if err := toml.NewEncoder(&buf).Encode(m.cfg); err != nil {
 		return fmt.Errorf("encode config: %w", err)
 	}
-	return os.WriteFile(m.path, buf.Bytes(), 0o600)
+	// 原子替换: 临时文件 + rename, 避免写一半崩溃损坏配置
+	tmp := m.path + ".tmp"
+	if err := os.WriteFile(tmp, buf.Bytes(), 0o600); err != nil {
+		return fmt.Errorf("write tmp config: %w", err)
+	}
+	if err := os.Rename(tmp, m.path); err != nil {
+		return fmt.Errorf("replace config: %w", err)
+	}
+	return nil
+}
+
+// pruneBackups 清理超过 maxKeep 份的 .bak-* 备份(保留最新的)
+func pruneBackups(path string, maxKeep int) {
+	matches, err := filepath.Glob(path + ".bak-*")
+	if err != nil {
+		return
+	}
+	if len(matches) <= maxKeep {
+		return
+	}
+	sort.Strings(matches) // 时间戳命名, 字典序=时间序
+	for _, old := range matches[:len(matches)-maxKeep] {
+		os.Remove(old)
+	}
 }
 
 func copyFile(src, dst string) error {

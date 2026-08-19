@@ -339,11 +339,18 @@ func TestTLSMinVersionValidation(t *testing.T) {
 
 // L7: IsAdminPurpose / IsAdmin
 func TestIsAdminPurpose(t *testing.T) {
-	if !IsAdminPurpose(DefaultAdminRole) {
+	if !IsAdminPurpose(DefaultAdminRole, DefaultAdminRole) {
 		t.Fatal("DefaultAdminRole should be admin")
 	}
-	if IsAdminPurpose("dsh") {
+	if IsAdminPurpose("dsh", DefaultAdminRole) {
 		t.Fatal("dsh should not be admin")
+	}
+	// 自定义 admin_role 生效
+	if !IsAdminPurpose("mtls-superadmin", "mtls-superadmin") {
+		t.Fatal("custom admin role should match")
+	}
+	if IsAdminPurpose("svc-a", "mtls-superadmin") {
+		t.Fatal("non-admin role should not match custom admin role")
 	}
 	rec := &db.CertRecord{Name: "x", Purposes: []string{DefaultAdminRole}}
 	g := &Gateway{AdminRole: DefaultAdminRole}

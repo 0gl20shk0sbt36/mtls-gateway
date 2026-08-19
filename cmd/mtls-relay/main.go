@@ -81,6 +81,10 @@ func main() {
 	// 管理 HTTP server (提供管理 API + WebUI 面板); --no-web 或空 listen 则不起 (纯中继)
 	var srv *http.Server
 	if !*noWeb && *adminListen != "" {
+		// 安全: 管理 API 无鉴权, 非 loopback 监听会暴露给局域网(警告但不阻止, 用户需自担风险)
+		if !isLoopbackAddr(*adminListen) {
+			log.Printf("⚠️ 管理 API 监听 %s 非 loopback — 无鉴权, 局域网可访问, 请仅在可信网络使用", *adminListen)
+		}
 		ln, err := net.Listen("tcp", *adminListen)
 		if err != nil {
 			log.Fatalf("admin listen %s: %v", *adminListen, err)
@@ -88,6 +92,7 @@ func main() {
 		srv = &http.Server{
 			Handler:           relayweb.NewHandler(mgr),
 			ReadHeaderTimeout: 10 * time.Second,
+			IdleTimeout:       60 * time.Second,
 		}
 		go func() {
 			log.Printf("mtls-relay admin api + webui on %s", *adminListen)
@@ -130,4 +135,17 @@ func countEnabled(ts []relay.Tunnel) int {
 		}
 	}
 	return n
+}
+
+// isLoopbackAddr 判断监听地址是否为回环(127.0.0.1 / ::1 / localhost)
+func isLoopbackAddr(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = addr
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }

@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"mtls-gateway/internal/certsource"
 	"mtls-gateway/internal/i18n"
@@ -26,7 +27,8 @@ type Relay struct {
 	serverCA   string                     // 网关 CA 文件路径 (验服务器证书; 空=系统根)
 	rootCAs    *x509.CertPool             // 由 serverCA 构建; nil=系统根
 	src        certsource.Source          // 证书来源 (由外层/daemon 注入)
-	certCache  map[string]tls.Certificate // source-CertID -> 证书 (复用)
+	certCache  map[string]certCacheEntry // source-CertID -> 证书 (复用, TTL 失效支持证书轮换)
+
 
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -35,6 +37,14 @@ type Relay struct {
 	tunnels   map[string]*tunnelRuntime // tunnel ID -> runtime
 	L         *i18n.L                   // 错误消息语言(zh/en, 默认 zh)
 	started   bool
+}
+
+// certCacheTTL 证书缓存有效期: 到期重载, 支持证书轮换/续期(≤TTL 生效)
+const certCacheTTL = 60 * time.Second
+
+type certCacheEntry struct {
+	cert     tls.Certificate
+	loadedAt time.Time
 }
 
 // SetLang 设置错误消息语言(zh/en)
@@ -51,7 +61,7 @@ func New(cfgPath string, src certsource.Source) *Relay {
 	return &Relay{
 		cfgPath:   cfgPath,
 		src:       src,
-		certCache: make(map[string]tls.Certificate),
+		certCache: make(map[string]certCacheEntry),
 		ctx:       ctx,
 		cancel:    cancel,
 		tunnels:   make(map[string]*tunnelRuntime),
@@ -82,17 +92,17 @@ func (r *Relay) loadCertLang(certID, lang string) (tls.Certificate, error) {
 		l = i18n.New(lang)
 	}
 	r.mu.Lock()
-	c, ok := r.certCache[certID]
+	e, ok := r.certCache[certID]
 	r.mu.Unlock()
-	if ok {
-		return c, nil
+	if ok && time.Since(e.loadedAt) < certCacheTTL {
+		return e.cert, nil
 	}
 	c, err := r.src.Load(certID)
 	if err != nil {
 		return tls.Certificate{}, localizeLoadErr(l, certID, err)
 	}
 	r.mu.Lock()
-	r.certCache[certID] = c
+	r.certCache[certID] = certCacheEntry{cert: c, loadedAt: time.Now()}
 	r.mu.Unlock()
 	return c, nil
 }
@@ -130,14 +140,14 @@ func (r *Relay) applyServerCA(serverCA string) {
 func (r *Relay) loadCert(certID string) (tls.Certificate, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if c, ok := r.certCache[certID]; ok {
-		return c, nil
+	if e, ok := r.certCache[certID]; ok && time.Since(e.loadedAt) < certCacheTTL {
+		return e.cert, nil
 	}
 	c, err := r.src.Load(certID)
 	if err != nil {
 		return tls.Certificate{}, localizeLoadErr(r.L, certID, err)
 	}
-	r.certCache[certID] = c
+	r.certCache[certID] = certCacheEntry{cert: c, loadedAt: time.Now()}
 	return c, nil
 }
 
