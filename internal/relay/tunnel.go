@@ -90,26 +90,32 @@ func (r *Relay) startTunnel(rt *tunnelRuntime) error {
 }
 
 // localHTTPHandler 本地路径模式: 剥本地前缀 → 补通道前缀 → mTLS 转发服务端通道
-// upstream/tlsCfg 首次请求时惰性初始化: startTunnel 在 Start 持锁期间构造 handler,
-// 若此处同步调用 serverHost()/dialTLSConfig() 会与 r.mu 重入死锁
+// upstream/tlsCfg/rp 首次请求时惰性初始化(startTunnel 在 Start 持锁期间构造 handler,
+// 此处同步调 serverHost()/dialTLSConfig() 会与 r.mu 重入死锁)。
+// 初始化失败(证书瞬断/上游未就绪)不永久缓存 — 下次请求重试, 避免 sync.Once 毒化
 func (rt *tunnelRuntime) localHTTPHandler(localPath string) http.Handler {
 	var (
-		once     sync.Once
+		mu       sync.Mutex
 		upstream *url.URL
 		tlsCfg   *tls.Config
 		rp       *httputil.ReverseProxy
-		initErr  error
 	)
 	init := func() {
-		upstream, initErr = url.Parse("https://" + net.JoinHostPort(rt.r.serverHost(), rt.route.ChannelPort()) + rt.route.ChannelPath())
-		if initErr != nil {
+		mu.Lock()
+		defer mu.Unlock()
+		if rp != nil {
 			return
 		}
-		tlsCfg, initErr = rt.r.dialTLSConfig(rt.certID)
-		if initErr != nil {
-			return
+		up, err := url.Parse("https://" + net.JoinHostPort(rt.r.serverHost(), rt.route.ChannelPort()) + rt.route.ChannelPath())
+		if err != nil {
+			return // 下次请求重试
 		}
-		// rp 必须在 tlsCfg 就绪后构造(Transport 拷贝值, 提前构造会捕获 nil)
+		tc, err := rt.r.dialTLSConfig(rt.certID)
+		if err != nil {
+			return // 证书/网络瞬断: 不缓存错误, 下次重试
+		}
+		upstream = up
+		tlsCfg = tc
 		rp = &httputil.ReverseProxy{
 			Director: func(req *http.Request) {
 				rest := strings.TrimPrefix(req.URL.Path, localPath)
@@ -130,9 +136,9 @@ func (rt *tunnelRuntime) localHTTPHandler(localPath string) http.Handler {
 			http.Error(w, "local path prefix mismatch: "+req.URL.Path, http.StatusNotFound)
 			return
 		}
-		once.Do(init)
-		if initErr != nil {
-			http.Error(w, "init upstream: "+initErr.Error(), http.StatusInternalServerError)
+		init()
+		if rp == nil {
+			http.Error(w, "upstream not ready (retry later)", http.StatusBadGateway)
 			return
 		}
 		rp.ServeHTTP(w, req)

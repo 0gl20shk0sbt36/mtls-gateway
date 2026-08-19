@@ -284,3 +284,74 @@ func TestTunnelConcurrentEcho(t *testing.T) {
 		t.Error(err)
 	}
 }
+
+// P0-3: init 失败(证书瞬断)不永久毒化 — 换证书后下次请求恢复
+func TestTunnelHTTPRetryAfterInitFailure(t *testing.T) {
+	h := newHTTPHarness(t)
+	origPair, err := os.ReadFile(h.clientPairPath) // 原始 CA 签的无密码证书
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 先把证书源换成加密私钥(init 会失败)
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	keyDER, _ := x509.MarshalECPrivateKey(key)
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(77), Subject: pkix.Name{CommonName: "retry-dev"},
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(24 * time.Hour),
+		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+	certDER, _ := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	encBlock, _ := x509.EncryptPEMBlock(rand.Reader, "EC PRIVATE KEY", keyDER, []byte("secret"), x509.PEMCipherAES256)
+	encPair := append(append(append([]byte{}, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})...), '\n'), pem.EncodeToMemory(encBlock)...)
+	os.WriteFile(h.clientPairPath, encPair, 0o600)
+
+	src, _ := certsource.OpenFile(h.clientPairPath)
+	localPort := freePort(t)
+	r := New("", src)
+	defer r.Close()
+	gwPort := gwPortOf(h.gwAddr)
+	cfg := RelayConfig{
+		ListenHost: "127.0.0.1", ServerAddr: h.gwAddr, ServerCAFile: h.caPath,
+		Tunnels: []Tunnel{{
+			Service: "s1",
+			Routes:  []TunnelRoute{{Channel: ":" + gwPort, Local: fmt.Sprintf(":%d/x", localPort)}},
+			CertID:  h.clientPairPath, Enabled: true,
+		}},
+	}
+	if err := r.Start(cfg); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		c, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", localPort))
+		if err == nil {
+			c.Close()
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("tunnel not listening: %v", err)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	// 首次请求: 加密证书 → init 失败 → 502(而非 500 永久毒化)
+	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/x/ping", localPort))
+	if err != nil {
+		t.Fatalf("get1: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Fatalf("encrypted cert should fail init (502), got %d", resp.StatusCode)
+	}
+	// 换成原始无密码证书(模拟修复/证书轮换)
+	os.WriteFile(h.clientPairPath, origPair, 0o600)
+	// 下次请求应重试成功
+	resp2, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/x/ping", localPort))
+	if err != nil {
+		t.Fatalf("get2: %v", err)
+	}
+	b2, _ := io.ReadAll(resp2.Body)
+	resp2.Body.Close()
+	if resp2.StatusCode != 200 {
+		t.Fatalf("after cert fix should be 200, got %d body: %q", resp2.StatusCode, string(b2))
+	}
+}
