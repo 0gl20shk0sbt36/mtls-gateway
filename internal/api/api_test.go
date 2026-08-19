@@ -54,7 +54,7 @@ func testManager(t *testing.T, tmpl CertTemplate) *Manager {
 		t.Fatalf("open db: %v", err)
 	}
 	t.Cleanup(func() { store.Close() })
-	m, err := NewManager(store, caPath, caKeyPath, filepath.Join(dir, "certs"), filepath.Join(dir, "gw.sock"), tmpl)
+	m, err := NewManager(store, caPath, caKeyPath, filepath.Join(dir, "certs"), filepath.Join(dir, "gw.sock"), tmpl, "mtls-superadmin", "rsa", 2048, 16)
 	if err != nil {
 		t.Fatalf("new manager: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestIssueCertTemplate(t *testing.T) {
 	}
 
 	// admin 用途: 用 AdminDays (7)
-	resp2, err := m.IssueCert(IssueRequest{Name: "adm", Purposes: []string{"admin"}, TSIP: "100.64.0.1"})
+	resp2, err := m.IssueCert(IssueRequest{Name: "adm", Purposes: []string{"mtls-superadmin"}, TSIP: "100.64.0.1"})
 	if err != nil {
 		t.Fatalf("issue admin: %v", err)
 	}
@@ -157,7 +157,7 @@ func TestIssueCertMultiPurpose(t *testing.T) {
 	if !c.HasPurpose("dsh") || !c.HasPurpose("vaultwarden") {
 		t.Fatalf("expected purposes [dsh vaultwarden], got %v", c.Purposes)
 	}
-	if c.HasPurpose("admin") {
+	if c.HasPurpose("mtls-superadmin") {
 		t.Fatal("should not have admin purpose")
 	}
 	_ = resp
@@ -168,7 +168,7 @@ func TestIssueCertAdminOnlyAdmin(t *testing.T) {
 	m := testManager(t, CertTemplate{})
 	// 试图签发 admin+dsh → 警告, 归一为只有 admin
 	resp, err := m.IssueCert(IssueRequest{
-		Name: "adm", Purposes: []string{"admin", "dsh"}, TSIP: "100.64.0.1",
+		Name: "adm", Purposes: []string{"mtls-superadmin", "dsh"}, TSIP: "100.64.0.1",
 	})
 	if err != nil {
 		t.Fatalf("issue: %v", err)
@@ -181,7 +181,7 @@ func TestIssueCertAdminOnlyAdmin(t *testing.T) {
 		t.Fatalf("expected 1 cert, got %d", len(certs))
 	}
 	c := certs[0]
-	if len(c.Purposes) != 1 || c.Purposes[0] != "admin" {
+	if len(c.Purposes) != 1 || c.Purposes[0] != "mtls-superadmin" {
 		t.Fatalf("admin cert should only have [admin], got %v", c.Purposes)
 	}
 }
@@ -190,7 +190,7 @@ func TestIssueCertAdminOnlyAdmin(t *testing.T) {
 func TestIssueCertAdminNotFirst(t *testing.T) {
 	m := testManager(t, CertTemplate{})
 	resp, err := m.IssueCert(IssueRequest{
-		Name: "dev", Purposes: []string{"dsh", "admin", "vaultwarden"}, TSIP: "100.64.0.10",
+		Name: "dev", Purposes: []string{"dsh", "mtls-superadmin", "vaultwarden"}, TSIP: "100.64.0.10",
 	})
 	if err != nil {
 		t.Fatalf("issue: %v", err)
@@ -207,7 +207,7 @@ func TestIssueCertAdminNotFirst(t *testing.T) {
 	if len(c.Purposes) != 2 || !c.HasPurpose("dsh") || !c.HasPurpose("vaultwarden") {
 		t.Fatalf("expected [dsh vaultwarden] after admin removal, got %v", c.Purposes)
 	}
-	if c.HasPurpose("admin") {
+	if c.HasPurpose("mtls-superadmin") {
 		t.Fatal("admin should be removed")
 	}
 }
@@ -215,7 +215,7 @@ func TestIssueCertAdminNotFirst(t *testing.T) {
 // TestNormalizePurposesComma 兼容逗号分隔字符串
 func TestNormalizePurposesComma(t *testing.T) {
 	req := IssueRequest{Purposes: []string{"dsh, vaultwarden"}}
-	req.normalizePurposes()
+	req.normalizePurposes("mtls-superadmin")
 	if len(req.Purposes) != 2 || req.Purposes[0] != "dsh" || req.Purposes[1] != "vaultwarden" {
 		t.Fatalf("comma split failed: %v", req.Purposes)
 	}

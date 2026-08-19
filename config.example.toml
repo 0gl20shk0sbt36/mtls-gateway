@@ -1,0 +1,82 @@
+# ============================================================
+# mtls-gw 服务端配置示例 (TOML)
+# 用法: cp config.example.toml /etc/mtls-gw/config.toml
+#       然后按下面的注释修改, 最后: mtls-gw -config /etc/mtls-gw/config.toml
+# ============================================================
+
+# ---- 基础 ----
+bind_host = "0.0.0.0"                # 所有监听(业务/管理/发现)的绑定地址
+db = "/var/lib/mtls-gw/mtls-gw.db"   # SQLite 数据库路径(证书登记 + 角色授权)
+
+# ---- CA 与网关证书 ----
+ca = "/etc/mtls-gw/ca.crt"            # CA 证书(验证客户端证书链)
+ca_key = "/etc/mtls-gw/ca.key"        # CA 私钥(签发证书用; 权限 600)
+server_cert = "/etc/mtls-gw/server.crt"  # 网关自身 TLS 证书
+server_key = "/etc/mtls-gw/server.key"   # 网关 TLS 私钥
+cert_dir = "/var/lib/mtls-gw/certs"      # 签发产物的输出目录
+sock_path = "/run/mtls-gw/mtls-gw.sock"  # 本机 CLI 管理 socket(仅 Linux; Windows 用 TCP admin)
+
+# ---- 签发证书的组织信息 ----
+org = "mtls-gw"                       # 证书 O 字段
+ou = "device"                         # 证书 OU 字段
+
+# ---- 有效期(天) ----
+default_days = 365                    # 普通证书默认有效期
+admin_days = 30                       # 含管理角色证书的默认有效期
+
+# ---- 安全 ----
+require_ip_bind = true                # 证书是否必须绑定来源 IP(建议保持 true)
+admin_role = "mtls-superadmin"        # ★ 内置管理角色名(别用常用名; 证书有该角色才能进管理 API;
+                                      #   禁止出现在业务服务 roles 里, 否则加载报错)
+tls_min_version = "1.2"               # TLS 最低版本: "1.2" 或 "1.3"
+
+# ---- 签发密钥 ----
+key_type = "rsa"                      # 签发密钥类型: rsa | ecdsa
+key_bits = 2048                       # rsa: 2048/3072/4096; ecdsa: 256/384/521
+pwd_length = 16                       # 自动生成 p12 密码的长度
+
+# ---- 监听端口 ----
+info_listen = ":9499"                 # /info 服务发现端口(任一已登记证书可访问; 空串=关闭)
+admin_listen = ":9444"                # 管理 API 端口(仅 admin_role 证书可连)
+
+# ============================================================
+# 映射(通道) — 唯一实体; 判重靠 listen(重复=启动报错); id 仅助记符(也须唯一)
+# ============================================================
+[[mappings]]
+id = "dsh-main"                       # 助记符(服务用 id 或索引引用它)
+listen = ":9443"                      # 入口 :端口[/路径]; 同端口多路径按最长前缀匹配
+target = "http://127.0.0.1:3080"      # 后端地址(URL 带路径=前缀替换, nginx proxy_pass 语义)
+
+[[mappings]]
+id = "vault-admin"
+listen = ":9445/admin"
+target = "http://127.0.0.1:8080/"
+
+[[mappings]]
+id = "nas-a"
+listen = ":9446"
+target = "http://127.0.0.1:5001"
+
+[[mappings]]
+id = "nas-b"
+listen = ":9447"
+target = "http://127.0.0.1:5001"
+
+# ============================================================
+# 服务注册 — 所有服务必须在这里声明
+# 授权: 证书的 roles 与该服务 roles 有交集(或含 "*")才放行
+# ============================================================
+[[services]]
+name = "dsh"                          # 服务名(唯一; 重复=启动报错)
+channels = ["dsh-main"]               # 本服务的通道(mapping id, 或索引如 0; 建议用 id)
+roles = ["dsh"]                       # 允许访问本服务的证书角色
+
+[[services]]
+name = "vaultwarden"
+channels = ["vault-admin"]
+roles = ["vault", "staff"]           # 例: 证书角色"staff"也能访问它(用户自定义角色名随意, 别撞 admin_role)
+
+[[services]]
+name = "nas"
+channels = ["nas-a", "nas-b"]         # 一个服务多个通道
+roles = ["family", "dsh", "*"]        # "*" = 任一已登记证书可访问

@@ -70,7 +70,7 @@ func testGateway(t *testing.T, store *db.Store) (*Gateway, *x509.Certificate, *r
 	writePEM(t, serverCertPath, serverDER)
 	writeKeyPEM(t, serverKeyPath, serverKey)
 
-	gw, err := New(store, caPath, serverCertPath, serverKeyPath, true)
+	gw, err := New(store, caPath, serverCertPath, serverKeyPath, true, "mtls-superadmin", "1.2")
 	if err != nil {
 		t.Fatalf("new gateway: %v", err)
 	}

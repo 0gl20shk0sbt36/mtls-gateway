@@ -1,11 +1,10 @@
-// Package proxy 实现"映射"路由的反向代理 (v3)。
+// Package proxy 实现"映射 + 服务"路由的反向代理 (v4)。
 //
-// 模型: mappings 为唯一实体, 每条 = 入口(:port[/path]) → 目标URL, 并声明允许的服务(services)。
-//   - listen 合并路径: ":9445/admin" (host 由全局 bind_host 决定, 不在此写)
-//   - target 为完整 URL, 其路径段用于"前缀替换"(剥入口 path、补 target path), nginx 同款
-//   - services: 允许的用途清单, 证书用途与其有交集才放行; ["any"]=任一已登记证书
-// 重复判定: 两个映射 listen 字符串完全相同 → 加载报错; 前缀重叠/同 target 不同 listen 合法。
-// 匹配: 同端口按入口路径最长前缀优先; 无路径的 = 整口兜底。
+// 模型:
+//   - mappings: 唯一实体, 每条 = id(助记符, 唯一) + listen(:port[/path]) + target; 判重靠 listen
+//   - services: 服务注册表(所有服务必须注册): name + channels(mapping id 或索引) + roles(允许的证书角色)
+// 授权: 请求命中映射 → 取引用该映射的所有服务的 roles 并集 → 证书 roles 与并集有交集(或含 "*")→ 放行
+// 匹配: 同端口按入口路径最长前缀; 无路径 = 整口兜底。前缀替换(nginx proxy_pass 语义)。
 package proxy
 
 import (
@@ -14,29 +13,52 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 )
 
-// Mapping 一条映射的配置形态 (config JSON 直接对应)
+// Mapping 一条映射(通道)配置 (TOML [[mappings]] 直接对应)
 type Mapping struct {
-	Listen   string   `json:"listen"`
-	Target   string   `json:"target"`
-	Services []string `json:"services"`
+	ID     string `toml:"id" json:"id"`         // 助记符(唯一; 判重仍靠 listen)
+	Listen string `toml:"listen" json:"listen"` // 入口 :port[/path]
+	Target string `toml:"target" json:"target"` // 后端 URL(带路径=前缀替换)
+}
+
+// ServiceCfg 服务注册条目 (TOML [[services]] 直接对应)
+type ServiceCfg struct {
+	Name     string   `toml:"name" json:"name"`           // 服务名(唯一)
+	Channels []string `toml:"channels" json:"channels"`   // 通道: mapping id 或索引(不建议)
+	Roles    []string `toml:"roles" json:"roles"`         // 允许访问本服务的证书角色; "*"=任一已登记
+}
+
+// ChannelInfo /info 返回的通道信息
+type ChannelInfo struct {
+	Listen string `json:"listen"`
+	Target string `json:"target"`
+}
+
+// ServiceInfo /info 返回的服务信息
+type ServiceInfo struct {
+	Name     string        `json:"name"`
+	Channels []ChannelInfo `json:"channels"`
 }
 
 // route 编译后的映射
 type route struct {
-	port     string
-	path     string   // 入口路径前缀 ("/a" 或 "")
-	services []string
-	target   *url.URL
-	rp       *httputil.ReverseProxy
+	id     string
+	port   string
+	path   string // 入口路径前缀 ("/a" 或 "")
+	roles  []string // 引用本映射的所有服务的 roles 并集
+	target *url.URL
+	rp     *httputil.ReverseProxy
 }
 
 // Router 按端口分组的路由器
 type Router struct {
-	byPort map[string]*portRouter
-	routes []route // 供 /info
+	byPort   map[string]*portRouter
+	routes   []*route
+	mappings []Mapping    // 供 /admin/mappings
+	services []ServiceCfg // 供 /info
 }
 
 type portRouter struct {
@@ -45,24 +67,36 @@ type portRouter struct {
 	whole  *route   // 无路径兜底 (整口)
 }
 
-// NewRouter 从 mappings 构建路由器; listen 重复返回 error。
-func NewRouter(ms []Mapping) (*Router, error) {
-	r := &Router{byPort: map[string]*portRouter{}}
-	seen := map[string]bool{}
-	for _, m := range ms {
-		port, path, err := parseListen(m.Listen)
-		if err != nil {
-			return nil, fmt.Errorf("mapping listen %q: %w", m.Listen, err)
+// NewRouter 从 mappings + services 构建路由器; 校验失败返回 error。
+func NewRouter(ms []Mapping, ss []ServiceCfg) (*Router, error) {
+	r := &Router{byPort: map[string]*portRouter{}, mappings: ms, services: ss}
+	seenListen, seenID := map[string]bool{}, map[string]bool{}
+	for i := range ms {
+		m := &ms[i]
+		if m.Listen == "" {
+			return nil, fmt.Errorf("mapping[%d] missing listen", i)
 		}
-		if seen[m.Listen] {
+		if seenListen[m.Listen] {
 			return nil, fmt.Errorf("duplicate listen: %s", m.Listen)
 		}
-		seen[m.Listen] = true
+		seenListen[m.Listen] = true
+		if m.ID == "" {
+			return nil, fmt.Errorf("mapping %s missing id (mnemonic, unique)", m.Listen)
+		}
+		if seenID[m.ID] {
+			return nil, fmt.Errorf("duplicate mapping id: %s", m.ID)
+		}
+		seenID[m.ID] = true
+		port, path, err := parseListen(m.Listen)
+		if err != nil {
+			return nil, fmt.Errorf("mapping %q: %w", m.Listen, err)
+		}
 		u, err := url.Parse(m.Target)
 		if err != nil || u.Scheme == "" || u.Host == "" {
 			return nil, fmt.Errorf("mapping %s bad target %q", m.Listen, m.Target)
 		}
-		rt := &route{port: port, path: path, services: m.Services, target: u, rp: newReverseProxy(u)}
+		rt := &route{id: m.ID, port: port, path: path, target: u, rp: newReverseProxy(u)}
+		r.routes = append(r.routes, rt)
 		pr := r.byPort[port]
 		if pr == nil {
 			pr = &portRouter{port: port}
@@ -73,17 +107,57 @@ func NewRouter(ms []Mapping) (*Router, error) {
 		} else {
 			pr.prefix = append(pr.prefix, rt)
 		}
-		r.routes = append(r.routes, *rt)
+	}
+	// services: 校验 + 汇总 roles 到 route
+	seenSvc := map[string]bool{}
+	for _, s := range ss {
+		if s.Name == "" {
+			return nil, fmt.Errorf("service missing name")
+		}
+		if seenSvc[s.Name] {
+			return nil, fmt.Errorf("duplicate service name: %s", s.Name)
+		}
+		seenSvc[s.Name] = true
+		if len(s.Channels) == 0 {
+			return nil, fmt.Errorf("service %s has no channels", s.Name)
+		}
+		for _, ch := range s.Channels {
+			idx := -1
+			if n, err := strconv.Atoi(ch); err == nil {
+				idx = n // 索引引用
+			} else {
+				for i, rt := range r.routes {
+					if rt.id == ch {
+						idx = i
+						break
+					}
+				}
+			}
+			if idx < 0 || idx >= len(r.routes) {
+				return nil, fmt.Errorf("service %s channel %q not found", s.Name, ch)
+			}
+			r.routes[idx].roles = mergeRoles(r.routes[idx].roles, s.Roles)
+		}
 	}
 	for _, pr := range r.byPort {
 		sort.SliceStable(pr.prefix, func(i, j int) bool {
 			return len(pr.prefix[i].path) > len(pr.prefix[j].path)
 		})
-		if pr.whole != nil && len(pr.prefix) > 0 {
-			// 带路径的优先按前缀, whole 兜底未命中路径 —— 合法
-		}
 	}
 	return r, nil
+}
+
+func mergeRoles(a, b []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, r := range append(a, b...) {
+		if r == "" || seen[r] {
+			continue
+		}
+		seen[r] = true
+		out = append(out, r)
+	}
+	return out
 }
 
 // parseListen 解析 ":9443" / ":9445/admin" → (port, path)
@@ -128,7 +202,7 @@ func (r *Router) Match(port, path string) *route {
 		}
 	}
 	if pr.whole != nil {
-		return pr.whole // 整口兜底
+		return pr.whole
 	}
 	return nil
 }
@@ -140,14 +214,14 @@ func matchPath(p, pref string) bool {
 	return p == pref || strings.HasPrefix(p, pref+"/")
 }
 
-// Allows 判断用途清单是否允许访问该映射 (services 含 "any" 或存在交集)
-func (r *route) Allows(purposes []string) bool {
-	for _, s := range r.services {
-		if s == "any" {
+// Allows 判断证书角色是否允许访问该映射(引用它的服务 roles 并集 ∩ 证书 roles, 或含 "*")
+func (r *route) Allows(roles []string) bool {
+	for _, want := range r.roles {
+		if want == "*" {
 			return true
 		}
-		for _, p := range purposes {
-			if s == p {
+		for _, have := range roles {
+			if want == have {
 				return true
 			}
 		}
@@ -155,35 +229,65 @@ func (r *route) Allows(purposes []string) bool {
 	return false
 }
 
-// Allowed 返回入口端口+路径串(供 /info / 客户端展示)
+// Listen 返回入口端口+路径串(供展示)
 func (r *route) Listen() string { return ":" + r.port + r.path }
-func (r *route) Services() []string { return r.services }
-func (r *route) Target() string  { return r.target.String() }
+func (r *route) Target() string { return r.target.String() }
 
-// AllowedRoutes 返回用途清单可访问的所有映射(供 /info 按证书过滤; "any" 或交集)
-func (r *Router) AllowedRoutes(purposes []string) []Mapping {
-	var out []Mapping
-	for i := range r.routes {
-		if r.routes[i].Allows(purposes) {
-			out = append(out, Mapping{Listen: r.routes[i].Listen(), Target: r.routes[i].Target(), Services: r.routes[i].services})
-		}
-	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].Listen < out[j].Listen })
-	return out
-}
-
-// Routes 返回全部映射(供 /info; 服务端再按证书过滤)
+// Routes 返回全部映射(供 /admin/mappings; admin 用, 不过滤)
 func (r *Router) Routes() []Mapping {
 	out := make([]Mapping, 0, len(r.routes))
 	for _, rt := range r.routes {
-		out = append(out, Mapping{Listen: ":" + rt.port + rt.path, Target: rt.target.String(), Services: rt.services})
+		out = append(out, Mapping{ID: rt.id, Listen: rt.Listen(), Target: rt.Target()})
 	}
 	return out
+}
+
+// ServicesAllowed 返回证书角色可访问的服务(供 /info 按角色过滤)
+func (r *Router) ServicesAllowed(roles []string) []ServiceInfo {
+	var out []ServiceInfo
+	for _, s := range r.services {
+		if !rolesMatch(s.Roles, roles) {
+			continue
+		}
+		si := ServiceInfo{Name: s.Name}
+		for _, ch := range s.Channels {
+			idx := -1
+			if n, err := strconv.Atoi(ch); err == nil {
+				idx = n
+			} else {
+				for i, rt := range r.routes {
+					if rt.id == ch {
+						idx = i
+						break
+					}
+				}
+			}
+			if idx >= 0 && idx < len(r.routes) {
+				si.Channels = append(si.Channels, ChannelInfo{Listen: r.routes[idx].Listen(), Target: r.routes[idx].Target()})
+			}
+		}
+		out = append(out, si)
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+func rolesMatch(want, have []string) bool {
+	for _, w := range want {
+		if w == "*" {
+			return true
+		}
+		for _, h := range have {
+			if w == h {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // Serve 执行前缀替换并转发
 func (r *Router) Serve(rt *route, w http.ResponseWriter, req *http.Request) {
-	// 前缀替换: 去掉入口 path, 补目标 path (nginx 同款)
 	rc := req.Clone(req.Context())
 	rc.URL.Path = substitute(rc.URL.Path, rt.path, rt.target.Path)
 	rt.rp.ServeHTTP(w, rc)

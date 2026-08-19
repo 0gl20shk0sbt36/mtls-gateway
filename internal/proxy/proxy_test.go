@@ -1,131 +1,192 @@
 package proxy
 
 import (
+	"net"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 )
 
 func newEcho() *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("X-Path", r.URL.Path)
-		w.Header().Set("X-Host", r.Host)
-		w.WriteHeader(200)
-		w.Write([]byte(r.URL.Path))
+		w.Write([]byte("ECHO " + r.Method + " " + r.URL.Path + " HOST=" + r.Host))
 	}))
 }
 
 func TestLongestPrefixMatch(t *testing.T) {
-	a := newEcho(); defer a.Close()
-	b := newEcho(); defer b.Close()
 	r, err := NewRouter([]Mapping{
-		{Listen: ":9990/a", Target: a.URL, Services: []string{"svc-a"}},
-		{Listen: ":9990/a/b", Target: b.URL, Services: []string{"svc-b"}},
+		{ID: "a", Listen: ":9001", Target: "http://127.0.0.1:1"},
+		{ID: "ab", Listen: ":9001/a/b", Target: "http://127.0.0.1:1"},
+		{ID: "aa", Listen: ":9001/a", Target: "http://127.0.0.1:1"},
+	}, []ServiceCfg{
+		{Name: "s", Channels: []string{"a", "ab", "aa"}, Roles: []string{"x"}},
 	})
-	if err != nil { t.Fatal(err) }
-	cases := []struct{ path, want string }{
-		{"/a/b/c", ":9990/a/b"},
-		{"/a/x", ":9990/a"},
-		{"/a/b", ":9990/a/b"},
-		{"/a", ":9990/a"},
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, c := range cases {
-		m := r.Match("9990", c.path)
-		if m == nil || m.Listen() != c.want {
-			t.Errorf("Match(:9990 %q) = %v, want %s", c.path, m, c.want)
+	cases := map[string]string{
+		"/a/b/c": ":9001/a/b",
+		"/a/c":   ":9001/a",
+		"/ab":    ":9001", // /ab 不匹配前缀 /a(需 /a/... 或相等)→ 整口兜底
+		"/x":     ":9001", // 整口兜底
+	}
+	for p, want := range cases {
+		rt := r.Match("9001", p)
+		if rt == nil || rt.Listen() != want {
+			t.Errorf("path %s: got %v want %s", p, rt.Listen(), want)
 		}
 	}
 }
 
-func TestBoundaryNoFalseMatch(t *testing.T) {
-	a := newEcho(); defer a.Close()
-	r, _ := NewRouter([]Mapping{{Listen: ":9990/a", Target: a.URL, Services: nil}})
-	for _, p := range []string{"/ab", "/ax", "/a-b"} {
-		if m := r.Match("9990", p); m != nil {
-			t.Errorf("Match(%q) should be nil, got %v", p, m)
+func TestWholePortFallback(t *testing.T) {
+	r, _ := NewRouter([]Mapping{
+		{ID: "w", Listen: ":9002", Target: "http://127.0.0.1:1"},
+	}, []ServiceCfg{{Name: "s", Channels: []string{"w"}, Roles: []string{"x"}}})
+	for _, p := range []string{"/", "/x", "/a/b"} {
+		if rt := r.Match("9002", p); rt == nil {
+			t.Errorf("whole-port should match %q", p)
 		}
 	}
 }
 
-func TestWholePortFallbackAndServe(t *testing.T) {
-	back := newEcho(); defer back.Close()
-	r, _ := NewRouter([]Mapping{
-		{Listen: ":9991/a", Target: back.URL, Services: nil}, // 带前缀
+func TestSubstitution(t *testing.T) {
+	back := newEcho()
+	defer back.Close()
+	r, err := NewRouter([]Mapping{
+		{ID: "strip", Listen: ":9003/a", Target: back.URL},
+		{ID: "prep", Listen: ":9004", Target: back.URL + "/x"},
+	}, []ServiceCfg{
+		{Name: "s", Channels: []string{"strip", "prep"}, Roles: []string{"x"}},
 	})
-	// 整口兜底: 无路径映射
-	r2, _ := NewRouter([]Mapping{
-		{Listen: ":9992", Target: back.URL, Services: nil},
-	})
-	if m := r.Match("9991", "/b"); m != nil {
-		t.Errorf("no-path on :9991 should be nil (no whole), got %v", m)
+	if err != nil {
+		t.Fatal(err)
 	}
-	_ = r2
-	if m := r2.Match("9992", "/anything"); m == nil || m.Listen() != ":9992" {
-		t.Errorf("whole-port fallback failed, got %v", m)
+	h := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		rt := r.Match(portOf(req.Host), req.URL.Path)
+		if rt == nil {
+			http.Error(w, "no route", 404)
+			return
+		}
+		r.Serve(rt, w, req)
+	})
+	srv9003 := httptest.NewUnstartedServer(h)
+	ln9003, err := net.Listen("tcp", "127.0.0.1:9003")
+	if err != nil {
+		t.Fatalf("listen 9003: %v", err)
+	}
+	srv9003.Listener = ln9003
+	srv9003.Start()
+	defer srv9003.Close()
+	srv9004 := httptest.NewUnstartedServer(h)
+	ln9004, err := net.Listen("tcp", "127.0.0.1:9004")
+	if err != nil {
+		t.Fatalf("listen 9004: %v", err)
+	}
+	srv9004.Listener = ln9004
+	srv9004.Start()
+	defer srv9004.Close()
+
+	if got := get("http://127.0.0.1:9003/a/hello"); got != "ECHO GET /hello HOST="+back.Listener.Addr().String() {
+		t.Errorf("strip: %q", got)
+	}
+	if got := get("http://127.0.0.1:9003/a/x"); got != "ECHO GET /x HOST="+back.Listener.Addr().String() {
+		t.Errorf("strip /a/x: %q", got)
+	}
+	if got := get("http://127.0.0.1:9004/p"); got != "ECHO GET /x/p HOST="+back.Listener.Addr().String() {
+		t.Errorf("prepend: %q", got)
 	}
 }
 
-func TestPrefixSubstitution(t *testing.T) {
-	back := newEcho(); defer back.Close()
-	r, _ := NewRouter([]Mapping{
-		{Listen: ":9993/a", Target: back.URL, Services: nil},        // 剥 /a
-		{Listen: ":9994", Target: back.URL + "/x", Services: nil},  // 补 /x
-	})
-	// 剥
-	rec := httptest.NewRecorder()
-	r.Serve(r.Match("9993", "/a/hello"), rec, httptest.NewRequest("GET", "http://t/a/hello", nil))
-	if got := rec.Header().Get("X-Path"); got != "/hello" {
-		t.Errorf("strip: backend path = %q, want /hello", got)
-	}
-	// 补
-	rec2 := httptest.NewRecorder()
-	r.Serve(r.Match("9994", "/p"), rec2, httptest.NewRequest("GET", "http://t/p", nil))
-	if got := rec2.Header().Get("X-Path"); got != "/x/p" {
-		t.Errorf("prepend: backend path = %q, want /x/p", got)
-	}
-}
-
-func TestDuplicateListenError(t *testing.T) {
-	a := newEcho(); defer a.Close()
+func TestDupAndIDChecks(t *testing.T) {
 	if _, err := NewRouter([]Mapping{
-		{Listen: ":9995/a", Target: a.URL},
-		{Listen: ":9995/a", Target: "http://127.0.0.1:9"},
-	}); err == nil {
-		t.Error("duplicate listen should error")
-	} else if !strings.Contains(err.Error(), "duplicate") {
-		t.Errorf("want duplicate error, got: %v", err)
+		{ID: "a", Listen: ":9101", Target: "http://127.0.0.1:1"},
+		{ID: "b", Listen: ":9101", Target: "http://127.0.0.1:2"},
+	}, nil); err == nil {
+		t.Fatal("duplicate listen should error")
 	}
-	// 同 target 不同 listen: 合法
 	if _, err := NewRouter([]Mapping{
-		{Listen: ":9995/a", Target: a.URL},
-		{Listen: ":9996/b", Target: a.URL},
-	}); err != nil {
-		t.Errorf("same target different listen should be ok, got %v", err)
+		{ID: "a", Listen: ":9102", Target: "http://127.0.0.1:1"},
+		{ID: "a", Listen: ":9103", Target: "http://127.0.0.1:1"},
+	}, nil); err == nil {
+		t.Fatal("duplicate id should error")
+	}
+	if _, err := NewRouter([]Mapping{
+		{Listen: ":9104", Target: "http://127.0.0.1:1"},
+	}, nil); err == nil {
+		t.Fatal("missing id should error")
+	}
+	if _, err := NewRouter([]Mapping{
+		{ID: "a", Listen: ":9105", Target: "http://127.0.0.1:1"},
+	}, []ServiceCfg{{Name: "s", Channels: []string{"nope"}, Roles: []string{"x"}}}); err == nil {
+		t.Fatal("bad channel ref should error")
+	}
+	if _, err := NewRouter([]Mapping{
+		{ID: "a", Listen: ":9106", Target: "http://127.0.0.1:1"},
+	}, []ServiceCfg{{Name: "s", Channels: []string{"a"}, Roles: []string{"x"}}, {Name: "s", Channels: []string{"a"}, Roles: []string{"x"}}}); err == nil {
+		t.Fatal("duplicate service should error")
 	}
 }
 
-func TestAllows(t *testing.T) {
-	a := newEcho(); defer a.Close()
-	r, _ := NewRouter([]Mapping{
-		{Listen: ":9997", Target: a.URL, Services: []string{"svc-a", "svc-b"}},
-		{Listen: ":9998", Target: a.URL, Services: []string{"any"}},
+func TestRolesAuth(t *testing.T) {
+	r, err := NewRouter([]Mapping{
+		{ID: "m1", Listen: ":9201", Target: "http://127.0.0.1:1"},
+		{ID: "m2", Listen: ":9202", Target: "http://127.0.0.1:1"},
+		{ID: "m3", Listen: ":9203", Target: "http://127.0.0.1:1"},
+	}, []ServiceCfg{
+		{Name: "svc-a", Channels: []string{"m1"}, Roles: []string{"ra", "rb"}},
+		{Name: "svc-b", Channels: []string{"m2", "m1"}, Roles: []string{"rb", "rc"}}, // m1 被两个服务引用
+		{Name: "svc-open", Channels: []string{"m3"}, Roles: []string{"*"}},
 	})
-	sa := r.Match("9997", "/")
-	if !sa.Allows([]string{"svc-b"}) { t.Error("svc-b should be allowed") }
-	if sa.Allows([]string{"svc-c"}) { t.Error("svc-c should be denied") }
-	an := r.Match("9998", "/")
-	if !an.Allows([]string{}) { t.Error("any should allow any (even empty)") }
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 证书角色 rb → m1(经 svc-a 或 svc-b)、m2、m3 都可访问
+	for _, port := range []string{"9201", "9202", "9203"} {
+		if rt := r.Match(port, "/x"); rt == nil || !rt.Allows([]string{"rb"}) {
+			t.Errorf("role rb should access %s", port)
+		}
+	}
+	// m1 被 svc-a(ra,rb) 和 svc-b(rb,rc) 引用 → roles 并集 ra,rb,rc → rc 能进 m1
+	if rt := r.Match("9201", "/x"); !rt.Allows([]string{"rc"}) {
+		t.Error("m1 roles union = ra,rb,rc → rc allowed")
+	}
+	if rt := r.Match("9201", "/x"); rt.Allows([]string{"zz"}) {
+		t.Error("zz should not access m1")
+	}
+	// ServicesAllowed 按角色过滤
+	svcs := r.ServicesAllowed([]string{"rb"})
+	if len(svcs) != 3 {
+		t.Errorf("rb should see 3 services, got %d", len(svcs))
+	}
+	svcs = r.ServicesAllowed([]string{"zz"})
+	if len(svcs) != 1 || svcs[0].Name != "svc-open" {
+		t.Errorf("zz should only see svc-open (*), got %+v", svcs)
+	}
+	// 通道索引引用
+	r2, err := NewRouter([]Mapping{
+		{ID: "a", Listen: ":9301", Target: "http://127.0.0.1:1"},
+	}, []ServiceCfg{{Name: "s", Channels: []string{"0"}, Roles: []string{"x"}}})
+	if err != nil || len(r2.ServicesAllowed([]string{"x"})) != 1 {
+		t.Errorf("index channel ref failed: %v", err)
+	}
 }
 
-func TestListens(t *testing.T) {
-	a := newEcho(); defer a.Close()
-	r, _ := NewRouter([]Mapping{
-		{Listen: ":9443", Target: a.URL},
-		{Listen: ":9445/admin", Target: a.URL},
-	})
-	got := r.Listens()
-	if len(got) != 2 || got[0] != "9443" || got[1] != "9445" {
-		t.Errorf("Listens = %v", got)
+func portOf(hostport string) string {
+	for i := len(hostport) - 1; i >= 0; i-- {
+		if hostport[i] == ':' {
+			return hostport[i+1:]
+		}
 	}
+	return ""
+}
+
+func get(u string) string {
+	resp, err := http.Get(u)
+	if err != nil {
+		return "ERR " + err.Error()
+	}
+	defer resp.Body.Close()
+	b := make([]byte, 512)
+	n, _ := resp.Body.Read(b)
+	return string(b[:n])
 }

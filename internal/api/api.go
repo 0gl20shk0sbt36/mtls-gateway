@@ -6,6 +6,9 @@
 package api
 
 import (
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -58,6 +61,10 @@ type Manager struct {
 	sockPath  string       // Unix socket 路径
 	adminOnly bool         // TCP 通道是否要求 admin 用途
 	tmpl      CertTemplate // 证书模板 (可配置)
+	AdminRole string       // 内置管理角色名 (config admin_role)
+	KeyType   string       // 签发密钥类型: rsa | ecdsa
+	KeyBits   int          // rsa: 2048/3072/4096; ecdsa: 256/384/521
+	PwdLength int          // 自动生成 p12 密码长度
 }
 
 // orgName 返回证书 O 字段
@@ -68,7 +75,8 @@ func (m *Manager) ouName() string { return m.tmpl.OU }
 
 // NewManager 创建管理器, 加载 CA 私钥用于签发
 // tmpl: 证书模板配置 (可传零值, 自动用默认)
-func NewManager(store *db.Store, caCertPath, caKeyPath, certDir, sockPath string, tmpl CertTemplate) (*Manager, error) {
+// adminRole: 内置管理角色名; keyType/keyBits: 签发密钥; pwdLength: 自动密码长度
+func NewManager(store *db.Store, caCertPath, caKeyPath, certDir, sockPath string, tmpl CertTemplate, adminRole, keyType string, keyBits, pwdLength int) (*Manager, error) {
 	caPEM, err := os.ReadFile(caCertPath)
 	if err != nil {
 		return nil, fmt.Errorf("read ca cert: %w", err)
@@ -112,6 +120,10 @@ func NewManager(store *db.Store, caCertPath, caKeyPath, certDir, sockPath string
 		certDir:   certDir,
 		sockPath:  sockPath,
 		adminOnly: true,
+		AdminRole: adminRole,
+		KeyType:   keyType,
+		KeyBits:   keyBits,
+		PwdLength: pwdLength,
 		tmpl:      tmpl,
 	}, nil
 }
@@ -131,7 +143,8 @@ type IssueRequest struct {
 //   - admin 在首位 + 有其他 → 警告, 仅保留 admin (剔除其他)
 //   - admin 在非首位 → 警告, 剔除 admin (保留其他)
 //   - 仅 admin → 无警告
-func (r *IssueRequest) normalizePurposes() (warnings []string) {
+// normalizePurposes 规范化用途列表; adminRole 为内置管理角色名(可配置)
+func (r *IssueRequest) normalizePurposes(adminRole string) (warnings []string) {
 	if len(r.Purposes) == 0 {
 		return nil
 	}
@@ -145,21 +158,21 @@ func (r *IssueRequest) normalizePurposes() (warnings []string) {
 		}
 		r.Purposes = parts
 	}
-	// admin 规则
+	// admin 规则 (admin_role 可配置)
 	for i, p := range r.Purposes {
-		if p == "admin" {
+		if p == adminRole {
 			if i == 0 {
-				// admin 在首位: 若还有其他, 剔除其他
+				// admin_role 在首位: 若还有其他, 剔除其他
 				if len(r.Purposes) > 1 {
-					warnings = append(warnings, "admin 与其他用途混用, 已忽略其他用途, 仅保留 admin")
-					r.Purposes = []string{"admin"}
+					warnings = append(warnings, adminRole+" 与其他用途混用, 已忽略其他用途, 仅保留 "+adminRole)
+					r.Purposes = []string{adminRole}
 				}
 			} else {
-				// admin 不在首位: 剔除 admin, 保留其他
-				warnings = append(warnings, "admin 不在首位, 已剔除 admin, 保留其他用途")
+				// admin_role 不在首位: 剔除, 保留其他
+				warnings = append(warnings, adminRole+" 不在首位, 已剔除 "+adminRole+", 保留其他用途")
 				others := []string{}
 				for _, x := range r.Purposes {
-					if x != "admin" {
+					if x != adminRole {
 						others = append(others, x)
 					}
 				}
@@ -185,13 +198,13 @@ type IssueResponse struct {
 // IssueCert 签发客户端证书并登记数据库
 // SAN: 绑定 TS IP (设备绑定); 不写用途字段 (权限在数据库)
 func (m *Manager) IssueCert(req IssueRequest) (*IssueResponse, error) {
-	warnings := req.normalizePurposes()
+	warnings := req.normalizePurposes(m.AdminRole)
 	if req.Name == "" || len(req.Purposes) == 0 {
 		return nil, fmt.Errorf("name and purposes required")
 	}
 	if req.Days <= 0 {
 		// 默认天数: admin 用途用 AdminDays, 其他用 DefaultDays
-		if req.Purposes[0] == "admin" {
+		if req.Purposes[0] == m.AdminRole {
 			req.Days = m.tmpl.AdminDays
 		} else {
 			req.Days = m.tmpl.DefaultDays
@@ -200,17 +213,21 @@ func (m *Manager) IssueCert(req IssueRequest) (*IssueResponse, error) {
 	if req.NoPassword {
 		req.Password = "" // 无密码 p12
 	} else if req.Password == "" {
-		req.Password = randPassword(16)
+		n := m.PwdLength
+		if n <= 0 {
+			n = 16
+		}
+		req.Password = randPassword(n)
 	}
 	// 设备名合法性
 	if !validName(req.Name) {
 		return nil, fmt.Errorf("invalid name: %s", req.Name)
 	}
 
-	// 1. 生成密钥
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	// 1. 生成密钥 (key_type/key_bits 可配置)
+	key, pub, err := m.newClientKey()
 	if err != nil {
-		return nil, fmt.Errorf("gen key: %w", err)
+		return nil, err
 	}
 	// 2. 序列号 (唯一, 数据库主键)
 	serialLimit := new(big.Int).Lsh(big.NewInt(1), 128)
@@ -240,7 +257,7 @@ func (m *Manager) IssueCert(req IssueRequest) (*IssueResponse, error) {
 		}
 	}
 	// 4. 签发
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, m.caCert, &key.PublicKey, m.caKey)
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, m.caCert, pub, m.caKey)
 	if err != nil {
 		return nil, fmt.Errorf("create cert: %w", err)
 	}
@@ -386,6 +403,44 @@ func validName(s string) bool {
 		}
 	}
 	return len(s) > 0
+}
+
+// newClientKey 按 key_type/key_bits 生成客户端密钥 (rsa 2048/3072/4096; ecdsa 256/384/521)
+func (m *Manager) newClientKey() (crypto.PrivateKey, any, error) {
+	bits := m.KeyBits
+	switch m.KeyType {
+	case "", "rsa":
+		if bits == 0 {
+			bits = 2048
+		}
+		if bits != 2048 && bits != 3072 && bits != 4096 {
+			return nil, nil, fmt.Errorf("bad key_bits %d for rsa (2048/3072/4096)", bits)
+		}
+		k, err := rsa.GenerateKey(rand.Reader, bits)
+		if err != nil {
+			return nil, nil, fmt.Errorf("gen rsa key: %w", err)
+		}
+		return k, &k.PublicKey, nil
+	case "ecdsa":
+		var curve elliptic.Curve
+		switch bits {
+		case 0, 256:
+			curve = elliptic.P256()
+		case 384:
+			curve = elliptic.P384()
+		case 521:
+			curve = elliptic.P521()
+		default:
+			return nil, nil, fmt.Errorf("bad key_bits %d for ecdsa (256/384/521)", bits)
+		}
+		k, err := ecdsa.GenerateKey(curve, rand.Reader)
+		if err != nil {
+			return nil, nil, fmt.Errorf("gen ecdsa key: %w", err)
+		}
+		return k, &k.PublicKey, nil
+	default:
+		return nil, nil, fmt.Errorf("bad key_type %q (rsa|ecdsa)", m.KeyType)
+	}
 }
 
 func randPassword(n int) string {

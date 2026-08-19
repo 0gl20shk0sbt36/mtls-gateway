@@ -22,19 +22,20 @@ type Gateway struct {
 	store         *db.Store
 	caPool        *x509.CertPool
 	serverTLS     *tls.Config
-	requireIPBind bool // 是否强制 IP 绑定 (默认 true; false = 允许不绑 IP 的证书)
+	requireIPBind bool   // 是否强制 IP 绑定 (默认 true; false = 允许不绑 IP 的证书)
+	AdminRole     string // 内置管理角色名 (config admin_role, 默认 mtls-superadmin)
 }
 
-// 用途常量
-const (
-	PurposeAdmin = "admin"
-)
+// DefaultAdminRole 内置管理角色的默认名(可通过 config admin_role 覆盖; 勿用常用名)
+const DefaultAdminRole = "mtls-superadmin"
 
 // New 创建认证器, 加载 CA 和服务器证书
 // caPath: 受信 CA 证书路径
 // serverCertPath/serverKeyPath: 网关自己的 TLS 证书
 // requireIPBind: true=强制证书 SAN IP 必须等于来源 IP (默认); false=跳过 IP 预检
-func New(store *db.Store, caPath, serverCertPath, serverKeyPath string, requireIPBind bool) (*Gateway, error) {
+// adminRole: 内置管理角色名 (config admin_role)
+// tlsMinVersion: "1.2" 或 "1.3"
+func New(store *db.Store, caPath, serverCertPath, serverKeyPath string, requireIPBind bool, adminRole, tlsMinVersion string) (*Gateway, error) {
 	caPEM, err := os.ReadFile(caPath)
 	if err != nil {
 		return nil, fmt.Errorf("read ca: %w", err)
@@ -47,15 +48,28 @@ func New(store *db.Store, caPath, serverCertPath, serverKeyPath string, requireI
 	if err != nil {
 		return nil, fmt.Errorf("load server cert: %w", err)
 	}
+	if adminRole == "" {
+		adminRole = DefaultAdminRole
+	}
+	var minV uint16 = tls.VersionTLS12
+	switch tlsMinVersion {
+	case "", "1.2":
+		minV = tls.VersionTLS12
+	case "1.3":
+		minV = tls.VersionTLS13
+	default:
+		return nil, fmt.Errorf("bad tls_min_version %q (want 1.2/1.3)", tlsMinVersion)
+	}
 	g := &Gateway{
 		store:         store,
 		caPool:        pool,
 		requireIPBind: requireIPBind,
+		AdminRole:     adminRole,
 		serverTLS: &tls.Config{
 			Certificates: []tls.Certificate{cert},
 			ClientAuth:   tls.RequireAndVerifyClientCert,
 			ClientCAs:    pool,
-			MinVersion:   tls.VersionTLS12,
+			MinVersion:   minV,
 		},
 	}
 	return g, nil
@@ -142,7 +156,10 @@ func (g *Gateway) AuthorizePurposes(r *http.Request) ([]string, error) {
 }
 
 // IsAdminPurpose 判断用途是否 admin
-func IsAdminPurpose(purpose string) bool { return purpose == PurposeAdmin }
+func IsAdminPurpose(purpose string) bool { return purpose == DefaultAdminRole }
+
+// IsAdmin 判断记录是否持有内置管理角色(实例化后的 admin_role)
+func (g *Gateway) IsAdmin(rec *db.CertRecord) bool { return rec.HasPurpose(g.AdminRole) }
 
 // SerialHex 格式化序列号为可读 hex
 func SerialHex(serial []byte) string { return hex.EncodeToString(serial) }
