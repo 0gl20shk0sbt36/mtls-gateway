@@ -219,3 +219,35 @@ func TestErrCertNamePrecision(t *testing.T) {
 		}
 	}
 }
+
+// 第二十五批: adminAddr 不读 serverOverride(废弃语义锁定)
+func TestAdminAddrIgnoresServerOverride(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "relay.json")
+	SaveConfig(cfgPath, RelayConfig{ServerAddr: "gw:9499", AdminAddr: "gw:9444"})
+	m, err := NewManager(nil, cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.SetServerAddr("gw:9999") // 废弃方法: 不影响 adminAddr
+	if got := m.adminAddr(); got != "gw:9444" {
+		t.Fatalf("adminAddr = %q, want gw:9444 (must ignore SetServerAddr)", got)
+	}
+}
+
+// 第二十五批: localizeKnown 记录数提取 + auth 错误串分支
+func TestLocalizeKnownMore(t *testing.T) {
+	// already exists 记录数
+	got := localizeKnown("zh", fmt.Errorf("certificate name dev already exists (3 record(s))")).Error()
+	if !strings.Contains(got, "3") {
+		t.Fatalf("record count not in message: %s", got)
+	}
+	// auth 错误串
+	for _, raw := range []string{"cert ABC not registered", "cert ABC status=revoked", "cert ABC expired"} {
+		msg := localizeKnown("zh", fmt.Errorf("%s", raw)).Error()
+		ok := strings.Contains(msg, "未找到") || strings.Contains(msg, "吊销") || strings.Contains(msg, "过期")
+		if !ok {
+			t.Fatalf("auth error not localized: %q → %q", raw, msg)
+		}
+	}
+}

@@ -68,11 +68,10 @@ func (m *Manager) SetNoPersist(v bool) {
 	m.noPersist = v
 }
 
-// SetServerAddr 已废弃: --server 覆盖发现端点只需调 relay.SetServerAddr,
-// admin 桥(签发/吊销/验证)必须走独立 admin_addr, 不可混用 — 此方法不再生效
+// SetServerAddr 已废弃并移除语义: --server 覆盖发现端点需注入 cfg(StartWith)或调 relay.SetServerAddr;
+// admin 桥(签发/吊销/验证)必须走独立 admin_addr, 不可混用。此方法保留仅为兼容外部调用, 无任何效果。
 func (m *Manager) SetServerAddr(addr string) {
-	// 保留空实现避免破坏调用方; 语义见注释
-	_ = addr
+	// 无操作: 见注释(调用方应改用 StartWith/relay.SetServerAddr)
 }
 
 // AddTunnel 新增或覆盖隧道并持久化 (noPersist 时仅内存)
@@ -125,6 +124,11 @@ func (m *Manager) DelTunnel(id string) (bool, error) {
 // Start 按当前配置启动中继
 func (m *Manager) Start() error {
 	cfg := m.Config()
+	return m.relay.Start(cfg)
+}
+
+// StartWith 用给定配置启动(不读内存 cfg): 供 --server 等覆盖值注入(否则 Start 会用配置文件值覆盖)
+func (m *Manager) StartWith(cfg RelayConfig) error {
 	return m.relay.Start(cfg)
 }
 
@@ -685,6 +689,7 @@ var (
 	reErrNameCert   = regexp.MustCompile(`cert (\S+) not found`)
 	reErrNameExist  = regexp.MustCompile(`certificate name (\S+) already exists`)
 	reErrNameExist2 = regexp.MustCompile(`name (\S+) already exists`)
+	reErrNameParse  = regexp.MustCompile(`parse keypair (\S+):`)
 	reErrRecord     = regexp.MustCompile(`\((\d+) record`)
 )
 
@@ -735,13 +740,19 @@ func localizeKnown(lang string, err error) error {
 		return l.E("errDenied")
 	case strings.Contains(s, "not found"):
 		return l.E("errNotFound", errCertName(s))
+	case strings.Contains(s, "not registered"):
+		return l.E("errNotFound", errCertName(s))
+	case strings.Contains(s, "status=revoked"):
+		return l.E("errRevoked", errCertName(s))
+	case strings.Contains(s, "expired"):
+		return l.E("errExpired", errCertName(s))
 	}
 	return err
 }
 
 // errCertName 从错误消息提取证书名("decrypt key admin"/"cert admin not found"/"private key needs password: admin")
 func errCertName(s string) string {
-	for _, re := range []*regexp.Regexp{reErrName, reErrNamePwd, reErrNameCert, reErrNameExist, reErrNameExist2} {
+	for _, re := range []*regexp.Regexp{reErrName, reErrNamePwd, reErrNameCert, reErrNameExist, reErrNameExist2, reErrNameParse} {
 		if m := re.FindStringSubmatch(s); len(m) == 2 {
 			return m[1]
 		}

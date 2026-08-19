@@ -68,13 +68,14 @@ func main() {
 	cfgServerAddr := cfg.ServerAddr
 	if *server != "" {
 		cfgServerAddr = *server
+		cfg.ServerAddr = *server // 注入 Start 用的配置: 否则 Start 会用配置文件值覆盖 --server
 	}
 	r.SetServerAddr(cfgServerAddr) // 让 Discover(/api/services) 在未 Start 时也能用
 	if err := r.SetServerCA(cfg.ServerCAFile); err != nil {
 		log.Fatalf("server_ca: %v", err) // 配置的 CA 不可用 → 拒绝启动(防 MITM)
 	}
 	// 无条件启动核心(0 隧道也可): 否则空配置下 WebUI 添加隧道无法 Reload 启动
-	if err := mgr.Start(); err != nil {
+	if err := mgr.StartWith(cfg); err != nil {
 		log.Printf("start: %v", err)
 	} else {
 		log.Printf("relay started: %d tunnel(s)", countEnabled(cfg.Tunnels))
