@@ -56,11 +56,11 @@ func TestWriteErrStatusCodes(t *testing.T) {
 		{"bad request: x", 400},
 		{"name and purposes required", 400},
 		{"invalid ts_ip: 1.2.3", 400},
-		{"证书名 dev 已存在，禁止同名签发", 400},
+		{"证书名 dev 已存在，禁止同名签发", 409},
 		{"cert ghost not found", 404},
 		{"证书不存在", 404},
 		{"forbidden", 403},
-		{"角色 x 未声明", 403},
+		{"角色 x 未在 roles 声明列表中声明", 400},
 		{"internal boom", 500},
 	}
 	for _, c := range cases {
