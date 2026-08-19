@@ -174,6 +174,15 @@ func (s *Store) FindByName(name string) []CertRecord {
 	return out
 }
 
+// Delete 删除记录(签发 finalize 失败回滚用: 防幽灵记录/名字占坑)
+func (s *Store) Delete(serial string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.table, serial)
+	_, err := s.sqlite.Exec(`DELETE FROM certs WHERE serial=?`, serial)
+	return err
+}
+
 // Revoke 吊销: 改内存 + 落库
 func (s *Store) Revoke(serial string) error {
 	s.mu.Lock()

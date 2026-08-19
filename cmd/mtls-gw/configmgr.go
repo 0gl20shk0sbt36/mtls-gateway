@@ -163,7 +163,10 @@ func (m *ConfigManager) ReplaceAll(ms []proxy.Mapping, ss []proxy.ServiceCfg, ro
 		m.cfg.Mappings, m.cfg.Services, m.cfg.Roles = oldM, oldS, oldR
 		return err
 	}
-	return m.persist()
+	if err := m.persist(); err != nil {
+		log.Printf("config persisted in memory but disk write failed: %v (restart will lose changes)", err)
+	}
+	return nil
 }
 
 // ---- 角色 (roles 声明列表) ----
@@ -191,7 +194,10 @@ func (m *ConfigManager) AddRole(name string) error {
 		m.cfg.Roles = old
 		return err
 	}
-	return m.persist()
+	if err := m.persist(); err != nil {
+		log.Printf("config persisted in memory but disk write failed: %v (restart will lose changes)", err)
+	}
+	return nil
 }
 
 func (m *ConfigManager) DeleteRole(name string) error {
@@ -226,7 +232,10 @@ func (m *ConfigManager) DeleteRole(name string) error {
 		m.cfg.Roles = old
 		return err
 	}
-	return m.persist()
+	if err := m.persist(); err != nil {
+		log.Printf("config persisted in memory but disk write failed: %v (restart will lose changes)", err)
+	}
+	return nil
 }
 
 // ---- 通道 (mappings) ----
@@ -242,7 +251,10 @@ func (m *ConfigManager) AddMapping(mm proxy.Mapping) error {
 		m.cfg.Mappings = m.cfg.Mappings[:len(m.cfg.Mappings)-1]
 		return err
 	}
-	return m.persist()
+	if err := m.persist(); err != nil {
+		log.Printf("config persisted in memory but disk write failed: %v (restart will lose changes)", err)
+	}
+	return nil
 }
 
 func (m *ConfigManager) UpdateMapping(id string, mm proxy.Mapping) error {
@@ -267,7 +279,10 @@ func (m *ConfigManager) UpdateMapping(id string, mm proxy.Mapping) error {
 		m.cfg.Mappings = old
 		return err
 	}
-	return m.persist()
+	if err := m.persist(); err != nil {
+		log.Printf("config persisted in memory but disk write failed: %v (restart will lose changes)", err)
+	}
+	return nil
 }
 
 func (m *ConfigManager) DeleteMapping(id string) error {
@@ -291,7 +306,10 @@ func (m *ConfigManager) DeleteMapping(id string) error {
 		m.cfg.Mappings = old
 		return err
 	}
-	return m.persist()
+	if err := m.persist(); err != nil {
+		log.Printf("config persisted in memory but disk write failed: %v (restart will lose changes)", err)
+	}
+	return nil
 }
 
 // ---- 服务 (services) ----
@@ -307,7 +325,10 @@ func (m *ConfigManager) AddService(s proxy.ServiceCfg) error {
 		m.cfg.Services = m.cfg.Services[:len(m.cfg.Services)-1]
 		return err
 	}
-	return m.persist()
+	if err := m.persist(); err != nil {
+		log.Printf("config persisted in memory but disk write failed: %v (restart will lose changes)", err)
+	}
+	return nil
 }
 
 func (m *ConfigManager) UpdateService(name string, s proxy.ServiceCfg) error {
@@ -332,7 +353,10 @@ func (m *ConfigManager) UpdateService(name string, s proxy.ServiceCfg) error {
 		m.cfg.Services = old
 		return err
 	}
-	return m.persist()
+	if err := m.persist(); err != nil {
+		log.Printf("config persisted in memory but disk write failed: %v (restart will lose changes)", err)
+	}
+	return nil
 }
 
 func (m *ConfigManager) DeleteService(name string) error {
@@ -356,5 +380,8 @@ func (m *ConfigManager) DeleteService(name string) error {
 		m.cfg.Services = old
 		return err
 	}
-	return m.persist()
+	if err := m.persist(); err != nil {
+		log.Printf("config persisted in memory but disk write failed: %v (restart will lose changes)", err)
+	}
+	return nil
 }

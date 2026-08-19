@@ -86,7 +86,7 @@ func (m *Manager) AddTunnel(t Tunnel) error {
 	m.mu.Unlock()
 	if !np {
 		if err := SaveConfig(m.cfgPath, cfg); err != nil {
-			return err
+			log.Printf("config saved in memory but disk write failed: %v (restart will lose changes)", err)
 		}
 	}
 	m.reloadTunnels()

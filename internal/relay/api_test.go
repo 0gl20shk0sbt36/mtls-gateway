@@ -162,3 +162,22 @@ func TestWriteErrContentType(t *testing.T) {
 		t.Fatalf("Content-Type = %q, want application/json", ct)
 	}
 }
+
+// 第十一批: Manager.Config Routes 内层深拷贝 — mutate 返回的 Routes 不污染内部
+func TestConfigRoutesDeepCopy(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "relay.json")
+	SaveConfig(cfgPath, RelayConfig{})
+	m, err := NewManager(nil, cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.AddTunnel(Tunnel{Service: "s1", CertID: "c", Enabled: true,
+		Routes: []TunnelRoute{{Channel: ":1", Local: ":2"}}})
+	c := m.Config()
+	c.Tunnels[0].Routes[0].Local = ":9999"
+	c2 := m.Config()
+	if c2.Tunnels[0].Routes[0].Local != ":2" {
+		t.Fatalf("Config Routes polluted: %v", c2.Tunnels[0].Routes)
+	}
+}

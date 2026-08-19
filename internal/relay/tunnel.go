@@ -355,5 +355,6 @@ func (r *Relay) dialTLSConfig(certID string) (*tls.Config, error) {
 		Certificates: []tls.Certificate{cert},
 		RootCAs:      r.rootCAsCopy(),
 		ServerName:   r.serverHost(),
+		MinVersion:   tls.VersionTLS12, // 纵深防御: 与服务端强制下限一致
 	}, nil
 }

@@ -81,6 +81,14 @@ func (m *Manager) ouName() string { return m.tmpl.OU }
 // tmpl: 证书模板配置 (可传零值, 自动用默认)
 // adminRole: 内置管理角色名; keyType/keyBits: 签发密钥; pwdLength: 自动密码长度; declaredRoles: 声明角色列表
 func NewManager(store *db.Store, caCertPath, caKeyPath, certDir, sockPath string, tmpl CertTemplate, adminRole, keyType string, keyBits, pwdLength int, declaredRoles []string) (*Manager, error) {
+	// 清理上次崩溃残留的签发临时目录(.tmp-<serial>, 内含密钥材料)
+	if entries, err := os.ReadDir(certDir); err == nil {
+		for _, e := range entries {
+			if strings.HasPrefix(e.Name(), ".tmp-") {
+				os.RemoveAll(filepath.Join(certDir, e.Name()))
+			}
+		}
+	}
 	caPEM, err := os.ReadFile(caCertPath)
 	if err != nil {
 		return nil, fmt.Errorf("read ca cert: %w", err)
@@ -358,6 +366,10 @@ func (m *Manager) IssueCert(req IssueRequest) (*IssueResponse, error) {
 	// 登记成功 → 临时目录改名为正式名(唯一路径迁移, 不影响并发请求)
 	finalDir := filepath.Join(m.certDir, req.Name)
 	if err := os.Rename(tmpDir, finalDir); err != nil {
+		// 回滚 DB 记录: 避免"DB 在册但文件丢失"的幽灵记录/名字占坑
+		if derr := m.store.Delete(rec.Serial); derr != nil {
+			log.Printf("issue finalize failed + db rollback failed: %v (serial=%s)", derr, rec.Serial)
+		}
 		return nil, fmt.Errorf("finalize cert dir: %w", err)
 	}
 	committed = true
@@ -430,6 +442,9 @@ func (m *Manager) handler(isLocal bool) http.Handler {
 			http.Error(w, err.Error(), apiErrStatus(err))
 			return
 		}
+		if !isLocal {
+			resp.KeyPEM = "" // 远程通道不回明文私钥(仅 p12+密码)
+		}
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		json.NewEncoder(w).Encode(resp)
 	})
@@ -483,12 +498,15 @@ func (m *Manager) HTTPHandler() http.Handler {
 
 // 工具函数
 func validName(s string) bool {
+	if len(s) == 0 || len(s) > 64 { // 长度上限: 防 ENAMETOOLONG(输出目录/CN)
+		return false
+	}
 	for _, c := range s {
 		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_') {
 			return false
 		}
 	}
-	return len(s) > 0
+	return true
 }
 
 // newClientKey 按 key_type/key_bits 生成客户端密钥 (rsa 2048/3072/4096; ecdsa 256/384/521)

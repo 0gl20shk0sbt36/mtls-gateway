@@ -244,3 +244,41 @@ func TestIssueCertConcurrentSameNameFiles(t *testing.T) {
 		}
 	}
 }
+
+// 第十一批: validName 长度上限(>64 拒绝)
+func TestValidNameLength(t *testing.T) {
+	short := "a"
+	for i := 0; i < 64; i++ {
+		short += "b"
+	}
+	if validName(short) { // 65 字符
+		t.Fatal("65-char name should be rejected")
+	}
+	if !validName(short[:64]) {
+		t.Fatal("64-char name should pass")
+	}
+}
+
+// 第十一批: rename 失败回滚 DB(预置 finalDir 占位 → 签发失败且无幽灵记录)
+func TestIssueCertRenameFailRollsBackDB(t *testing.T) {
+	m := testManager(t, CertTemplate{})
+	// 预置同名目录(含文件)使 rename 失败(非空目录跨设备 rename 会失败)
+	finalDir := filepath.Join(m.certDir, "ghost-dev")
+	os.MkdirAll(finalDir, 0o700)
+	os.WriteFile(filepath.Join(finalDir, "occupied"), []byte("x"), 0o600)
+	_, err := m.IssueCert(IssueRequest{Name: "ghost-dev", Purposes: []string{"svc-a"}, NoPassword: true})
+	if err == nil {
+		t.Fatal("issue should fail when final dir occupied")
+	}
+	// 无幽灵记录: DB 不应有 ghost-dev
+	if recs := m.store.FindByName("ghost-dev"); len(recs) != 0 {
+		t.Fatalf("ghost DB record after failed finalize: %+v", recs)
+	}
+	// 无 .tmp-* 残留
+	entries, _ := os.ReadDir(m.certDir)
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".tmp-") {
+			t.Fatalf("stale tmp dir: %s", e.Name())
+		}
+	}
+}

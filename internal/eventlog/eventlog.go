@@ -3,9 +3,12 @@
 package eventlog
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -192,3 +195,21 @@ func (w *StatusWriter) Status() int {
 
 // Bytes 响应字节数
 func (w *StatusWriter) Bytes() int64 { return w.bytes }
+
+// 透传底层能力: WebSocket 升级(101)与流式/大文件响应不被包装层破坏
+func (w *StatusWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	return w.ResponseWriter.(http.Hijacker).Hijack()
+}
+
+func (w *StatusWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func (w *StatusWriter) ReadFrom(r io.Reader) (int64, error) {
+	if rf, ok := w.ResponseWriter.(io.ReaderFrom); ok {
+		return rf.ReadFrom(r)
+	}
+	return io.Copy(w.ResponseWriter, r) // 经 Write 正确计字节
+}
