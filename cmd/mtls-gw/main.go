@@ -47,6 +47,22 @@ func main() {
 	}
 	defer store.Close()
 	log.Printf("db loaded: %d certs", len(store.List()))
+	// 启动时检查证书重名(禁止同名规则同样约束存量数据): 同名 >1 条 → 拒绝启动
+	{
+		byName := map[string][]db.CertRecord{}
+		for _, r := range store.List() {
+			byName[r.Name] = append(byName[r.Name], r)
+		}
+		for name, recs := range byName {
+			if len(recs) > 1 {
+				var serials []string
+				for _, r := range recs {
+					serials = append(serials, r.Serial)
+				}
+				log.Fatalf("证书重名: %q 有 %d 条记录 %v, 禁止同名; 请吊销并清理多余记录后重启", name, len(recs), serials)
+			}
+		}
+	}
 
 	// 认证器 (requireIPBind/admin_role/tls_min_version 来自配置)
 	requireIPBind := cfg.RequireIPBindResolved()
