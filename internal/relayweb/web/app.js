@@ -171,29 +171,30 @@ async function loadTunnels() {
       body.innerHTML = '<tr><td colspan="8" class="hint">(无隧道)</td></tr>';
       return;
     }
-    for (const t of tunnels) {
+    const delLabel = t("delService");
+    for (const tn of tunnels) {
       // 聚合该服务所有路由的状态
       let running = false, conns = 0, bin = 0, bout = 0;
-      (t.routes || []).forEach((rt) => {
-        const k = t.service + "@" + rt.channel + "@" + rt.local;
+      (tn.routes || []).forEach((rt) => {
+        const k = tn.service + "@" + rt.channel + "@" + rt.local;
         const s = byId[k] || {};
         if (s.running) running = true;
         conns += s.active_conns || 0;
         bin += s.bytes_in || 0;
         bout += s.bytes_out || 0;
       });
-      const chans = (t.routes || []).map((rt) => rt.channel).join(" · ");
-      const locals = (t.routes || []).map((rt) => rt.local).join(" · ");
+      const chans = (tn.routes || []).map((rt) => rt.channel).join(" · ");
+      const locals = (tn.routes || []).map((rt) => rt.local).join(" · ");
       const tr = document.createElement("tr");
       tr.innerHTML = `
-        <td class="mono">${esc(t.service)}</td>
+        <td class="mono">${esc(tn.service)}</td>
         <td class="mono" style="font-size:12px">${esc(chans)}</td>
         <td class="mono" style="font-size:12px">${esc(locals)}</td>
         <td>${running ? "●" : "○"}</td>
         <td>${conns}</td>
         <td>${fmtBytes(bin)}</td>
         <td>${fmtBytes(bout)}</td>
-        <td><button class="danger" data-del="${esc(t.service)}">${t("delService")}</button></td>`;
+        <td><button class="danger" data-del="${esc(tn.service)}">${delLabel}</button></td>`;
       body.appendChild(tr);
     }
     for (const btn of body.querySelectorAll("[data-del]")) {
