@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"mtls-gateway/internal/certsource"
 )
 
 // mgrEnv 构造 Manager + HTTP handler 测试环境
@@ -127,18 +129,30 @@ func TestManagerHTTP_BadJSON(t *testing.T) {
 func TestManagerHTTP_AddTunnel(t *testing.T) {
 	h := newHarness(t)
 	defer h.close()
-	m, handler := mgrEnv(t, h)
+	_, handler := mgrEnv(t, h)
 	// 缺 service/cert_id
 	rec := apiReq(handler, "POST", "/api/tunnels", `{"service":"","locals":{}}`, "")
 	if rec.Code < 400 {
 		t.Fatalf("missing fields should fail: %d", rec.Code)
 	}
-	// 完整参数 → 配置层成功(不启动隧道; service 存在性由 Discover 决定, 这里服务端不可达时 AddTunnel 仍应登记配置)
-	rec2 := apiReq(handler, "POST", "/api/tunnels", fmt.Sprintf(`{"service":"svc-x","cert_id":%q,"locals":{}}`, h.clientPairPath), "")
+	// 完整参数 → 需真实 HTTP /info; 换 HTTP stub 环境
+	dir := t.TempDir()
+	svcs := []map[string]any{{"name": "svc-x", "channels": []any{map[string]any{"listen": ":9601", "target": "http://x"}}}}
+	gwAddr, caPath, clientPair := startVerifyGW(t, dir, svcs)
+	src, _ := certsource.OpenFile(clientPair)
+	r2 := New("", src)
+	r2.SetServerAddr(gwAddr)
+	r2.SetServerCA(caPath)
+	cfgPath := filepath.Join(dir, "relay.json")
+	SaveConfig(cfgPath, RelayConfig{ServerAddr: gwAddr, ServerCAFile: caPath, Tunnels: []Tunnel{}})
+	m2, _ := NewManager(r2, cfgPath)
+	m2.SetNoPersist(true)
+	handler2 := m2.Handler()
+	rec2 := apiReq(handler2, "POST", "/api/tunnels", fmt.Sprintf(`{"service":"svc-x","cert_id":%q,"locals":{}}`, clientPair), "")
 	if rec2.Code != 200 {
 		t.Fatalf("add tunnel should be 200, got %d: %s", rec2.Code, rec2.Body.String())
 	}
-	tuns := m.Config().Tunnels
+	tuns := m2.Config().Tunnels
 	if len(tuns) != 1 || tuns[0].Service != "svc-x" {
 		t.Fatalf("tunnel should be in config: %+v", tuns)
 	}
