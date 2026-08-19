@@ -1,5 +1,29 @@
 // mtls-relay WebUI 前端 — 直接调用本地管理 API (/api/*)
 const $ = (id) => document.getElementById(id);
+const t = I18N.t;
+
+// applyI18n: 批量应用 data-i18n / data-i18n-html / data-i18n-ph (动态渲染的容器内容不在内)
+function applyI18n() {
+  document.querySelectorAll("[data-i18n]").forEach((el) => {
+    el.textContent = t(el.dataset.i18n);
+  });
+  document.querySelectorAll("[data-i18n-html]").forEach((el) => {
+    el.innerHTML = t(el.dataset.i18nHtml);
+  });
+  document.querySelectorAll("[data-i18n-ph]").forEach((el) => {
+    el.placeholder = t(el.dataset.i18nPh);
+  });
+  const btn = $("langBtn");
+  if (btn) btn.textContent = "🌐 " + (I18N.currentLang() === "zh" ? "EN" : "中文");
+}
+function toggleLang() {
+  I18N.setLang(I18N.currentLang() === "zh" ? "en" : "zh");
+  applyI18n();
+  // 重新渲染动态文案
+  loadTunnels();
+  if (CFG) renderCfg();
+  if (SERVICES.length) renderSvcChannels(SERVICES.find((s) => s.name === getSel("newServiceList")));
+}
 
 // —— 自绘下拉(替代原生 select, 暗色全浏览器可控) ——
 const SEL = {};
@@ -96,11 +120,11 @@ function updateMultiLabel(listId) {
 function getMultiSel(listId) { return [...(SEL_MULTI[listId] || [])]; }
 
 function toast(msg, isErr) {
-  const t = $("toast");
-  t.textContent = (isErr ? "错误: " : "") + msg;
-  t.classList.toggle("error", !!isErr);
-  t.style.display = "block";
-  setTimeout(() => (t.style.display = "none"), 3000);
+  const t2 = $("toast");
+  t2.textContent = (isErr ? t("errPrefix") : "") + msg;
+  t2.classList.toggle("error", !!isErr);
+  t2.style.display = "block";
+  setTimeout(() => (t2.style.display = "none"), 3000);
 }
 
 async function api(path, opts) {
@@ -171,15 +195,15 @@ async function loadTunnels() {
         <td>${conns}</td>
         <td>${fmtBytes(bin)}</td>
         <td>${fmtBytes(bout)}</td>
-        <td><button class="danger" data-del="${esc(t.service)}">删除服务</button></td>`;
+        <td><button class="danger" data-del="${esc(t.service)}">${t("delService")}</button></td>`;
       body.appendChild(tr);
     }
     for (const btn of body.querySelectorAll("[data-del]")) {
       btn.onclick = async () => {
-        if (!confirm(`删除整个服务 "${btn.dataset.del}" 的所有通道隧道?`)) return;
+        if (!confirm(t("delServiceConfirm", { s: btn.dataset.del }))) return;
         try {
           await api("/api/tunnels/" + encodeURIComponent(btn.dataset.del), { method: "DELETE" });
-          toast("已删除服务隧道");
+          toast(t("delDone"));
           loadTunnels();
         } catch (e) { toast(e.message, true); }
       };
@@ -210,7 +234,7 @@ let SERVICES = [];
 function renderSvcChannels(svc) {
   const box = $("svcChannelRows");
   if (!svc || !svc.channels || !svc.channels.length) { box.innerHTML = ""; return; }
-  let h = '<div class="hint">服务端入口 → 本地路由 (默认同入口, 含冒号; 可改端口/路径)</div>';
+  let h = `<div class="hint">${t("routeHint")}</div>`;
   svc.channels.forEach((ch) => {
     h += `<div class="row" style="margin-top:6px">
       <span class="mono" style="width:160px;align-self:center">${esc(ch.listen)}</span>
@@ -222,6 +246,9 @@ function renderSvcChannels(svc) {
 }
 
 async function init() {
+  I18N.setLang(I18N.detect());
+  applyI18n();
+  $("langBtn").onclick = toggleLang;
   $("refreshServices").onclick = verifyAdmin; // 刷新服务 = 重新验证
   initSel("newServiceBtn", "newServiceList", (it) => renderSvcChannels(it.raw));
   initSel("adminCertBtn", "adminCertList", () => {
@@ -242,9 +269,9 @@ async function init() {
   initMultiSel("newPurposesBtn", "newPurposesList");
   initSel("pwdModeBtn", "pwdModeList", (it) => { $("newCertPwd").disabled = it.value !== "custom"; });
   setSel("pwdModeList", [
-    { value: "none", label: "无密码" },
-    { value: "auto", label: "自动生成" },
-    { value: "custom", label: "自定义" },
+    { value: "none", label: t("pwdNone") },
+    { value: "auto", label: t("pwdAuto") },
+    { value: "custom", label: t("pwdCustom") },
   ]);
   pickSel("pwdModeList", 1); // 默认自动生成
   initSel("revokeCertBtn", "revokeCertList");
@@ -254,19 +281,19 @@ async function init() {
   $("addTunnel").onclick = async () => {
     const service = getSel("newServiceList");
     const cert = getSel("adminCertList");
-    if (!service) { toast("请先选择服务（需先选证书并验证）", true); return; }
-    if (!cert) { toast("请先选择证书", true); return; }
+    if (!service) { toast(t("needService"), true); return; }
+    if (!cert) { toast(t("needCertForTunnel"), true); return; }
     const body = { service, cert_id: cert, locals: {} };
     let bad = false;
     document.querySelectorAll("#svcChannelRows .svc-local").forEach((inp) => {
       const v = inp.value.trim();
-      if (!v) { toast("本地路由不能为空: " + inp.dataset.ch, true); bad = true; return; }
+      if (!v) { toast(t("routeEmpty", { c: inp.dataset.ch }), true); bad = true; return; }
       body.locals[inp.dataset.ch] = v;
     });
     if (bad) return;
     try {
       const r = await api("/api/tunnels", jpost(body));
-      toast(`已添加服务 ${r.service}(${r.count} 个通道)`);
+      toast(t("addedService", { s: r.service, n: r.count }));
       loadTunnels();
     } catch (e) { toast(e.message, true); }
   };
@@ -286,24 +313,24 @@ async function verifyAdmin() {
     SERVICES = res.services || [];
     setSel("newServiceList", SERVICES.map((s) => ({ value: s.name, label: s.name, raw: s })));
     $("serviceHint").textContent = SERVICES.length
-      ? `已发现 ${SERVICES.length} 个服务；选中后为每个通道填本地路由(默认同服务端入口)。`
-      : "该证书无可用服务（或非业务证书，仅 admin 用途）。";
+      ? t("svcHint", { n: SERVICES.length })
+      : t("svcHintNone");
     // 普通证书 → 新增隧道; admin 证书 → 证书管理
     if (res.admin) {
       $("tunnelSection").style.display = "none";
       $("adminSection").style.display = "";
-      $("adminStatus").textContent = "已解锁：admin 证书已验证，可签发/吊销。";
-      $("adminCertHint").textContent = `已验证 ${cert}：admin 证书 → 证书管理可用。`;
-      toast("验证成功 · 管理台已解锁");
+      $("adminStatus").textContent = t("unlockAdmin");
+      $("adminCertHint").textContent = t("verifiedAdmin", { c: cert });
+      toast(t("verifyOkAdmin"));
       loadAdminData();
     } else {
       $("adminSection").style.display = "none";
       $("tunnelSection").style.display = "";
-      $("adminCertHint").textContent = `已验证 ${cert}：普通证书 → 可新增隧道（管理不可用）。`;
-      toast("验证成功（普通证书）");
+      $("adminCertHint").textContent = t("verifiedNormal", { c: cert });
+      toast(t("verifyOkNormal"));
     }
     $("adminPwd").value = ""; // 验证成功即清空密码(失败保留)
-  } catch (e) { toast("验证失败: " + e.message, true); }
+  } catch (e) { toast(t("verifyFail", { m: e.message }), true); }
 }
 let CFG = null;
 let CFG_ADMIN_ROLE = "mtls-superadmin";
@@ -336,8 +363,8 @@ function renderCfg() {
   const dis = imm ? " disabled" : "";
   const m = DRAFT.mappings || [], s = DRAFT.services || [], rl = DRAFT.roles || [];
   // 通道
-  let h = '<div class="hint">通道 (mappings)</div>';
-  h += '<div class="row" style="margin-top:4px;color:var(--text4);font-size:12px"><span style="width:110px">id</span><span style="flex:1">listen (:端口[/路径])</span><span style="flex:1.6">target</span><span style="width:22px"></span></div>';
+  let h = `<div class="hint">${t("cfgMappings")}</div>`;
+  h += `<div class="row" style="margin-top:4px;color:var(--text4);font-size:12px"><span style="width:110px">id</span><span style="flex:1">${t("cfgHeaderM")}</span><span style="flex:1.6">target</span><span style="width:22px"></span></div>`;
   m.forEach((mm, i) => {
     h += `<div class="row" style="margin-top:6px">
       <input value="${esc(mm.id)}" placeholder="id" style="width:110px"${dis} data-cfg="m-id" data-i="${i}">
@@ -348,8 +375,8 @@ function renderCfg() {
   });
   $("cfgMappings").innerHTML = h;
   // 服务
-  let sv = '<div class="hint" style="margin-top:8px">服务 (services)</div>';
-  sv += '<div class="row" style="margin-top:4px;color:var(--text4);font-size:12px"><span style="width:110px">name</span><span style="flex:1">channels (多选)</span><span style="flex:1">roles (多选)</span><span style="width:22px"></span></div>';
+  let sv = `<div class="hint" style="margin-top:8px">${t("cfgServices")}</div>`;
+  sv += `<div class="row" style="margin-top:4px;color:var(--text4);font-size:12px"><span style="width:110px">name</span><span style="flex:1">${t("cfgHeaderS")}</span><span style="flex:1">${t("cfgHeaderRoles")}</span><span style="width:22px"></span></div>`;
   s.forEach((x, i) => {
     sv += `<div class="row" style="margin-top:6px">
       <input value="${esc(x.name)}" placeholder="name" style="width:110px"${dis} data-cfg="s-name" data-i="${i}">
@@ -366,7 +393,7 @@ function renderCfg() {
   });
   $("cfgServices").innerHTML = sv;
   // 角色
-  let r = '<div class="hint" style="margin-top:8px">角色 (roles 声明; 内置 any 免声明, 仅服务可用)</div>';
+  let r = `<div class="hint" style="margin-top:8px">${t("cfgRoles")}</div>`;
   rl.forEach((name, i) => {
     r += `<span class="chip">${esc(name)}<button type="button" class="chip-x" data-cfg="role-del" data-i="${i}"${dis}>×</button></span>`;
   });
@@ -415,7 +442,6 @@ function renderCfg() {
 }
 
 function cfgSay(msg, err) { $("cfgResult").textContent = (err ? "✘ " : "✔ ") + msg; }
-
 async function cfgSave() {
   const cert = getSel("adminCertList");
   if (!cert) return;
@@ -436,27 +462,28 @@ async function adminIssue() {
   const cert = getSel("adminCertList");
   const name = $("newName").value.trim();
   const purps = getMultiSel("newPurposesList");
-  if (!cert || !name || !purps.length) { toast("需选 admin 证书 + 填设备名 + 至少一个用途", true); return; }
+  if (!cert || !name || !purps.length) { toast(t("issueNeed"), true); return; }
   const pwdMode = getSel("pwdModeList") || "auto";
   const body = { cert_id: cert, load_pwd: ADMIN_PWD, name, purposes: purps, ts_ip: $("newTSIP").value.trim() };
   if (pwdMode === "none") body.no_password = true;
   else if (pwdMode === "custom") body.password = $("newCertPwd").value;
   try {
     const resp = await api("/api/admin/issue", jpost(body));
-    $("adminResult").textContent = `✔ 已签发：${resp.name}\n序列号: ${resp.serial}\n${pwdMode === "none" ? "无密码" : "p12 密码: " + (resp.p12_password || "")}`;
-    toast("签发成功");
+    const pwdTxt = pwdMode === "none" ? t("pwdNoneTxt") : t("pwdTxt", { p: resp.p12_password || "" });
+    $("adminResult").textContent = t("issued", { n: resp.name, s: resp.serial, pwd: pwdTxt });
+    toast(t("issueOk"));
     loadAdminData();
-  } catch (e) { toast("签发失败: " + e.message, true); }
+  } catch (e) { toast(t("issueFail", { m: e.message }), true); }
 }
 
 async function adminRevoke() {
   const cert = getSel("adminCertList");
   const serial = getSel("revokeCertList");
-  if (!cert || !serial) { toast("需选 admin 证书 + 选择要吊销的证书", true); return; }
+  if (!cert || !serial) { toast(t("revokeNeed"), true); return; }
   try {
     await api("/api/admin/revoke", jpost({ cert_id: cert, load_pwd: ADMIN_PWD, serial }));
-    $("adminResult").textContent = `✔ 已吊销: ${serial}`;
-    toast("已吊销");
+    $("adminResult").textContent = t("revoked", { s: serial });
+    toast(t("revokeOk"));
     loadAdminData();
-  } catch (e) { toast("吊销失败: " + e.message, true); }
+  } catch (e) { toast(t("revokeFail", { m: e.message }), true); }
 }

@@ -3,8 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>mtls-relay 管理面板</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
+<title>mtls-relay 管理面板</title><link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
@@ -133,50 +132,50 @@
 
 <main>
   <div class="card">
-    <h2>运行控制</h2>
+    <h2 data-i18n="runCtrl">运行控制</h2>
     <div class="row">
-      <button type="button" class="primary" id="btnStart">启动</button>
-      <button type="button" class="ghost" id="btnReload">Reload</button>
-      <button type="button" class="ghost" id="btnStop">停止</button>
+      <button type="button" class="primary" id="btnStart" data-i18n="start">启动</button>
+      <button type="button" class="ghost" id="btnReload" data-i18n="reload">Reload</button>
+      <button type="button" class="ghost" id="btnStop" data-i18n="stop">停止</button>
     </div>
   </div>
 
   <div class="card">
     <h2>隧道</h2>
     <table>
-      <thead><tr><th>服务</th><th>服务端入口</th><th>本地路由</th><th>状态</th><th>连接</th><th>流入</th><th>流出</th><th>操作</th></tr></thead>
-      <tbody id="tunnelBody"><tr><td colspan="8" class="hint">（无）</td></tr></tbody>
+      <thead><tr><th data-i18n="thService">服务</th><th data-i18n="thChannel">服务端入口</th><th data-i18n="thLocal">本地路由</th><th data-i18n="thStatus">状态</th><th data-i18n="thConns">连接</th><th data-i18n="thIn">流入</th><th data-i18n="thOut">流出</th><th data-i18n="thOps">操作</th></tr></thead>
+      <tbody id="tunnelBody"><tr><td colspan="8" class="hint" data-i18n="noTunnel">（无）</td></tr></tbody>
     </table>
-    <div class="hint" style="margin-top:8px">服务端入口 = 中继拨号到的服务端网关通道；本地路由 = 你的程序要连的地址(:端口[/路径]，绑 127.0.0.1)。连接/流入/流出为实时指标。</div>
+    <div class="hint" style="margin-top:8px" data-i18n="tunnelLegend">服务端入口 = 中继拨号到的服务端网关通道；本地路由 = 你的程序要连的地址(:端口[/路径]，绑 127.0.0.1)。连接/流入/流出为实时指标。</div>
   </div>
 
   <div class="card">
-    <h2>证书选择</h2>
-    <p class="hint" id="adminCertHint" style="margin:6px 0 10px">选一枚证书并<b>验证</b>：普通证书 → 显示"新增隧道"；admin 证书 → 显示"证书管理"。未选证书前两者都不可用。</p>
+    <h2 data-i18n="certSelect">证书选择</h2>
+    <p class="hint" id="adminCertHint" style="margin:6px 0 10px" data-i18n-html="certHint">选一枚证书并<b>验证</b>：普通证书 → 显示"新增隧道"；admin 证书 → 显示"证书管理"。未选证书前两者都不可用。</p>
     <div class="row">
       <div class="sel" id="adminCertSel" style="flex:1;min-width:220px">
-        <button type="button" class="sel-btn" id="adminCertBtn"><span class="txt">— 选择证书 —</span><span class="arrow">▾</span></button>
+        <button type="button" class="sel-btn" id="adminCertBtn"><span class="txt" data-i18n="chooseCert">— 选择证书 —</span><span class="arrow">▾</span></button>
         <div class="sel-list" id="adminCertList"></div>
       </div>
-      <input id="adminPwd" type="password" placeholder="证书密码(如有)" autocomplete="new-password" style="width:150px">
-      <button type="button" class="primary small" id="adminVerify">验证</button>
+      <input id="adminPwd" type="password" placeholder="" autocomplete="new-password" style="width:150px">
+      <button type="button" class="primary small" id="adminVerify" data-i18n="verify">验证</button>
     </div>
   </div>
 
   <div id="tunnelSection" style="display:none">
     <div class="card">
-      <h2>新增隧道</h2>
-      <div class="hint" style="margin:6px 0 10px">先在下方案例"证书选择"卡里<b>选证书并验证</b>，服务列表才会加载。选中服务后，其每个通道一行，填本地路由(默认=服务端通道原样, 含冒号; 可带路径)。</div>
+      <h2 data-i18n="addTunnel">新增隧道</h2>
+      <div class="hint" style="margin:6px 0 10px" data-i18n="addTunnelHint">先在下方案例"证书选择"卡里<b>选证书并验证</b>，服务列表才会加载。选中服务后，其每个通道一行，填本地路由(默认=服务端通道原样, 含冒号; 可带路径)。</div>
       <div class="row">
         <div class="sel" id="newServiceSel" style="flex:1;min-width:220px">
-          <button type="button" class="sel-btn" id="newServiceBtn"><span class="txt">— 选择服务 —</span><span class="arrow">▾</span></button>
+          <button type="button" class="sel-btn" id="newServiceBtn"><span class="txt" data-i18n="chooseService">— 选择服务 —</span><span class="arrow">▾</span></button>
           <div class="sel-list" id="newServiceList"></div>
         </div>
-        <button type="button" class="ghost small" id="refreshServices">刷新</button>
+        <button type="button" class="ghost small" id="refreshServices" data-i18n="refresh">刷新</button>
       </div>
       <div id="svcChannelRows" style="margin-top:10px"></div>
       <div class="row" style="margin-top:10px">
-        <button type="button" class="primary" id="addTunnel">添加</button>
+        <button type="button" class="primary" id="addTunnel" data-i18n="add">添加</button>
         <span class="hint" id="serviceHint" style="margin-left:10px;align-self:center"></span>
       </div>
     </div>
@@ -184,41 +183,41 @@
 
   <div id="adminSection" style="display:none">
     <div class="card">
-      <h2>证书管理</h2>
+      <h2 data-i18n="certMgmt">证书管理</h2>
       <p class="hint" id="adminStatus" style="margin:0 0 10px"></p>
-      <div class="row"><input id="newName" placeholder="设备名 (如 dev-1)" style="flex:1"></div>
+      <div class="row"><input id="newName" placeholder="" style="flex:1" data-i18n-ph="issueName"></div>
       <div class="row" style="margin-top:8px">
         <div class="sel" id="newPurposesSel" style="flex:1.4;min-width:200px">
-          <button type="button" class="sel-btn" id="newPurposesBtn"><span class="txt">— 选择用途 —</span><span class="arrow">▾</span></button>
+          <button type="button" class="sel-btn" id="newPurposesBtn"><span class="txt" data-i18n="issuePurposes">— 选择用途 —</span><span class="arrow">▾</span></button>
           <div class="sel-list" id="newPurposesList"></div>
         </div>
-        <input id="newTSIP" placeholder="TS IP (可选)" style="flex:1">
+        <input id="newTSIP" placeholder="" style="flex:1" data-i18n-ph="tsIp">
       </div>
       <div class="row" style="margin-top:8px">
         <div class="sel" id="pwdModeSel" style="width:130px">
           <button type="button" class="sel-btn" id="pwdModeBtn"><span class="txt">自动生成</span><span class="arrow">▾</span></button>
           <div class="sel-list" id="pwdModeList"></div>
         </div>
-        <input id="newCertPwd" type="password" placeholder="自定义密码" autocomplete="new-password" style="flex:1.4" disabled>
-        <button type="button" class="primary small" id="adminIssue">签发</button>
+        <input id="newCertPwd" type="password" placeholder="" autocomplete="new-password" style="flex:1.4" disabled data-i18n-ph="pwdCustom">
+        <button type="button" class="primary small" id="adminIssue" data-i18n="issue">签发</button>
       </div>
       <div class="row" style="margin-top:10px">
         <div class="sel" id="revokeCertSel" style="flex:1.4;min-width:200px">
-          <button type="button" class="sel-btn" id="revokeCertBtn"><span class="txt">— 选择要吊销的证书 —</span><span class="arrow">▾</span></button>
+          <button type="button" class="sel-btn" id="revokeCertBtn"><span class="txt" data-i18n="revokeSelect">— 选择要吊销的证书 —</span><span class="arrow">▾</span></button>
           <div class="sel-list" id="revokeCertList"></div>
         </div>
-        <button type="button" class="ghost small danger" id="adminRevoke">吊销</button>
+        <button type="button" class="ghost small danger" id="adminRevoke" data-i18n="revoke">吊销</button>
       </div>
       <div class="hint" id="adminResult" style="margin-top:8px;white-space:pre-wrap"></div>
       <div style="margin-top:14px;border-top:1px solid var(--border);padding-top:10px">
-        <h3 style="margin:0 0 6px">服务端配置 <span id="cfgMode" class="hint"></span></h3>
-        <p class="hint" style="margin:0 0 6px">mutable=改后落盘 / ephemeral=仅内存 / immutable=只读(灰显, 服务端拦截修改)。改动后点底部<b>保存</b>统一生效(热重载)。</p>
+        <h3 style="margin:0 0 6px"><span data-i18n="serverCfg">服务端配置</span> <span id="cfgMode" class="hint"></span></h3>
+        <p class="hint" style="margin:0 0 6px" data-i18n="cfgModeHint">mutable=改后落盘 / ephemeral=仅内存 / immutable=只读(灰显, 服务端拦截修改)。改动后点底部<b>保存</b>统一生效(热重载)。</p>
         <div id="cfgMappings"></div>
         <div id="cfgServices" style="margin-top:10px"></div>
         <div id="cfgRoles" style="margin-top:10px"></div>
         <div class="row" style="margin-top:12px">
-          <button type="button" class="primary" id="cfgSave">保存</button>
-          <button type="button" class="ghost" id="cfgCancel">取消</button>
+          <button type="button" class="primary" id="cfgSave" data-i18n="save">保存</button>
+          <button type="button" class="ghost" id="cfgCancel" data-i18n="cancel">取消</button>
           <span class="hint" id="cfgResult" style="margin-left:10px;align-self:center"></span>
         </div>
       </div>
@@ -226,8 +225,13 @@
   </div>
 </main>
 
+<div style="position:fixed;top:10px;right:14px;z-index:50">
+  <button type="button" id="langBtn" class="ghost small" style="min-width:64px">🌐</button>
+</div>
+
 <div class="toast" id="toast"></div>
 
+<script src="i18n.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
