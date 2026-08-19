@@ -113,8 +113,8 @@ func (rt *tunnelRuntime) localHTTPHandler(localPath string) http.Handler {
 		mu.Lock()
 		defer mu.Unlock()
 		host := rt.r.serverHost()
-		// 重建条件: 未构建 / serverAddr 变化 / 超过证书轮换窗口(60s)
-		if rp != nil && builtHost == host && time.Since(builtAt) < certCacheTTL {
+		// 重建条件: 未构建 / serverAddr 主机变化 / 超过证书轮换窗口(certCacheTTL)
+		if rp != nil && builtHost == host && time.Since(builtAt) < rt.r.certCacheTTL {
 			return
 		}
 		up, err := url.Parse("https://" + net.JoinHostPort(host, rt.route.ChannelPort()) + rt.route.ChannelPath())
@@ -167,7 +167,7 @@ func (rt *tunnelRuntime) localHTTPHandler(localPath string) http.Handler {
 		}
 		// double-checked locking: 快路径只读锁判断是否需重建(serverAddr 变化/证书轮换窗口)
 		mu.RLock()
-		need := rp == nil || builtHost != rt.r.serverHost() || time.Since(builtAt) >= certCacheTTL
+		need := rp == nil || builtHost != rt.r.serverHost() || time.Since(builtAt) >= rt.r.certCacheTTL
 		r := rp
 		mu.RUnlock()
 		if need {

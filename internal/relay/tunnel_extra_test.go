@@ -522,3 +522,56 @@ func TestTunnelHTTPRebuildOnServerAddrChange(t *testing.T) {
 		}
 	}
 }
+
+// 第二十一批: certCacheTTL 轮换重建(注入短 TTL, HTTP 反代证书续期生效)
+func TestTunnelHTTPCertRotation(t *testing.T) {
+	dir := t.TempDir()
+	svcs := []map[string]any{{"name": "svc-a", "channels": []any{map[string]any{"listen": ":9601/p", "target": "http://127.0.0.1:1"}}}}
+	gwAddr, caPath, clientPair := startVerifyGW(t, dir, svcs)
+	src, _ := certsource.OpenFile(clientPair)
+	localPort := freePort(t)
+	r := New("", src)
+	defer r.Close()
+	r.certCacheTTL = 100 * time.Millisecond // 注入短 TTL
+	cfg := RelayConfig{
+		ListenHost: "127.0.0.1", ServerAddr: gwAddr, ServerCAFile: caPath,
+		Tunnels: []Tunnel{{
+			Service: "s1",
+			Routes:  []TunnelRoute{{Channel: ":" + gwPortOf(gwAddr) + "/p", Local: fmt.Sprintf(":%d/p", localPort)}},
+			CertID:  clientPair, Enabled: true,
+		}},
+	}
+	if err := r.Start(cfg); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		c, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", localPort))
+		if err == nil {
+			c.Close()
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("tunnel not listening: %v", err)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	// 构建 rp(首次请求)
+	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/p/x", localPort))
+	if err != nil {
+		t.Fatalf("first req: %v", err)
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	// 等 TTL 过期 → 下一请求触发重建(同 host, 仍拨通网关 → 非 502)
+	time.Sleep(200 * time.Millisecond)
+	resp2, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/p/x", localPort))
+	if err != nil {
+		t.Fatalf("post-rotation req: %v", err)
+	}
+	io.Copy(io.Discard, resp2.Body)
+	resp2.Body.Close()
+	if resp2.StatusCode == 502 {
+		t.Fatal("after TTL rotation, proxy should rebuild and reach gateway (not 502)")
+	}
+}

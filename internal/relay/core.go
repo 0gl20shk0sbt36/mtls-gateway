@@ -30,18 +30,19 @@ type Relay struct {
 	src        certsource.Source         // 证书来源 (由外层/daemon 注入)
 	certCache  map[string]certCacheEntry // source-CertID -> 证书 (复用, TTL 失效支持证书轮换)
 
-	ctx         context.Context
-	cancel      context.CancelFunc
-	runCtx      context.Context // 当前运行周期上下文 (Start 时重建)
-	runCancel   context.CancelFunc
-	tunnels     map[string]*tunnelRuntime // tunnel ID -> runtime
-	L           *i18n.L                   // 错误消息语言(zh/en, 默认 zh)
-	started     bool
-	idleTimeout time.Duration // TCP 透传空闲超时(0=默认 120s; 测试可注入)
+	ctx          context.Context
+	cancel       context.CancelFunc
+	runCtx       context.Context // 当前运行周期上下文 (Start 时重建)
+	runCancel    context.CancelFunc
+	tunnels      map[string]*tunnelRuntime // tunnel ID -> runtime
+	L            *i18n.L                   // 错误消息语言(zh/en, 默认 zh)
+	started      bool
+	idleTimeout  time.Duration // TCP 透传空闲超时(0=默认 120s; 测试可注入)
+	certCacheTTL time.Duration // 证书缓存有效期(测试可注入缩短)
 }
 
-// certCacheTTL 证书缓存有效期: 到期重载, 支持证书轮换/续期(≤TTL 生效)
-const certCacheTTL = 60 * time.Second
+// 证书缓存有效期默认值: 到期重载, 支持证书轮换/续期(≤TTL 生效)
+const defaultCertCacheTTL = 60 * time.Second
 
 type certCacheEntry struct {
 	cert     tls.Certificate
@@ -60,14 +61,15 @@ func (r *Relay) SetLang(lang string) {
 func New(cfgPath string, src certsource.Source) *Relay {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Relay{
-		cfgPath:     cfgPath,
-		src:         src,
-		certCache:   make(map[string]certCacheEntry),
-		ctx:         ctx,
-		cancel:      cancel,
-		tunnels:     make(map[string]*tunnelRuntime),
-		L:           i18n.New("zh"),
-		idleTimeout: 120 * time.Second,
+		cfgPath:      cfgPath,
+		src:          src,
+		certCache:    make(map[string]certCacheEntry),
+		ctx:          ctx,
+		cancel:       cancel,
+		tunnels:      make(map[string]*tunnelRuntime),
+		L:            i18n.New("zh"),
+		idleTimeout:  120 * time.Second,
+		certCacheTTL: defaultCertCacheTTL,
 	}
 }
 
@@ -96,7 +98,7 @@ func (r *Relay) loadCertLang(certID, lang string) (tls.Certificate, error) {
 	r.mu.Lock()
 	e, ok := r.certCache[certID]
 	r.mu.Unlock()
-	if ok && time.Since(e.loadedAt) < certCacheTTL {
+	if ok && time.Since(e.loadedAt) < r.certCacheTTL {
 		return e.cert, nil
 	}
 	c, err := r.src.Load(certID)
@@ -144,7 +146,7 @@ func (r *Relay) loadCert(certID string) (tls.Certificate, error) {
 	r.mu.Lock()
 	e, ok := r.certCache[certID]
 	r.mu.Unlock()
-	if ok && time.Since(e.loadedAt) < certCacheTTL {
+	if ok && time.Since(e.loadedAt) < r.certCacheTTL {
 		return e.cert, nil
 	}
 	c, err := r.src.Load(certID) // 锁外: 磁盘 IO 不阻塞其他 Relay 操作

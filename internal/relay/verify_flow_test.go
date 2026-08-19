@@ -91,6 +91,19 @@ func startVerifyGW(t *testing.T, dir string, services []map[string]any) (gwAddr,
 	mux.HandleFunc("/admin/certs/revoke", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"ok":true}`))
 	})
+	mux.HandleFunc("/admin/config", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "PUT" {
+			w.Write([]byte(`{"ok":true}`))
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{"listen_host": "127.0.0.1", "tunnels": []any{}})
+	})
+	mux.HandleFunc("/admin/mappings", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]any{map[string]any{"id": "m1", "listen": ":9601", "target": "http://x"}})
+	})
+	mux.HandleFunc("/admin/certs", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]any{map[string]any{"serial": "1", "name": "dev", "status": "enabled"}})
+	})
 	srv := &http.Server{Handler: mux}
 	go srv.Serve(ln)
 	t.Cleanup(func() { srv.Close(); ln.Close() })
@@ -198,5 +211,63 @@ func TestManagerAdminBridgeIssueHTTP(t *testing.T) {
 	h.ServeHTTP(rec2, req2)
 	if rec2.Code != 200 {
 		t.Fatalf("admin revoke via bridge should be 200, got %d: %s", rec2.Code, rec2.Body.String())
+	}
+}
+
+// 第二十一批: Discover 默认路径(loadFirstCert → /info)+ AdminClient 配置 CRUD
+func TestDiscoverDefaultPath(t *testing.T) {
+	dir := t.TempDir()
+	svcs := []map[string]any{{"name": "svc-a", "channels": []any{map[string]any{"listen": ":9601", "target": "http://x"}}}}
+	gwAddr, caPath, clientPair := startVerifyGW(t, dir, svcs)
+	src, _ := certsource.OpenFile(clientPair)
+	r := New("", src)
+	r.SetServerAddr(gwAddr)
+	r.SetServerCA(caPath)
+	svc, err := r.Discover() // 默认路径: 无证书参数 → loadFirstCert
+	if err != nil {
+		t.Fatalf("discover: %v", err)
+	}
+	if len(svc) != 1 || svc[0].Name != "svc-a" {
+		t.Fatalf("discover result: %+v", svc)
+	}
+}
+
+// 第二十一批: AdminClient 配置 CRUD(List/Cfg/SetConfig/Mapping/Service)
+func TestAdminClientConfigCRUD(t *testing.T) {
+	dir := t.TempDir()
+	svcs := []map[string]any{{"name": "svc-a", "channels": []any{map[string]any{"listen": ":9601", "target": "http://x"}}}}
+	gwAddr, caPath, clientPair := startVerifyGW(t, dir, svcs)
+	src, _ := certsource.OpenFile(clientPair)
+	r := New("", src)
+	r.SetServerAddr(gwAddr)
+	r.SetServerCA(caPath)
+	cfgPath := filepath.Join(dir, "relay.json")
+	SaveConfig(cfgPath, RelayConfig{ServerAddr: gwAddr, ServerCAFile: caPath, AdminAddr: gwAddr})
+	m, err := NewManager(r, cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.SetNoPersist(true)
+	// Verify(解锁 admin)
+	if _, err := m.Verify(clientPair, ""); err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+	// List(证书列表, 经 AdminVerify 解锁)
+	if err := m.AdminVerify(clientPair, ""); err != nil {
+		t.Fatalf("AdminVerify: %v", err)
+	}
+	// Cfg(服务端配置, RawMessage)
+	raw, err := m.AdminConfig(clientPair, "")
+	if err != nil || !strings.Contains(string(raw), "127.0.0.1") {
+		t.Fatalf("AdminConfig: %s err=%v", raw, err)
+	}
+	// SetConfig(写配置)
+	if _, err := m.AdminSetConfig(clientPair, "", raw); err != nil {
+		t.Fatalf("AdminSetConfig: %v", err)
+	}
+	// Mappings(映射列表)
+	rawM, err := m.AdminMapping(clientPair, "", "GET", "", nil)
+	if err != nil || !strings.Contains(string(rawM), "m1") {
+		t.Fatalf("AdminMapping GET: %s err=%v", rawM, err)
 	}
 }
