@@ -81,6 +81,7 @@
       issueNeedName: "请填写设备名",
       issueBadName: "设备名只允许字母/数字/下划线/连字符",
       issueNeedPurps: "请至少选择一个用途",
+      issueNameExists: "证书名 {n} 已存在，禁止同名签发(服务端同样拦截)",
       issueBadIP: "TS IP 格式无效(应为 IPv4/IPv6)",
       revokeNeed: "需选管理证书 + 选择要吊销的证书",
       // 服务端配置
@@ -192,6 +193,7 @@
       issueNeedName: "Device name required",
       issueBadName: "Device name: letters/digits/underscore/hyphen only",
       issueNeedPurps: "Pick at least one purpose",
+      issueNameExists: "Name {n} already exists — duplicate names not allowed (also blocked server-side)",
       issueBadIP: "Invalid TS IP (IPv4/IPv6 expected)",
       revokeNeed: "Need admin cert + pick a cert to revoke",
       serverCfg: "Server Config",

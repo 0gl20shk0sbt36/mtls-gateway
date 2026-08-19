@@ -7,6 +7,7 @@ let SERVICES = [];
 let CFG = null;
 let DRAFT = null;
 let CFG_ADMIN_ROLE = "mtls-superadmin";
+let CERT_LIST = []; // 服务端全部证书(签发同名检查用)
 
 // applyI18n: 批量应用 data-i18n / data-i18n-html / data-i18n-ph (动态渲染的容器内容不在内)
 function applyI18n() {
@@ -398,6 +399,7 @@ async function loadAdminData() {
     setMultiOpts("newPurposesList", [...purps].map((p) => ({ value: p, label: p })));
     // 吊销下拉: 服务端证书列表(名称 · 签发→到期 · 状态, 区分同名证书)
     const arr = Array.isArray(cs) ? cs : (cs.certs || []);
+    CERT_LIST = arr;
     setSel("revokeCertList", arr.map((c) => ({
       value: c.serial || "",
       label: `${c.name || "(无名)"} · ${(c.issued_at || "").slice(0, 10)}→${(c.expires_at || "").slice(0, 10)} · ${c.status || "?"}`,
@@ -629,6 +631,7 @@ async function adminIssue() {
   if (!name) errs.push(t("issueNeedName"));
   else if (!RE_NAME.test(name)) errs.push(t("issueBadName"));
   if (!purps.length) errs.push(t("issueNeedPurps"));
+  if (CERT_LIST.some((c) => c.name === name)) errs.push(t("issueNameExists", { n: name })); // 禁止同名(服务端也会拦)
   const tsip = $("newTSIP").value.trim();
   if (tsip && !/^[\d.:a-fA-F]+$/.test(tsip)) errs.push(t("issueBadIP"));
   if (errs.length) { toast(errs[0], true); return; }

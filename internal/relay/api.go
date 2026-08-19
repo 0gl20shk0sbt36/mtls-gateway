@@ -641,6 +641,12 @@ func localizeKnown(lang string, err error) error {
 		return l.E("errNoServerAddr")
 	case strings.Contains(s, "name and purposes required"):
 		return l.E("errNameRequired")
+	case strings.Contains(s, "already exists"):
+		n := "?"
+		if m := regexp.MustCompile(`\((\d+) record`).FindStringSubmatch(s); len(m) == 2 {
+			n = m[1]
+		}
+		return l.E("errNameExists", errCertName(s), n)
 	case strings.Contains(s, "missing listen"):
 		return l.E("errMapNoListen")
 	case strings.Contains(s, "missing id"):

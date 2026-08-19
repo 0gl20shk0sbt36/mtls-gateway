@@ -9,6 +9,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -329,7 +330,7 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *ConfigManager, ev *eve
 			return
 		}
 		mgr.SetDeclaredRoles(cm.Roles())
-		cfgChanged("通道/服务/角色已变更")
+		cfgChanged(fmt.Sprintf("批量保存配置: mappings=%d services=%d roles=%d", len(b.Mappings), len(b.Services), len(b.Roles)))
 		writeJSON(w, map[string]any{"ok": true})
 	})
 
@@ -347,16 +348,17 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *ConfigManager, ev *eve
 			return
 		}
 		mgr.SetDeclaredRoles(cm.Roles())
-		cfgChanged("通道/服务/角色已变更")
+		cfgChanged("新增角色 " + b.Name)
 		writeJSON(w, map[string]any{"ok": true})
 	})
 	mux.HandleFunc("DELETE /admin/roles", func(w http.ResponseWriter, r *http.Request) {
-		if err := cm.DeleteRole(r.URL.Query().Get("name")); err != nil {
+		name := r.URL.Query().Get("name")
+		if err := cm.DeleteRole(name); err != nil {
 			gwErr(w, r, err)
 			return
 		}
 		mgr.SetDeclaredRoles(cm.Roles())
-		cfgChanged("通道/服务/角色已变更")
+		cfgChanged("删除角色 " + name)
 		writeJSON(w, map[string]any{"ok": true})
 	})
 
@@ -374,7 +376,7 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *ConfigManager, ev *eve
 			gwErr(w, r, err)
 			return
 		}
-		cfgChanged("通道/服务/角色已变更")
+		cfgChanged(fmt.Sprintf("新增通道 id=%s listen=%s target=%s", m.ID, m.Listen, m.Target))
 		writeJSON(w, map[string]any{"ok": true})
 	})
 	mux.HandleFunc("PUT /admin/mappings", func(w http.ResponseWriter, r *http.Request) {
@@ -387,7 +389,7 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *ConfigManager, ev *eve
 			gwErr(w, r, err)
 			return
 		}
-		cfgChanged("通道/服务/角色已变更")
+		cfgChanged(fmt.Sprintf("修改通道 id=%s listen=%s", r.URL.Query().Get("id"), m.Listen))
 		writeJSON(w, map[string]any{"ok": true})
 	})
 	mux.HandleFunc("DELETE /admin/mappings", func(w http.ResponseWriter, r *http.Request) {
@@ -395,7 +397,7 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *ConfigManager, ev *eve
 			gwErr(w, r, err)
 			return
 		}
-		cfgChanged("通道/服务/角色已变更")
+		cfgChanged("删除通道 id=" + r.URL.Query().Get("id"))
 		writeJSON(w, map[string]any{"ok": true})
 	})
 
@@ -413,7 +415,7 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *ConfigManager, ev *eve
 			gwErr(w, r, err)
 			return
 		}
-		cfgChanged("通道/服务/角色已变更")
+		cfgChanged(fmt.Sprintf("新增服务 name=%s channels=%v roles=%v", s.Name, s.Channels, s.Roles))
 		writeJSON(w, map[string]any{"ok": true})
 	})
 	mux.HandleFunc("PUT /admin/services", func(w http.ResponseWriter, r *http.Request) {
@@ -426,7 +428,7 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *ConfigManager, ev *eve
 			gwErr(w, r, err)
 			return
 		}
-		cfgChanged("通道/服务/角色已变更")
+		cfgChanged(fmt.Sprintf("修改服务 name=%s channels=%v roles=%v", s.Name, s.Channels, s.Roles))
 		writeJSON(w, map[string]any{"ok": true})
 	})
 	mux.HandleFunc("DELETE /admin/services", func(w http.ResponseWriter, r *http.Request) {
@@ -434,22 +436,29 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *ConfigManager, ev *eve
 			gwErr(w, r, err)
 			return
 		}
-		cfgChanged("通道/服务/角色已变更")
+		cfgChanged("删除服务 name=" + r.URL.Query().Get("name"))
 		writeJSON(w, map[string]any{"ok": true})
 	})
 
-	// 证书管理 (mgr) — 包装记录签发/吊销事件(吊销带 serial)
+	// 证书管理 (mgr) — 包装记录签发/吊销事件(带对象详情)
 	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sw := &statusWriter{ResponseWriter: w}
 		msg := ""
-		if r.URL.Path == "/admin/certs/revoke" {
+		if r.URL.Path == "/admin/certs/revoke" || r.URL.Path == "/admin/certs/issue" {
 			if b, err := io.ReadAll(r.Body); err == nil {
 				r.Body = io.NopCloser(bytes.NewReader(b)) // 恢复 body 供下游解析
 				var rb struct {
-					Serial string `json:"serial"`
+					Serial   string   `json:"serial"`
+					Name     string   `json:"name"`
+					Purposes []string `json:"purposes"`
 				}
-				if json.Unmarshal(b, &rb) == nil && rb.Serial != "" {
-					msg = "吊销证书 serial=" + rb.Serial
+				if json.Unmarshal(b, &rb) == nil {
+					if r.URL.Path == "/admin/certs/revoke" && rb.Serial != "" {
+						msg = "吊销证书 serial=" + rb.Serial
+					}
+					if r.URL.Path == "/admin/certs/issue" {
+						msg = fmt.Sprintf("签发证书 name=%s purposes=%v", rb.Name, rb.Purposes)
+					}
 				}
 			}
 		}
@@ -457,7 +466,10 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *ConfigManager, ev *eve
 		if ev != nil && sw.status >= 200 && sw.status < 400 {
 			switch r.URL.Path {
 			case "/admin/certs/issue":
-				ev.Write(eventlog.Event{Type: "cert_issue", Msg: "签发证书"})
+				if msg == "" {
+					msg = "签发证书"
+				}
+				ev.Write(eventlog.Event{Type: "cert_issue", Msg: msg})
 			case "/admin/certs/revoke":
 				if msg == "" {
 					msg = "吊销证书"

@@ -140,6 +140,19 @@ func (s *Store) Upsert(r CertRecord) error {
 	return nil
 }
 
+// FindByName 按名称查所有记录(含吊销的; 禁止同名签发用)
+func (s *Store) FindByName(name string) []CertRecord {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []CertRecord
+	for _, r := range s.table {
+		if r.Name == name {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
 // Revoke 吊销: 改内存 + 落库
 func (s *Store) Revoke(serial string) error {
 	s.mu.Lock()

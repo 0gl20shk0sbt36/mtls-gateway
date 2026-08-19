@@ -75,6 +75,7 @@ var messages = map[string][2]string{
 	"errListenDup":      {"监听地址 %s 重复", "Listen address %s duplicated"},
 	"errChannelRef":     {"通道引用不存在：%s", "Channel reference not found: %s"},
 	"errNameRequired":   {"name 与 purposes 为必填", "name and purposes are required"},
+	"errNameExists":     {"证书名 %s 已存在(%d 条记录)，禁止同名签发", "Certificate name %s already exists (%d records), duplicate name not allowed"},
 	"errNoAdminAddr":    {"管理地址(admin_addr)未在 relay 配置中设置", "admin_addr not set in relay config"},
 	"errNoServerAddr":   {"服务端地址未配置(server_addr)", "server address not configured"},
 	"errMapNoListen":    {"通道缺少 listen", "mapping missing listen"},

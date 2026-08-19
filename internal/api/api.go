@@ -233,6 +233,10 @@ func (m *Manager) IssueCert(req IssueRequest) (*IssueResponse, error) {
 			req.Days = m.tmpl.DefaultDays
 		}
 	}
+	// 禁止同名证书(含已吊销的): 避免同名多条记录混淆
+	if recs := m.store.FindByName(req.Name); len(recs) > 0 {
+		return nil, fmt.Errorf("certificate name %s already exists (%d record(s)), 禁止同名签发", req.Name, len(recs))
+	}
 	if req.NoPassword {
 		req.Password = "" // 无密码 p12
 	} else if req.Password == "" {
