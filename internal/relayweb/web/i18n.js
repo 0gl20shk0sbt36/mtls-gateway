@@ -193,16 +193,23 @@
     },
   };
 
+  // 支持的语言(可扩展: 加语言 = 加字典条目 + 这里加一行)
+  const LANGS = [
+    { code: "zh", label: "中文" },
+    { code: "en", label: "English" },
+  ];
   let lang = "zh";
   function detect() {
     try {
       const saved = localStorage.getItem("lang");
-      if (saved === "zh" || saved === "en") return saved;
+      for (const l of LANGS) if (l.code === saved) return l.code;
     } catch (e) { /* ignore */ }
     try {
-      return (navigator.language || "zh").toLowerCase().startsWith("zh") ? "zh" : "en";
+      const nav = (navigator.language || "zh").toLowerCase();
+      for (const l of LANGS) if (nav.startsWith(l.code)) return l.code;
+      return LANGS[0].code;
     } catch (e) {
-      return "zh";
+      return LANGS[0].code;
     }
   }
   function setLang(l) {
@@ -218,7 +225,12 @@
     return s;
   }
   function currentLang() { return lang; }
+  function langOptions() { return LANGS.slice(); }
+  function currentLangLabel() {
+    for (const l of LANGS) if (l.code === lang) return l.label;
+    return lang;
+  }
 
   // 全局暴露
-  window.I18N = { t, setLang, currentLang, detect };
+  window.I18N = { t, setLang, currentLang, detect, langOptions, currentLangLabel };
 })();

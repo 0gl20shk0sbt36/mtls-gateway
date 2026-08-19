@@ -13,16 +13,8 @@ function applyI18n() {
   document.querySelectorAll("[data-i18n-ph]").forEach((el) => {
     el.placeholder = t(el.dataset.i18nPh);
   });
-  const btn = $("langBtn");
-  if (btn) btn.textContent = "🌐 " + (I18N.currentLang() === "zh" ? "EN" : "中文");
-}
-function toggleLang() {
-  I18N.setLang(I18N.currentLang() === "zh" ? "en" : "zh");
-  applyI18n();
-  // 重新渲染动态文案
-  loadTunnels();
-  if (CFG) renderCfg();
-  if (SERVICES.length) renderSvcChannels(SERVICES.find((s) => s.name === getSel("newServiceList")));
+  const btn = $("langSelBtn");
+  if (btn) btn.querySelector(".txt").textContent = I18N.currentLangLabel();
 }
 
 // —— 自绘下拉(替代原生 select, 暗色全浏览器可控) ——
@@ -247,8 +239,17 @@ function renderSvcChannels(svc) {
 
 async function init() {
   I18N.setLang(I18N.detect());
+  // 语言下拉(当前语言显示; 选择即切换, 可扩展)
+  initSel("langSelBtn", "langSelList", (it) => {
+    I18N.setLang(it.value);
+    applyI18n();
+    loadTunnels();
+    if (CFG) renderCfg();
+    if (SERVICES.length) renderSvcChannels(SERVICES.find((s) => s.name === getSel("newServiceList")));
+  });
+  setSel("langSelList", I18N.langOptions().map((l) => ({ value: l.code, label: l.label })));
+  pickSel("langSelList", I18N.langOptions().findIndex((l) => l.code === I18N.currentLang()));
   applyI18n();
-  $("langBtn").onclick = toggleLang;
   $("refreshServices").onclick = verifyAdmin; // 刷新服务 = 重新验证
   initSel("newServiceBtn", "newServiceList", (it) => renderSvcChannels(it.raw));
   initSel("adminCertBtn", "adminCertList", () => {
