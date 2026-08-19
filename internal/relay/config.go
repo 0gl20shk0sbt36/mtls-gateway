@@ -108,8 +108,13 @@ func SaveConfig(path string, cfg RelayConfig) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("mkdir config dir: %w", err)
 	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
+	// 原子替换: 临时文件 + rename, 避免崩溃留半截 JSON
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		return fmt.Errorf("write config %s: %w", path, err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return fmt.Errorf("replace config %s: %w", path, err)
 	}
 	return nil
 }

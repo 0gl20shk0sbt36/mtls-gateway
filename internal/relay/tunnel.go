@@ -101,9 +101,7 @@ func (r *Relay) startTunnel(rt *tunnelRuntime) error {
 // serverAddr 或证书轮换后(≥1min)自动重建, 使 Reload 与证书续期对 HTTP 隧道生效
 func (rt *tunnelRuntime) localHTTPHandler(localPath string) http.Handler {
 	var (
-		mu        sync.Mutex
-		upstream  *url.URL
-		tlsCfg    *tls.Config
+		mu        sync.RWMutex
 		rp        *httputil.ReverseProxy
 		builtHost string
 		builtAt   time.Time
@@ -124,41 +122,55 @@ func (rt *tunnelRuntime) localHTTPHandler(localPath string) http.Handler {
 		if err != nil {
 			return // 证书/网络瞬断: 不缓存错误, 下次重试
 		}
-		upstream = up
-		tlsCfg = tc
-		builtHost = host
-		builtAt = time.Now()
+		// 旧 rp 释放空闲连接(防重建累积)
+		if rp != nil {
+			if tr, ok := rp.Transport.(*http.Transport); ok {
+				tr.CloseIdleConnections()
+			}
+		}
+		// Director/Transport 捕获本地快照(up/tc 不可变), 避免共享变量被重建改写的错配
+		upCopy, tcCopy := up, tc
 		rp = &httputil.ReverseProxy{
 			Director: func(req *http.Request) {
 				rest := strings.TrimPrefix(req.URL.Path, localPath)
 				if rest == "" {
 					rest = "/"
 				}
-				req.URL.Scheme = upstream.Scheme
-				req.URL.Host = upstream.Host
-				req.URL.Path = joinSlash(upstream.Path, rest) // 补通道前缀(如 /admin + /x)
+				req.URL.Scheme = upCopy.Scheme
+				req.URL.Host = upCopy.Host
+				req.URL.Path = joinSlash(upCopy.Path, rest) // 补通道前缀(如 /admin + /x)
 				req.URL.RawPath = ""
-				req.Host = upstream.Host
+				req.Host = upCopy.Host
 			},
 			Transport: &http.Transport{
-				TLSClientConfig: tlsCfg,
+				TLSClientConfig: tcCopy,
 				DialContext:     (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
 				ResponseHeaderTimeout: 30 * time.Second,
 				IdleConnTimeout:       90 * time.Second,
 			},
 		}
+		builtHost = host
+		builtAt = time.Now()
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if !strings.HasPrefix(req.URL.Path, localPath) {
 			http.Error(w, "local path prefix mismatch: "+req.URL.Path, http.StatusNotFound)
 			return
 		}
-		init()
-		if rp == nil {
-			http.Error(w, "upstream not ready (retry later)", http.StatusBadGateway)
-			return
+		mu.RLock()
+		r := rp
+		mu.RUnlock()
+		if r == nil {
+			init()
+			mu.RLock()
+			r = rp
+			mu.RUnlock()
+			if r == nil {
+				http.Error(w, "upstream not ready (retry later)", http.StatusBadGateway)
+				return
+			}
 		}
-		rp.ServeHTTP(w, req)
+		r.ServeHTTP(w, req)
 	})
 }
 
@@ -341,7 +353,7 @@ func (r *Relay) dialTLSConfig(certID string) (*tls.Config, error) {
 	}
 	return &tls.Config{
 		Certificates: []tls.Certificate{cert},
-		RootCAs:      r.rootCAs,
+		RootCAs:      r.rootCAsCopy(),
 		ServerName:   r.serverHost(),
 	}, nil
 }

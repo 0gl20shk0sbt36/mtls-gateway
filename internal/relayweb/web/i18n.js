@@ -259,7 +259,7 @@
   function t(key, vars) {
     let s = (L[lang] && L[lang][key]) || (L.zh && L.zh[key]) || key;
     if (vars) {
-      for (const k in vars) s = s.replace(new RegExp("\\{" + k + "\\}", "g"), esc(vars[k]));
+      for (const k in vars) s = s.replace(new RegExp("\\{" + k + "\\}", "g"), () => esc(vars[k]));
     }
     return s;
   }

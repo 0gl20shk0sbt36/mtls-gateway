@@ -20,6 +20,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -35,6 +36,7 @@ import (
 
 func main() {
 	var servers []*http.Server // 优雅退出时关闭
+	var serversMu sync.Mutex
 	cfgPath = flag.String("config", "/etc/mtls-gw/config.toml", "配置文件路径")
 	flag.Parse()
 
@@ -133,8 +135,10 @@ func main() {
 				WriteTimeout:      60 * time.Second,
 				IdleTimeout:       60 * time.Second,
 			}
+			serversMu.Lock()
 			servers = append(servers, srv)
-			if err := srv.Serve(tlsListener(ln, gateway.ServerTLSConfig())); err != nil {
+			serversMu.Unlock()
+			if err := srv.Serve(tlsListener(ln, gateway.ServerTLSConfig())); err != nil && err != http.ErrServerClosed {
 				log.Fatalf("gateway serve %s: %v", addr, err)
 			}
 		}()
@@ -155,8 +159,10 @@ func main() {
 				WriteTimeout:      60 * time.Second,
 				IdleTimeout:       60 * time.Second,
 			}
+			serversMu.Lock()
 			servers = append(servers, infoSrv)
-			if err := infoSrv.Serve(tlsListener(ln, gateway.ServerTLSConfig())); err != nil {
+			serversMu.Unlock()
+			if err := infoSrv.Serve(tlsListener(ln, gateway.ServerTLSConfig())); err != nil && err != http.ErrServerClosed {
 				log.Fatalf("info serve: %v", err)
 			}
 		}()
@@ -196,8 +202,10 @@ func main() {
 				WriteTimeout:      60 * time.Second,
 				IdleTimeout:       60 * time.Second,
 			}
+			serversMu.Lock()
 			servers = append(servers, admSrv)
-			if err := admSrv.Serve(tlsListener(ln, gateway.ServerTLSConfig())); err != nil {
+			serversMu.Unlock()
+			if err := admSrv.Serve(tlsListener(ln, gateway.ServerTLSConfig())); err != nil && err != http.ErrServerClosed {
 				log.Fatalf("admin serve: %v", err)
 			}
 		}()
@@ -212,11 +220,6 @@ func main() {
 	defer cancel()
 	for _, s := range servers {
 		s.Shutdown(ctx)
-	}
-	store.Close()
-	accLog.Close()
-	if evLog != nil {
-		evLog.Close()
 	}
 }
 
