@@ -58,6 +58,10 @@ func main() {
 	}
 	log.Printf("mappings: %d services: %d on ports %v", len(cfg.Mappings), len(cfg.Services), router.Listens())
 
+	// 配置管理器 (模式 + CRUD + 热重载 + 落盘)
+	cm := NewConfigManager(*cfgPath, cfg, router)
+	log.Printf("config mode: %s", cm.Mode())
+
 	bindHost := cfg.BindHost
 	if bindHost == "" {
 		bindHost = "0.0.0.0"
@@ -73,7 +77,7 @@ func main() {
 				log.Fatalf("listen %s: %v", addr, err)
 			}
 			log.Printf("mtls gateway listening on %s (mTLS)", addr)
-			srv := &http.Server{Handler: gatewayHandler(gateway, router, port)}
+			srv := &http.Server{Handler: gatewayHandler(gateway, cm, port)}
 			if err := srv.Serve(tlsListener(ln, gateway.ServerTLSConfig())); err != nil {
 				log.Fatalf("gateway serve %s: %v", addr, err)
 			}
@@ -88,7 +92,7 @@ func main() {
 				log.Fatalf("info listen %s: %v", infoListen, err)
 			}
 			log.Printf("mtls /info listening on %s (registered cert only)", infoListen)
-			infoSrv := &http.Server{Handler: infoHandler(gateway, router)}
+			infoSrv := &http.Server{Handler: infoHandler(gateway, cm)}
 			if err := infoSrv.Serve(tlsListener(ln, gateway.ServerTLSConfig())); err != nil {
 				log.Fatalf("info serve: %v", err)
 			}
@@ -121,7 +125,7 @@ func main() {
 				log.Fatalf("admin listen: %v", err)
 			}
 			log.Printf("admin api listening on %s (mTLS, admin cert required)", admListen)
-			admSrv := &http.Server{Handler: adminHandler(gateway, mgr, router)}
+			admSrv := &http.Server{Handler: adminHandler(gateway, mgr, cm)}
 			if err := admSrv.Serve(tlsListener(ln, gateway.ServerTLSConfig())); err != nil {
 				log.Fatalf("admin serve: %v", err)
 			}
@@ -132,7 +136,8 @@ func main() {
 }
 
 // gatewayHandler 网关主 handler: 认证 → 按路径选映射(最长匹配) → 按引用服务的 roles 授权 → 转发
-func gatewayHandler(gw *auth.Gateway, router *proxy.Router, port string) http.Handler {
+// 路由器每次从 ConfigManager 取(支持热重载)
+func gatewayHandler(gw *auth.Gateway, cm *ConfigManager, port string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rec, err := gw.Authorize(r)
 		if err != nil {
@@ -142,6 +147,7 @@ func gatewayHandler(gw *auth.Gateway, router *proxy.Router, port string) http.Ha
 		}
 		remote := auth.RemoteIP(r)
 
+		router := cm.Router()
 		rt := router.Match(port, r.URL.Path)
 		if rt == nil {
 			http.Error(w, "no route for "+r.URL.Path, http.StatusNotFound)
@@ -159,7 +165,7 @@ func gatewayHandler(gw *auth.Gateway, router *proxy.Router, port string) http.Ha
 }
 
 // infoHandler /info: 无需 admin; 已登记证书即可; 返回该证书可访问的服务(按角色过滤)
-func infoHandler(gw *auth.Gateway, router *proxy.Router) http.Handler {
+func infoHandler(gw *auth.Gateway, cm *ConfigManager) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rec, err := gw.Authorize(r)
 		if err != nil {
@@ -167,7 +173,7 @@ func infoHandler(gw *auth.Gateway, router *proxy.Router) http.Handler {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"services": router.ServicesAllowed(rec.Purposes)})
+		json.NewEncoder(w).Encode(map[string]any{"services": cm.Router().ServicesAllowed(rec.Purposes)})
 	})
 }
 
@@ -183,7 +189,94 @@ func resolveListen(bindHost, spec string) string {
 }
 
 // adminHandler 管理 TCP handler: 认证 + 只允许 admin_role
-func adminHandler(gw *auth.Gateway, mgr *api.Manager, router *proxy.Router) http.Handler {
+// 提供: 证书签发/吊销 (mgr) + 通道/服务/角色 CRUD (cm, 尊重 config_mode)
+func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *ConfigManager) http.Handler {
+	mux := http.NewServeMux()
+
+	// 配置总览(UI 用): 模式 + 通道 + 服务
+	mux.HandleFunc("GET /admin/config", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{
+			"mode":     cm.Mode(),
+			"mappings": cm.Mappings(),
+			"services": cm.Services(),
+		})
+	})
+
+	// 通道 CRUD
+	mux.HandleFunc("GET /admin/mappings", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{"mappings": cm.Mappings()})
+	})
+	mux.HandleFunc("POST /admin/mappings", func(w http.ResponseWriter, r *http.Request) {
+		var m proxy.Mapping
+		if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := cm.AddMapping(m); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true})
+	})
+	mux.HandleFunc("PUT /admin/mappings", func(w http.ResponseWriter, r *http.Request) {
+		var m proxy.Mapping
+		if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := cm.UpdateMapping(r.URL.Query().Get("id"), m); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true})
+	})
+	mux.HandleFunc("DELETE /admin/mappings", func(w http.ResponseWriter, r *http.Request) {
+		if err := cm.DeleteMapping(r.URL.Query().Get("id")); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true})
+	})
+
+	// 服务 CRUD
+	mux.HandleFunc("GET /admin/services", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{"services": cm.Services()})
+	})
+	mux.HandleFunc("POST /admin/services", func(w http.ResponseWriter, r *http.Request) {
+		var s proxy.ServiceCfg
+		if err := json.NewDecoder(r.Body).Decode(&s); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := cm.AddService(s); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true})
+	})
+	mux.HandleFunc("PUT /admin/services", func(w http.ResponseWriter, r *http.Request) {
+		var s proxy.ServiceCfg
+		if err := json.NewDecoder(r.Body).Decode(&s); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := cm.UpdateService(r.URL.Query().Get("name"), s); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true})
+	})
+	mux.HandleFunc("DELETE /admin/services", func(w http.ResponseWriter, r *http.Request) {
+		if err := cm.DeleteService(r.URL.Query().Get("name")); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true})
+	})
+
+	// 证书管理 (mgr)
+	mux.Handle("/", mgr.HTTPHandler())
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rec, err := gw.Authorize(r)
 		if err != nil {
@@ -195,13 +288,13 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, router *proxy.Router) http
 			return
 		}
 		r.Header.Set("X-Auth-Purpose", gw.AdminRole)
-		if r.URL.Path == "/admin/mappings" && r.Method == http.MethodGet {
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]any{"mappings": router.Routes()})
-			return
-		}
-		mgr.HTTPHandler().ServeHTTP(w, r)
+		mux.ServeHTTP(w, r)
 	})
+}
+
+func writeJSON(w http.ResponseWriter, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(v)
 }
 
 // tlsListener 包装 TCP listener 为 TLS
@@ -213,6 +306,7 @@ func tlsListener(ln net.Listener, tlsCfg *tls.Config) net.Listener {
 type Config struct {
 	BindHost      string             `toml:"bind_host"`       // 全局绑定地址 (默认 0.0.0.0)
 	DB            string             `toml:"db"`              // SQLite 数据库路径
+	ConfigMode    string             `toml:"config_mode"`     // mutable(改后落盘) | ephemeral(仅内存) | immutable(只读)
 	AdminRole     string             `toml:"admin_role"`      // 内置管理角色名 (默认 mtls-superadmin)
 	PwdLength     int                `toml:"pwd_length"`      // 自动生成 p12 密码长度
 	KeyType       string             `toml:"key_type"`        // 签发密钥: rsa | ecdsa
@@ -248,6 +342,7 @@ func DefaultConfig() Config {
 	return Config{
 		BindHost:      "0.0.0.0",
 		DB:            "/var/lib/mtls-gw/mtls-gw.db",
+		ConfigMode:    "mutable",
 		AdminRole:     auth.DefaultAdminRole,
 		PwdLength:     16,
 		KeyType:       "rsa",
@@ -275,6 +370,14 @@ func loadConfig(path string) Config {
 	}
 	if cfg.AdminRole == "" {
 		cfg.AdminRole = auth.DefaultAdminRole
+	}
+	switch cfg.ConfigMode {
+	case "", "mutable", "ephemeral", "immutable":
+		if cfg.ConfigMode == "" {
+			cfg.ConfigMode = "mutable"
+		}
+	default:
+		log.Fatalf("bad config_mode %q (mutable|ephemeral|immutable)", cfg.ConfigMode)
 	}
 	// 校验: 内置管理角色不得出现在业务服务 roles 里
 	for _, s := range cfg.Services {
