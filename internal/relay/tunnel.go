@@ -77,7 +77,11 @@ func (r *Relay) startTunnel(rt *tunnelRuntime) error {
 	rt.cancel = cancel
 	rt.conns = make(map[net.Conn]struct{})
 	if p := rt.route.LocalPath(); p != "" {
-		rt.srv = &http.Server{Handler: rt.localHTTPHandler(p)}
+		rt.srv = &http.Server{
+			Handler:           rt.localHTTPHandler(p),
+			ReadHeaderTimeout: 10 * time.Second,
+			IdleTimeout:       60 * time.Second,
+		}
 		go func() {
 			if err := rt.srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 				log.Printf("tunnel[%s] http serve: %v", rt.key, err)
@@ -212,11 +216,13 @@ func (rt *tunnelRuntime) handleConn(local net.Conn) {
 	}
 	defer upstream.Close()
 
-	// 空闲超时: 120s 无数据传输则关闭(隧道为按需建连, 不维护长连接)
+	// 空闲超时: 120s 无数据传输则关闭(按需建连; 活跃连接不受限)
 	idle := 120 * time.Second
+	var lastActive atomic.Int64
+	lastActive.Store(time.Now().UnixNano())
+	touch := func() { lastActive.Store(time.Now().UnixNano()) }
 	var wg sync.WaitGroup
 	wg.Add(2)
-	stop := make(chan struct{})
 	go func() {
 		defer wg.Done()
 		buf := make([]byte, 32*1024)
@@ -227,11 +233,12 @@ func (rt *tunnelRuntime) handleConn(local net.Conn) {
 					return
 				}
 				atomic.AddInt64(&rt.metrics.bytesIn, int64(n))
+				touch()
 			}
 			if err != nil {
-				// 本地 EOF: 半关闭传播到上游(CloseWrite), 让对端读到 EOF
-				if tc, ok := upstream.(*net.TCPConn); ok {
-					tc.CloseWrite()
+				// 本地 EOF: 半关闭传播到上游(tls.Conn/TCPConn 均支持), 让对端读到 EOF
+				if cw, ok := upstream.(interface{ CloseWrite() error }); ok {
+					cw.CloseWrite()
 				}
 				return
 			}
@@ -247,28 +254,31 @@ func (rt *tunnelRuntime) handleConn(local net.Conn) {
 					return
 				}
 				atomic.AddInt64(&rt.metrics.bytesOut, int64(n))
+				touch()
 			}
 			if err != nil {
 				return
 			}
 		}
 	}()
-	// 空闲超时监控
+	// 空闲超时监控: 超过 idle 无数据流动才关闭; 有流动则继续
 	done := make(chan struct{})
 	go func() {
 		wg.Wait()
 		close(done)
 	}()
-	timer := time.NewTimer(idle)
-	defer timer.Stop()
-	select {
-	case <-done:
-	case <-timer.C:
-		// 空闲超时: 关闭两侧连接, 释放资源
-		local.Close()
-		upstream.Close()
-		<-done
-	case <-stop:
+	for {
+		select {
+		case <-done:
+			return
+		case <-time.After(idle):
+			if time.Since(time.Unix(0, lastActive.Load())) >= idle {
+				local.Close()
+				upstream.Close()
+				<-done
+				return
+			}
+		}
 	}
 }
 

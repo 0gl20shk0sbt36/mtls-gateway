@@ -641,7 +641,7 @@ func writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case strings.Contains(msg, "bad request"):
 		code = http.StatusBadRequest
-	case strings.Contains(msg, "required"), strings.Contains(msg, "必填"), strings.Contains(msg, "不能为空"),
+	case strings.Contains(msg, "is required"), strings.Contains(msg, "必填"), strings.Contains(msg, "不能为空"),
 		strings.Contains(msg, "格式"), strings.Contains(msg, "invalid"), strings.Contains(msg, "非法"),
 		strings.Contains(msg, "已存在"), strings.Contains(msg, "禁止同名"):
 		code = http.StatusBadRequest

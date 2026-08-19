@@ -488,8 +488,7 @@ func randPassword(n int) string {
 	for i := range b {
 		idx, err := rand.Int(rand.Reader, max)
 		if err != nil {
-			// 熵源失败时退化为时间种子(仅应急, 正常路径不会发生)
-			idx = big.NewInt(int64(time.Now().UnixNano() % int64(len(chars))))
+			log.Fatalf("randPassword: 熵源不可用: %v", err) // 熵源失败属灾难性, 拒绝继续
 		}
 		b[i] = chars[idx.Int64()]
 	}

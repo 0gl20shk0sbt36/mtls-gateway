@@ -273,7 +273,7 @@ func gatewayHandler(gw *auth.Gateway, cm *ConfigManager, port string, acc *event
 			if acc != nil {
 				acc.Write(eventlog.Event{Type: "deny", Channel: ":" + port, Method: r.Method, Path: r.URL.Path, Status: 403, Msg: err.Error()})
 			}
-			http.Error(sw, "forbidden: "+err.Error(), http.StatusForbidden)
+			http.Error(sw, "forbidden", http.StatusForbidden) // 脱敏: 细节仅写事件日志
 			return
 		}
 		remote := auth.RemoteIP(r)

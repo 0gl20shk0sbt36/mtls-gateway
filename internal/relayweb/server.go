@@ -9,6 +9,7 @@ import (
 	"embed"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"mtls-gateway/internal/relay"
@@ -27,6 +28,11 @@ func NewHandler(mgr *relay.Manager) http.Handler {
 	apiHandler := mgr.Handler()
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// DNS rebinding / CSRF 防护: 浏览器跨源请求(Origin ≠ Host)拒绝
+		if !sameOrigin(r) {
+			http.Error(w, "cross-origin request rejected", http.StatusForbidden)
+			return
+		}
 		if strings.HasPrefix(r.URL.Path, "/api/") {
 			apiHandler.ServeHTTP(w, r)
 			return
@@ -44,4 +50,17 @@ func NewHandler(mgr *relay.Manager) http.Handler {
 		}
 		fileHandler.ServeHTTP(w, r)
 	})
+}
+
+// sameOrigin DNS rebinding / CSRF 防护:
+// 浏览器跨源请求会带 Origin 头; 若 Origin 的 host 与请求 Host 不一致则拒绝。
+// 无 Origin 的请求(CLI/curl/同源浏览器)放行。
+func sameOrigin(r *http.Request) bool {
+	if o := r.Header.Get("Origin"); o != "" {
+		ou, err := url.Parse(o)
+		if err != nil || ou.Host != r.Host {
+			return false
+		}
+	}
+	return true
 }

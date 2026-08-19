@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"fmt"
 	"log"
 	"net"
 	"os"
@@ -117,23 +118,23 @@ func (r *Relay) cfgListenHost() string {
 
 // applyServerCA 设置网关 CA 并构建根池 (用于验证网关服务器证书)。
 // serverCA 为空 = 用系统根 (根池 nil)。
-func (r *Relay) applyServerCA(serverCA string) {
+// 配置了 server_ca 但读取/解析失败 = 拒绝启动(降级系统根会被 MITM 冒充网关)。
+func (r *Relay) applyServerCA(serverCA string) error {
 	r.serverCA = serverCA
 	r.rootCAs = nil
 	if serverCA == "" {
-		return
+		return nil
 	}
 	pemBytes, err := os.ReadFile(serverCA)
 	if err != nil {
-		log.Printf("relay: read server_ca %s: %v (falling back to system roots)", serverCA, err)
-		return
+		return fmt.Errorf("read server_ca %s: %w (拒绝降级系统根)", serverCA, err)
 	}
 	pool := x509.NewCertPool()
 	if !pool.AppendCertsFromPEM(pemBytes) {
-		log.Printf("relay: parse server_ca %s failed (falling back to system roots)", serverCA)
-		return
+		return fmt.Errorf("parse server_ca %s failed (拒绝降级系统根)", serverCA)
 	}
 	r.rootCAs = pool
+	return nil
 }
 
 // loadCert 从来源加载证书(CertID), 命中缓存则复用。
@@ -188,7 +189,9 @@ func (r *Relay) Start(cfg RelayConfig) error {
 	r.runCtx, r.runCancel = context.WithCancel(r.ctx)
 	r.listenHost = cfg.ListenHost
 	r.serverAddr = cfg.ServerAddr
-	r.applyServerCA(cfg.ServerCAFile)
+	if err := r.applyServerCA(cfg.ServerCAFile); err != nil {
+		return err
+	}
 	var runtimes []*tunnelRuntime
 	for _, t := range cfg.Tunnels {
 		if !t.Enabled {
@@ -227,7 +230,9 @@ func (r *Relay) Reload(cfg RelayConfig) error {
 	}
 	r.listenHost = cfg.ListenHost
 	r.serverAddr = cfg.ServerAddr
-	r.applyServerCA(cfg.ServerCAFile)
+	if err := r.applyServerCA(cfg.ServerCAFile); err != nil {
+		return err
+	}
 	next := map[string]bool{}
 	for _, t := range cfg.Tunnels {
 		if !t.Enabled {
@@ -312,10 +317,11 @@ func (r *Relay) SetServerAddr(addr string) {
 }
 
 // SetServerCA 设置并加载服务端 CA(供 Discover 在未 Start 时验证网关服务器证书)。
-func (r *Relay) SetServerCA(caFile string) {
+// 配置的 CA 不可用 → 返回错误(拒绝降级系统根, 防 MITM)
+func (r *Relay) SetServerCA(caFile string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.applyServerCA(caFile)
+	return r.applyServerCA(caFile)
 }
 
 var errAlreadyStarted = errString("relay already started")

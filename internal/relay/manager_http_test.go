@@ -19,7 +19,7 @@ func mgrEnv(t *testing.T, h *harness) (*Manager, http.Handler) {
 	src := h.buildSrc(t)
 	r := New("", src)
 	r.SetServerAddr(h.gwAddr)
-	r.SetServerCA(h.caPath)
+	_ = r.SetServerCA(h.caPath)
 	cfgPath := filepath.Join(t.TempDir(), "relay.json")
 	cfg := RelayConfig{ServerAddr: h.gwAddr, ServerCAFile: h.caPath, Tunnels: []Tunnel{}}
 	if err := SaveConfig(cfgPath, cfg); err != nil {
@@ -142,7 +142,7 @@ func TestManagerHTTP_AddTunnel(t *testing.T) {
 	src, _ := certsource.OpenFile(clientPair)
 	r2 := New("", src)
 	r2.SetServerAddr(gwAddr)
-	r2.SetServerCA(caPath)
+	_ = r2.SetServerCA(caPath)
 	cfgPath := filepath.Join(dir, "relay.json")
 	SaveConfig(cfgPath, RelayConfig{ServerAddr: gwAddr, ServerCAFile: caPath, Tunnels: []Tunnel{}})
 	m2, _ := NewManager(r2, cfgPath)

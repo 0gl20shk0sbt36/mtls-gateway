@@ -29,6 +29,7 @@ func main() {
 		filterOrg   = flag.String("filter-org", "mtls-gw", "只展示该 org 签发的证书 (空=不过滤)")
 		showAll     = flag.Bool("show-all", false, "显示全部证书 (跳过 org 过滤)")
 		noWeb       = flag.Bool("no-web", false, "不启动管理 HTTP (纯中继, 无 WebUI/API)")
+		allowRemote = flag.Bool("allow-remote", false, "允许管理 API 监听非 loopback (⚠️ 无鉴权, 仅可信网络)")
 		server      = flag.String("server", "", "覆盖服务端发现端点 (临时, 不写入配置)")
 		noWrite     = flag.Bool("no-write", false, "WebUI/API 改动只改内存, 不写回 -config 文件")
 	)
@@ -70,7 +71,9 @@ func main() {
 		cfgServerAddr = *server
 	}
 	r.SetServerAddr(cfgServerAddr)   // 让 Discover(/api/services) 在未 Start 时也能用
-	r.SetServerCA(cfg.ServerCAFile)  // 证书验证根的加载
+	if err := r.SetServerCA(cfg.ServerCAFile); err != nil {
+		log.Fatalf("server_ca: %v", err) // 配置的 CA 不可用 → 拒绝启动(防 MITM)
+	}
 	// 无条件启动核心(0 隧道也可): 否则空配置下 WebUI 添加隧道无法 Reload 启动
 	if err := mgr.Start(); err != nil {
 		log.Printf("start: %v", err)
@@ -81,7 +84,10 @@ func main() {
 	// 管理 HTTP server (提供管理 API + WebUI 面板); --no-web 或空 listen 则不起 (纯中继)
 	var srv *http.Server
 	if !*noWeb && *adminListen != "" {
-		// 安全: 管理 API 无鉴权, 非 loopback 监听会暴露给局域网(警告但不阻止, 用户需自担风险)
+		// 安全: 管理 API 无鉴权 — 默认强制 loopback; 非 loopback 需显式 --allow-remote
+		if !isLoopbackAddr(*adminListen) && !*allowRemote {
+			log.Fatalf("管理 API 监听 %s 非 loopback 且未指定 --allow-remote — 拒绝启动 (管理面无鉴权)", *adminListen)
+		}
 		if !isLoopbackAddr(*adminListen) {
 			log.Printf("⚠️ 管理 API 监听 %s 非 loopback — 无鉴权, 局域网可访问, 请仅在可信网络使用", *adminListen)
 		}

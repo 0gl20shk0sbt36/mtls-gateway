@@ -106,7 +106,7 @@ func TestManagerVerify_FullFlow(t *testing.T) {
 	}
 	r := New("", src)
 	r.SetServerAddr(gwAddr)
-	r.SetServerCA(caPath)
+	_ = r.SetServerCA(caPath)
 	cfgPath := filepath.Join(dir, "relay.json")
 	SaveConfig(cfgPath, RelayConfig{ServerAddr: gwAddr, ServerCAFile: caPath, AdminAddr: gwAddr, Tunnels: []Tunnel{}})
 	m, err := NewManager(r, cfgPath)
@@ -133,7 +133,7 @@ func TestManagerVerify_AdminProbeSilent(t *testing.T) {
 	src, _ := certsource.OpenFile(clientPair)
 	r := New("", src)
 	r.SetServerAddr(gwAddr)
-	r.SetServerCA(caPath)
+	_ = r.SetServerCA(caPath)
 	cfgPath := filepath.Join(dir, "relay.json")
 	// AdminAddr 指向一个不响应 /admin/verify 的地址 → 探活失败
 	SaveConfig(cfgPath, RelayConfig{ServerAddr: gwAddr, ServerCAFile: caPath, AdminAddr: "127.0.0.1:1", Tunnels: []Tunnel{}})
