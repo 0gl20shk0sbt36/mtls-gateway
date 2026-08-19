@@ -383,7 +383,7 @@ func apiErrStatus(err error) int {
 	switch {
 	case strings.Contains(msg, "required"), strings.Contains(msg, "必填"), strings.Contains(msg, "不能为空"),
 		strings.Contains(msg, "invalid"), strings.Contains(msg, "非法"), strings.Contains(msg, "格式"),
-		strings.Contains(msg, "保留字"):
+		strings.Contains(msg, "保留字"), strings.Contains(msg, "未在 roles 声明列表"), strings.Contains(msg, "not declared"):
 		return http.StatusBadRequest
 	case strings.Contains(msg, "already exists"), strings.Contains(msg, "已存在"):
 		return http.StatusConflict

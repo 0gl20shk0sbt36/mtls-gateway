@@ -90,7 +90,7 @@ func localizeLoadErr(l *i18n.L, certID string, err error) error {
 
 // loadCertLang 按指定语言加载证书(错误消息语言化); lang 空=进程默认
 func (r *Relay) loadCertLang(certID, lang string) (tls.Certificate, error) {
-	l := r.L
+	l := r.lang()
 	if lang == "en" || lang == "zh" {
 		l = i18n.New(lang)
 	}
@@ -164,12 +164,26 @@ func (r *Relay) relayDial(ctx context.Context, _ string, certID string, route Tu
 		ServerAddr: net.JoinHostPort(r.serverHost(), route.ChannelPort()),
 		ServerName: r.serverHost(),
 		ClientCert: &cert,
-		RootCAs:    r.rootCAs,
+		RootCAs:    r.rootCAsCopy(),
 	}
 	return d.Dial(ctx)
 }
 
 // serverHost 服务端发现端点的主机部分 (serverAddr = host:port → host)
+// lang 锁内读当前语言(SetLang 并发写)
+func (r *Relay) lang() *i18n.L {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.L
+}
+
+// rootCAsCopy 锁内读根池(applyServerCA 并发写)
+func (r *Relay) rootCAsCopy() *x509.CertPool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.rootCAs
+}
+
 func (r *Relay) serverHost() string {
 	r.mu.Lock()
 	addr := r.serverAddr

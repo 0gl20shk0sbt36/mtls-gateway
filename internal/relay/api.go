@@ -530,8 +530,7 @@ func (m *Manager) Handler() http.Handler {
 			Locals  map[string]string `json:"locals"`
 			CertID  string            `json:"cert_id"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
-			writeErr(w, r, err)
+		if !decodeJSON(w, r, &b) {
 			return
 		}
 		if b.Service == "" || b.CertID == "" {

@@ -7,6 +7,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"flag"
@@ -33,6 +34,7 @@ import (
 )
 
 func main() {
+	var servers []*http.Server // 优雅退出时关闭
 	cfgPath = flag.String("config", "/etc/mtls-gw/config.toml", "配置文件路径")
 	flag.Parse()
 
@@ -131,6 +133,7 @@ func main() {
 				WriteTimeout:      60 * time.Second,
 				IdleTimeout:       60 * time.Second,
 			}
+			servers = append(servers, srv)
 			if err := srv.Serve(tlsListener(ln, gateway.ServerTLSConfig())); err != nil {
 				log.Fatalf("gateway serve %s: %v", addr, err)
 			}
@@ -152,6 +155,7 @@ func main() {
 				WriteTimeout:      60 * time.Second,
 				IdleTimeout:       60 * time.Second,
 			}
+			servers = append(servers, infoSrv)
 			if err := infoSrv.Serve(tlsListener(ln, gateway.ServerTLSConfig())); err != nil {
 				log.Fatalf("info serve: %v", err)
 			}
@@ -192,17 +196,28 @@ func main() {
 				WriteTimeout:      60 * time.Second,
 				IdleTimeout:       60 * time.Second,
 			}
+			servers = append(servers, admSrv)
 			if err := admSrv.Serve(tlsListener(ln, gateway.ServerTLSConfig())); err != nil {
 				log.Fatalf("admin serve: %v", err)
 			}
 		}()
 	}
 
-	// 优雅退出: SIGINT/SIGTERM (避免 goroutine 内 log.Fatalf 跳过 defer Close)
+	// 优雅退出: SIGINT/SIGTERM 关闭全部 http.Server 并等 store 落盘
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
 	<-quit
 	log.Println("shutting down...")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for _, s := range servers {
+		s.Shutdown(ctx)
+	}
+	store.Close()
+	accLog.Close()
+	if evLog != nil {
+		evLog.Close()
+	}
 }
 
 // statusWriter 包装 ResponseWriter: 记录状态码与响应字节数(访问日志用)
@@ -394,6 +409,7 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *ConfigManager, ev *eve
 			Services []proxy.ServiceCfg `json:"services"`
 			Roles    []string           `json:"roles"`
 		}
+		r.Body = http.MaxBytesReader(w, r.Body, 4<<20)
 		if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
 			gwErr(w, r, err)
 			return
@@ -412,6 +428,7 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *ConfigManager, ev *eve
 		var b struct {
 			Name string `json:"name"`
 		}
+		r.Body = http.MaxBytesReader(w, r.Body, 4<<20)
 		if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
 			gwErr(w, r, err)
 			return
@@ -441,6 +458,7 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *ConfigManager, ev *eve
 	})
 	mux.HandleFunc("POST /admin/mappings", func(w http.ResponseWriter, r *http.Request) {
 		var m proxy.Mapping
+		r.Body = http.MaxBytesReader(w, r.Body, 4<<20)
 		if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
 			gwErr(w, r, err)
 			return
@@ -454,6 +472,7 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *ConfigManager, ev *eve
 	})
 	mux.HandleFunc("PUT /admin/mappings", func(w http.ResponseWriter, r *http.Request) {
 		var m proxy.Mapping
+		r.Body = http.MaxBytesReader(w, r.Body, 4<<20)
 		if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
 			gwErr(w, r, err)
 			return
@@ -480,6 +499,7 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *ConfigManager, ev *eve
 	})
 	mux.HandleFunc("POST /admin/services", func(w http.ResponseWriter, r *http.Request) {
 		var s proxy.ServiceCfg
+		r.Body = http.MaxBytesReader(w, r.Body, 4<<20)
 		if err := json.NewDecoder(r.Body).Decode(&s); err != nil {
 			gwErr(w, r, err)
 			return
@@ -493,6 +513,7 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *ConfigManager, ev *eve
 	})
 	mux.HandleFunc("PUT /admin/services", func(w http.ResponseWriter, r *http.Request) {
 		var s proxy.ServiceCfg
+		r.Body = http.MaxBytesReader(w, r.Body, 4<<20)
 		if err := json.NewDecoder(r.Body).Decode(&s); err != nil {
 			gwErr(w, r, err)
 			return
@@ -518,7 +539,7 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *ConfigManager, ev *eve
 		sw := &statusWriter{ResponseWriter: w}
 		msg := ""
 		if r.URL.Path == "/admin/certs/revoke" || r.URL.Path == "/admin/certs/issue" {
-			if b, err := io.ReadAll(r.Body); err == nil {
+			if b, err := io.ReadAll(io.LimitReader(r.Body, 4<<20)); err == nil { // 限 4MB
 				r.Body = io.NopCloser(bytes.NewReader(b)) // 恢复 body 供下游解析
 				var rb struct {
 					Serial   string   `json:"serial"`

@@ -197,7 +197,7 @@ func (m *ConfigManager) DeleteRole(name string) error {
 			}
 		}
 	}
-	old := m.cfg.Roles
+	old := append([]string(nil), m.cfg.Roles...) // 深拷贝(回滚用, [:0] 复用会污染 old)
 	out := m.cfg.Roles[:0]
 	for _, r := range m.cfg.Roles {
 		if r != name {
@@ -237,7 +237,7 @@ func (m *ConfigManager) UpdateMapping(id string, mm proxy.Mapping) error {
 	if err := m.checkWritable(); err != nil {
 		return err
 	}
-	old := m.cfg.Mappings
+	old := append([]proxy.Mapping(nil), m.cfg.Mappings...) // 深拷贝(回滚用)
 	found := false
 	for i := range m.cfg.Mappings {
 		if m.cfg.Mappings[i].ID == id {
@@ -262,7 +262,7 @@ func (m *ConfigManager) DeleteMapping(id string) error {
 	if err := m.checkWritable(); err != nil {
 		return err
 	}
-	old := m.cfg.Mappings
+	old := append([]proxy.Mapping(nil), m.cfg.Mappings...) // 深拷贝(回滚用)
 	out := m.cfg.Mappings[:0]
 	for _, mm := range m.cfg.Mappings {
 		if mm.ID != id {
@@ -302,7 +302,7 @@ func (m *ConfigManager) UpdateService(name string, s proxy.ServiceCfg) error {
 	if err := m.checkWritable(); err != nil {
 		return err
 	}
-	old := m.cfg.Services
+	old := append([]proxy.ServiceCfg(nil), m.cfg.Services...) // 深拷贝(回滚用)
 	found := false
 	for i := range m.cfg.Services {
 		if m.cfg.Services[i].Name == name {
@@ -327,7 +327,7 @@ func (m *ConfigManager) DeleteService(name string) error {
 	if err := m.checkWritable(); err != nil {
 		return err
 	}
-	old := m.cfg.Services
+	old := append([]proxy.ServiceCfg(nil), m.cfg.Services...) // 深拷贝(回滚用)
 	out := m.cfg.Services[:0]
 	for _, s := range m.cfg.Services {
 		if s.Name != name {

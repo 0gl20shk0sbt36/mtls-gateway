@@ -364,6 +364,8 @@ func TestTunnelIdleTimeout(t *testing.T) {
 	localPort := freePort(t)
 	r := New("", src)
 	defer r.Close()
+	// 注入短超时 — 必须在 Start 之前(Start 时捕获进 tunnelRuntime)
+	r.idleTimeout = 300 * time.Millisecond
 	cfg := RelayConfig{
 		ListenHost: "127.0.0.1", ServerAddr: h.gwAddr, ServerCAFile: h.caPath,
 		Tunnels: []Tunnel{{
@@ -375,8 +377,6 @@ func TestTunnelIdleTimeout(t *testing.T) {
 	if err := r.Start(cfg); err != nil {
 		t.Fatal(err)
 	}
-	// 注入短超时(同包可访问)
-	r.idleTimeout = 300 * time.Millisecond
 
 	conn, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", localPort))
 	if err != nil {

@@ -95,23 +95,28 @@ func (r *Relay) startTunnel(rt *tunnelRuntime) error {
 }
 
 // localHTTPHandler 本地路径模式: 剥本地前缀 → 补通道前缀 → mTLS 转发服务端通道
-// upstream/tlsCfg/rp 首次请求时惰性初始化(startTunnel 在 Start 持锁期间构造 handler,
+// upstream/tlsCfg/rp 惰性初始化(startTunnel 在 Start 持锁期间构造 handler,
 // 此处同步调 serverHost()/dialTLSConfig() 会与 r.mu 重入死锁)。
-// 初始化失败(证书瞬断/上游未就绪)不永久缓存 — 下次请求重试, 避免 sync.Once 毒化
+// 初始化失败(证书瞬断/上游未就绪)不永久缓存 — 下次请求重试, 避免 sync.Once 毒化;
+// serverAddr 或证书轮换后(≥1min)自动重建, 使 Reload 与证书续期对 HTTP 隧道生效
 func (rt *tunnelRuntime) localHTTPHandler(localPath string) http.Handler {
 	var (
-		mu       sync.Mutex
-		upstream *url.URL
-		tlsCfg   *tls.Config
-		rp       *httputil.ReverseProxy
+		mu        sync.Mutex
+		upstream  *url.URL
+		tlsCfg    *tls.Config
+		rp        *httputil.ReverseProxy
+		builtHost string
+		builtAt   time.Time
 	)
 	init := func() {
 		mu.Lock()
 		defer mu.Unlock()
-		if rp != nil {
+		host := rt.r.serverHost()
+		// 重建条件: 未构建 / serverAddr 变化 / 超过证书轮换窗口(60s)
+		if rp != nil && builtHost == host && time.Since(builtAt) < certCacheTTL {
 			return
 		}
-		up, err := url.Parse("https://" + net.JoinHostPort(rt.r.serverHost(), rt.route.ChannelPort()) + rt.route.ChannelPath())
+		up, err := url.Parse("https://" + net.JoinHostPort(host, rt.route.ChannelPort()) + rt.route.ChannelPath())
 		if err != nil {
 			return // 下次请求重试
 		}
@@ -121,6 +126,8 @@ func (rt *tunnelRuntime) localHTTPHandler(localPath string) http.Handler {
 		}
 		upstream = up
 		tlsCfg = tc
+		builtHost = host
+		builtAt = time.Now()
 		rp = &httputil.ReverseProxy{
 			Director: func(req *http.Request) {
 				rest := strings.TrimPrefix(req.URL.Path, localPath)
@@ -133,7 +140,12 @@ func (rt *tunnelRuntime) localHTTPHandler(localPath string) http.Handler {
 				req.URL.RawPath = ""
 				req.Host = upstream.Host
 			},
-			Transport: &http.Transport{TLSClientConfig: tlsCfg},
+			Transport: &http.Transport{
+				TLSClientConfig: tlsCfg,
+				DialContext:     (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+				ResponseHeaderTimeout: 30 * time.Second,
+				IdleConnTimeout:       90 * time.Second,
+			},
 		}
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -217,7 +229,7 @@ func (rt *tunnelRuntime) handleConn(local net.Conn) {
 	}
 	defer upstream.Close()
 
-	// 空闲超时: rt.idle 无数据传输则关闭(按需建连; 活跃连接不受限)
+	// 空闲超时: rt.idle 无数据传输则关闭(按需建连; 活跃连接不受限; idle<=0 = 不监控)
 	idle := rt.idle
 	var lastActive atomic.Int64
 	lastActive.Store(time.Now().UnixNano())
@@ -262,12 +274,16 @@ func (rt *tunnelRuntime) handleConn(local net.Conn) {
 			}
 		}
 	}()
-	// 空闲超时监控: 超过 idle 无数据流动才关闭; 有流动则继续
+	// 空闲超时监控: 超过 idle 无数据流动才关闭; 有流动则继续; idle<=0 跳过
 	done := make(chan struct{})
 	go func() {
 		wg.Wait()
 		close(done)
 	}()
+	if idle <= 0 {
+		<-done
+		return
+	}
 	for {
 		select {
 		case <-done:

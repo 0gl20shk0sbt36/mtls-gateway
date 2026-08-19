@@ -115,8 +115,9 @@ func (g *Gateway) Authorize(r *http.Request) (*db.CertRecord, error) {
 			return nil, fmt.Errorf("cert has no IP bind but require_ip_bind=true")
 		}
 		matched := false
+		remoteIP := net.ParseIP(remote)
 		for _, ip := range cert.IPAddresses {
-			if ip.String() == remote {
+			if remoteIP != nil && ip.Equal(remoteIP) {
 				matched = true
 				break
 			}
