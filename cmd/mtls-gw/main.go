@@ -190,10 +190,10 @@ func accessEvent(rec *db.CertRecord, channel, method, path string, status int, i
 		Channel: channel,
 		Method:  method,
 		Path:    path,
-		Status:  status,
-		BytesIn: in,
+		Status:   status,
+		BytesIn:  in,
+		BytesOut: out,
 	}
-	_ = out
 	return ev
 }
 

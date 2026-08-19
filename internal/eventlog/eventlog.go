@@ -88,6 +88,7 @@ type Event struct {
 	Path    string    `json:"path,omitempty"`
 	Status  int       `json:"status,omitempty"`
 	BytesIn int64     `json:"bytes_in,omitempty"`
+	BytesOut int64    `json:"bytes_out,omitempty"`
 	Msg     string    `json:"msg,omitempty"`
 }
 

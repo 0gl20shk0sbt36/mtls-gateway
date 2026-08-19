@@ -30,6 +30,12 @@ admin_role = "mtls-superadmin"        # ★ 内置管理角色名(别用常用�
                                       #   禁止出现在业务服务 roles 里, 否则加载报错)
 tls_min_version = "1.2"               # TLS 最低版本: "1.2" 或 "1.3"
 
+# ---- 日志(事件型, 不记录数据内容) ----
+log_file = "/var/log/mtls-gw/events.log"       # 系统/配置变更/证书签发吊销事件; 空=关
+access_log_file = "/var/log/mtls-gw/access.log" # 访问日志(大量, 单独文件): 证书/时间/通道/方法/路径/状态/字节
+log_max_size = 10                    # 单文件上限 MB
+log_max_files = 5                    # 保留历史份数(滚动)
+
 # ---- 签发密钥 ----
 key_type = "rsa"                      # 签发密钥类型: rsa | ecdsa
 key_bits = 2048                       # rsa: 2048/3072/4096; ecdsa: 256/384/521
