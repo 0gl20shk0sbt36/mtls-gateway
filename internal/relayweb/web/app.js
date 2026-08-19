@@ -171,7 +171,16 @@ async function init() {
     const p = l.replace(/^:/, "").split("/")[0];
     if (p) $("newLocal").value = p;
   });
-  initSel("adminCertBtn", "adminCertList");
+  initSel("adminCertBtn", "adminCertList", () => {
+    // 切换证书 → 复位: 隐藏已显示的区域, 需重新验证
+    $("tunnelSection").style.display = "none";
+    $("adminSection").style.display = "none";
+    $("adminPwd").value = "";
+    SERVICES = [];
+    setSel("newServiceList", []);
+    $("serviceHint").textContent = "";
+    $("adminCertHint").textContent = "已切换证书 — 请重新验证。";
+  });
   $("adminVerify").onclick = verifyAdmin;
   $("adminIssue").onclick = adminIssue;
   $("adminRevoke").onclick = adminRevoke;
@@ -226,13 +235,14 @@ async function verifyAdmin() {
       $("adminSection").style.display = "";
       $("adminStatus").textContent = "已解锁：admin 证书已验证，可签发/吊销。";
       $("adminCertHint").textContent = `已验证 ${cert}：admin 证书 → 证书管理可用。`;
-      toast("验证成功 · 证书管理已解锁");
+      toast("验证成功 · 管理台已解锁");
     } else {
       $("adminSection").style.display = "none";
       $("tunnelSection").style.display = "";
-      $("adminCertHint").textContent = `已验证 ${cert}：普通证书 → 可新增隧道（证书管理不可用）。`;
+      $("adminCertHint").textContent = `已验证 ${cert}：普通证书 → 可新增隧道（管理不可用）。`;
       toast("验证成功（普通证书）");
     }
+    $("adminPwd").value = ""; // 验证成功即清空密码(失败保留)
   } catch (e) { toast("验证失败: " + e.message, true); }
 }
 async function adminIssue() {
