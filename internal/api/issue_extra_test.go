@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"mtls-gateway/internal/certsource"
@@ -202,5 +203,44 @@ func TestIssueCert_InvalidIP(t *testing.T) {
 	_, err := m.IssueCert(IssueRequest{Name: "dev-badip", Purposes: []string{"dsh"}, TSIP: "1.2.3", Days: 90})
 	if err == nil || !strings.Contains(err.Error(), "invalid ts_ip") {
 		t.Fatalf("invalid ts_ip should be rejected: %v", err)
+	}
+}
+
+// 第十批: 并发同名签发 — DB 仅一成功 + 胜者磁盘文件保留(败者回滚不误删)
+func TestIssueCertConcurrentSameNameFiles(t *testing.T) {
+	m := testManager(t, CertTemplate{})
+	var wg sync.WaitGroup
+	results := make([]error, 8)
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, err := m.IssueCert(IssueRequest{Name: "race-dev", Purposes: []string{"svc-a"}, NoPassword: true})
+			results[i] = err
+		}(i)
+	}
+	wg.Wait()
+	succ := 0
+	for _, err := range results {
+		if err == nil {
+			succ++
+		}
+	}
+	if succ != 1 {
+		t.Fatalf("concurrent same-name issues: %d succeeded, want exactly 1", succ)
+	}
+	// 胜者文件必须完整存在(败者 RemoveAll 只删自己的 .tmp-* 目录)
+	dir := filepath.Join(m.certDir, "race-dev")
+	for _, f := range []string{"cert.pem", "key.pem", "device.p12"} {
+		if _, err := os.Stat(filepath.Join(dir, f)); err != nil {
+			t.Fatalf("winner files missing: %s (%v)", f, err)
+		}
+	}
+	// 无 .tmp-* 残留
+	entries, _ := os.ReadDir(m.certDir)
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".tmp-") {
+			t.Fatalf("stale tmp dir: %s", e.Name())
+		}
 	}
 }

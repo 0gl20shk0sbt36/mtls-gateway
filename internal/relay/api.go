@@ -46,6 +46,9 @@ func (m *Manager) Config() RelayConfig {
 	defer m.mu.Unlock()
 	out := m.cfg
 	out.Tunnels = append([]Tunnel(nil), m.cfg.Tunnels...)
+	for i := range out.Tunnels {
+		out.Tunnels[i].Routes = append([]TunnelRoute(nil), m.cfg.Tunnels[i].Routes...) // 内层深拷贝
+	}
 	return out
 }
 

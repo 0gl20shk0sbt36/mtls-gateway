@@ -318,25 +318,26 @@ func (m *Manager) IssueCert(req IssueRequest) (*IssueResponse, error) {
 		return nil, fmt.Errorf("marshal key: %w", err)
 	}
 	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})
-	outDir := filepath.Join(m.certDir, req.Name)
-	if err := os.MkdirAll(outDir, 0o700); err != nil {
+	// 输出目录用唯一临时名(防并发同名: 败者回滚只删自己的目录, 不误删胜者文件)
+	tmpDir := filepath.Join(m.certDir, ".tmp-"+serial.String())
+	if err := os.MkdirAll(tmpDir, 0o700); err != nil {
 		return nil, err
 	}
-	// 失败回滚: 清理已写的证书/私钥文件(避免孤儿文件)
+	// 失败回滚: 清理本请求的临时目录(唯一名, 绝不影响他人)
 	committed := false
 	defer func() {
 		if !committed {
-			os.RemoveAll(outDir)
+			os.RemoveAll(tmpDir)
 		}
 	}()
-	if err := os.WriteFile(filepath.Join(outDir, "cert.pem"), certPEM, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(tmpDir, "cert.pem"), certPEM, 0o600); err != nil {
 		return nil, err
 	}
-	if err := os.WriteFile(filepath.Join(outDir, "key.pem"), keyPEM, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(tmpDir, "key.pem"), keyPEM, 0o600); err != nil {
 		return nil, err
 	}
 	// 6. p12 (浏览器/手机导入)
-	p12Path := filepath.Join(outDir, "device.p12")
+	p12Path := filepath.Join(tmpDir, "device.p12")
 	if err := writeP12(p12Path, certPEM, keyPEM, req.Password); err != nil {
 		return nil, fmt.Errorf("p12: %w", err)
 	}
@@ -353,6 +354,11 @@ func (m *Manager) IssueCert(req IssueRequest) (*IssueResponse, error) {
 	}
 	if err := m.store.InsertUniqueName(rec); err != nil { // 原子: 并发同名签发时只有一个成功
 		return nil, err
+	}
+	// 登记成功 → 临时目录改名为正式名(唯一路径迁移, 不影响并发请求)
+	finalDir := filepath.Join(m.certDir, req.Name)
+	if err := os.Rename(tmpDir, finalDir); err != nil {
+		return nil, fmt.Errorf("finalize cert dir: %w", err)
 	}
 	committed = true
 	return &IssueResponse{

@@ -125,7 +125,7 @@ func (s *Store) InsertUniqueName(r CertRecord) error {
 	defer s.mu.Unlock()
 	for _, e := range s.table {
 		if e.Name == r.Name {
-			return fmt.Errorf("name %s already exists (%d record(s))", r.Name, len(s.table))
+			return fmt.Errorf("name %s already exists", r.Name)
 		}
 	}
 	return s.upsertLocked(r)

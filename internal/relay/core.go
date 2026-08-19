@@ -141,16 +141,20 @@ func (r *Relay) applyServerCA(serverCA string) error {
 
 // loadCert 从来源加载证书(CertID), 命中缓存则复用。
 func (r *Relay) loadCert(certID string) (tls.Certificate, error) {
+	// 三段式: 锁内查缓存 → 锁外 IO(src.Load) → 锁内写缓存(与 loadCertLang 一致)
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	if e, ok := r.certCache[certID]; ok && time.Since(e.loadedAt) < certCacheTTL {
+	e, ok := r.certCache[certID]
+	r.mu.Unlock()
+	if ok && time.Since(e.loadedAt) < certCacheTTL {
 		return e.cert, nil
 	}
-	c, err := r.src.Load(certID)
+	c, err := r.src.Load(certID) // 锁外: 磁盘 IO 不阻塞其他 Relay 操作
 	if err != nil {
-		return tls.Certificate{}, localizeLoadErr(r.L, certID, err)
+		return tls.Certificate{}, localizeLoadErr(r.lang(), certID, err)
 	}
+	r.mu.Lock()
 	r.certCache[certID] = certCacheEntry{cert: c, loadedAt: time.Now()}
+	r.mu.Unlock()
 	return c, nil
 }
 
