@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -642,9 +643,9 @@ func localizeKnown(lang string, err error) error {
 	case strings.Contains(s, "name and purposes required"):
 		return l.E("errNameRequired")
 	case strings.Contains(s, "already exists"):
-		n := "?"
+		n := 0
 		if m := regexp.MustCompile(`\((\d+) record`).FindStringSubmatch(s); len(m) == 2 {
-			n = m[1]
+			n, _ = strconv.Atoi(m[1])
 		}
 		return l.E("errNameExists", errCertName(s), n)
 	case strings.Contains(s, "missing listen"):
@@ -669,7 +670,7 @@ func localizeKnown(lang string, err error) error {
 
 // errCertName 从错误消息提取证书名("decrypt key admin"/"cert admin not found"/"private key needs password: admin")
 func errCertName(s string) string {
-	for _, pat := range []string{`decrypt key ([^:\s]+)`, `private key needs password: (\S+)`, `cert (\S+) not found`} {
+	for _, pat := range []string{`decrypt key ([^:\s]+)`, `private key needs password: (\S+)`, `cert (\S+) not found`, `certificate name (\S+) already exists`} {
 		if m := regexp.MustCompile(pat).FindStringSubmatch(s); len(m) == 2 {
 			return m[1]
 		}
