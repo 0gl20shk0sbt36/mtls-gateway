@@ -288,6 +288,9 @@ func (r *Relay) Reload(cfg RelayConfig) error {
 			delete(r.tunnels, id)
 		}
 	}
+	if len(reloadErrs) > 0 {
+		return fmt.Errorf("reload: %d tunnel(s) failed, first: %v", len(reloadErrs), reloadErrs[0])
+	}
 	return nil
 }
 

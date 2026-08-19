@@ -478,8 +478,8 @@ func TestReloadBadTunnelDoesNotBlockOthers(t *testing.T) {
 		Tunnel{Service: "bad", Routes: []TunnelRoute{{Channel: ":" + gwPortOf(h.gwAddr), Local: fmt.Sprintf(":%d", port2)}}, CertID: h.clientPairPath, Enabled: true},
 		Tunnel{Service: "good", Routes: []TunnelRoute{{Channel: ":" + gwPortOf(h.gwAddr), Local: fmt.Sprintf(":%d", port1+1)}}, CertID: h.clientPairPath, Enabled: true},
 	)
-	if err := r.Reload(cfg); err != nil {
-		t.Fatalf("reload should not fail despite bad tunnel: %v", err)
+	if err := r.Reload(cfg); err == nil {
+		t.Fatal("reload should report partial failure (bad tunnel)")
 	}
 	// 好隧道应已监听
 	deadline := time.Now().Add(3 * time.Second)
