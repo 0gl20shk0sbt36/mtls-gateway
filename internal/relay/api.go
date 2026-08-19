@@ -149,6 +149,31 @@ func (m *Manager) AdminVerify(certID, password string) error {
 	}
 	return ac.Verify()
 }
+
+// VerifyResult 验证结果: 用所选证书调 /info 拿服务 + 探测是否 admin
+type VerifyResult struct {
+	Services []ServiceInfo `json:"services"`
+	Admin    bool          `json:"admin"`
+}
+
+// Verify 登录/验证: 加载证书 → /info 发现服务(证明证书已登记) + admin 探活(解锁管理)
+func (m *Manager) Verify(certID, password string) (*VerifyResult, error) {
+	cert, err := m.relay.LoadCertWithPassword(certID, password)
+	if err != nil {
+		return nil, err
+	}
+	svcs, err := m.relay.DiscoverWithCert(cert)
+	if err != nil {
+		return nil, fmt.Errorf("info: %w", err)
+	}
+	res := &VerifyResult{Services: svcs}
+	if addr := m.adminAddr(); addr != "" {
+		if err := NewAdminClient(addr, cert, m.relay.rootCAs).Verify(); err == nil {
+			res.Admin = true
+		}
+	}
+	return res, nil
+}
 func (m *Manager) AdminIssue(certID, password string, req IssueRequest) (*IssueResponse, error) {
 	ac, err := m.adminClientFor(certID, password)
 	if err != nil {
@@ -214,6 +239,21 @@ func (m *Manager) Handler() http.Handler {
 			return
 		}
 		writeJSON(w, metas)
+	})
+
+	// POST /api/verify — 登录/验证: /info 服务 + admin 探活 (需先选证书)
+	mux.HandleFunc("POST /api/verify", func(w http.ResponseWriter, r *http.Request) {
+		var b struct {
+			CertID  string `json:"cert_id"`
+			LoadPwd string `json:"load_pwd,omitempty"`
+		}
+		json.NewDecoder(r.Body).Decode(&b)
+		res, err := m.Verify(b.CertID, b.LoadPwd)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, res)
 	})
 
 	// GET /api/services — 从服务端 /info 拉取可用服务(供选择)

@@ -126,20 +126,8 @@
 
 <main>
   <div class="card">
-    <h2>证书</h2>
-    <div class="row">
-      <label for="certSelect">选择证书（系统 / 目录 / 文件）</label>
-      <div class="sel" id="certSel" style="flex:1;min-width:220px">
-        <button type="button" class="sel-btn" id="certBtn"><span class="txt">— 选择证书 —</span><span class="arrow">▾</span></button>
-        <div class="sel-list" id="certList"></div>
-      </div>
-      <button type="button" class="ghost small" id="refreshCerts">刷新</button>
-    </div>
-    <div class="hint" id="certHint" style="margin-top:10px"></div>
-  </div>
-
-  <div class="card">
     <h2>新增隧道</h2>
+    <div class="hint" style="margin:6px 0 10px">先在下方案例"证书管理"卡里<b>选证书并验证</b>，服务列表才会加载（无证书拿不到 /info）。</div>
     <div class="row">
       <div class="sel" id="newServiceSel" style="flex:1;min-width:220px">
         <button type="button" class="sel-btn" id="newServiceBtn"><span class="txt">— 选择服务 —</span><span class="arrow">▾</span></button>
@@ -175,7 +163,7 @@
   <div class="card" style="margin-top:16px">
     <h2 class="card-title">🔒 证书管理</h2>
     <div id="adminLocked">
-      <p class="hint" style="margin:6px 0 10px">管理台需先用<b>管理员证书</b>验证解锁；该入口一直可用，但无 admin 证书无法解锁，且服务端对非 admin 也会 403。</p>
+      <p class="hint" id="adminCertHint" style="margin:6px 0 10px">管理台需先用<b>管理员证书</b>验证解锁（该按钮一直可用，但无 admin 证书无法解锁，服务端也会拒绝非 admin）。</p>
       <div class="row">
         <div class="sel" id="adminCertSel" style="flex:1;min-width:220px">
           <button type="button" class="sel-btn" id="adminCertBtn"><span class="txt">— 选择 admin 证书 —</span><span class="arrow">▾</span></button>

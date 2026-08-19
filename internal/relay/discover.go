@@ -43,9 +43,17 @@ func discoverHTTPClient(addr string, cert *tls.Certificate, rootCAs *x509.CertPo
 	return &http.Client{Transport: tr, Timeout: 8 * time.Second}
 }
 
-// Discover 向服务端 /info 拉取可用服务。
-// 需要 Relay 已配置 ServerAddr(发现端点), 并至少能从来源取到一枚证书(用做 mTLS 客户端证书)。
+// Discover 向服务端 /info 拉取可用服务(默认用来源第一枚证书)。
 func (r *Relay) Discover() ([]ServiceInfo, error) {
+	cert, err := r.loadFirstCert()
+	if err != nil {
+		return nil, fmt.Errorf("relay: no client cert for discovery: %w", err)
+	}
+	return r.DiscoverWithCert(cert)
+}
+
+// DiscoverWithCert 用指定证书做 /info 发现(WebUI 验证时用所选证书)。
+func (r *Relay) DiscoverWithCert(cert tls.Certificate) ([]ServiceInfo, error) {
 	r.mu.Lock()
 	addr := r.serverAddr
 	serverCA := r.serverCA
@@ -53,10 +61,6 @@ func (r *Relay) Discover() ([]ServiceInfo, error) {
 	r.mu.Unlock()
 	if addr == "" {
 		return nil, fmt.Errorf("relay: server address not configured")
-	}
-	cert, err := r.loadFirstCert()
-	if err != nil {
-		return nil, fmt.Errorf("relay: no client cert for discovery: %w", err)
 	}
 	// 未 Start 时 rootCAs 可能未构建; 有 serverCA 则现建根池
 	if rootCAs == nil && serverCA != "" {

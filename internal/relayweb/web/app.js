@@ -81,15 +81,9 @@ function fmtBytes(n) {
 async function loadCerts() {
   try {
     const certs = await api("/api/certs");
-    if (!certs.length) {
-      setSel("certList", []);
-      $("certHint").textContent = "未找到证书。请检查 daemon 的证书来源配置。";
-      return;
-    }
     const items = certs.map((c) => ({ value: c.id, label: `${c.common_name || "(无名)"}  [${c.id}]` }));
-    setSel("certList", items);
     setSel("adminCertList", items);
-    $("certHint").textContent = `共 ${certs.length} 个证书可用。`;
+    $("adminCertHint").textContent = certs.length ? `共 ${certs.length} 个证书可用；选一枚点"验证"。` : "未找到证书。请检查 daemon 证书来源配置。";
   } catch (e) {
     toast(e.message, true);
   }
@@ -170,9 +164,7 @@ async function loadServices() {
 }
 
 async function init() {
-  $("refreshCerts").onclick = loadCerts;
-  $("refreshServices").onclick = loadServices;
-  initSel("certBtn", "certList");
+  $("refreshServices").onclick = verifyAdmin; // 刷新服务 = 重新验证
   initSel("newServiceBtn", "newServiceList", (it) => {
     const l = (it.raw || {}).listen || "";
     const p = l.replace(/^:/, "").split("/")[0];
@@ -188,10 +180,10 @@ async function init() {
   $("addTunnel").onclick = async () => {
     const service = getSel("newServiceList");
     const local = parseInt($("newLocal").value, 10);
-    const cert = getSel("certList");
-    if (!service) { toast("请先选择服务", true); return; }
+    const cert = getSel("adminCertList");
+    if (!service) { toast("请先选择服务（需先选证书并验证）", true); return; }
     if (!local || isNaN(local)) { toast("请填写本地端口(选中服务会自动带出)", true); return; }
-    if (!cert) { toast("请选择证书", true); return; }
+    if (!cert) { toast("请先选择证书", true); return; }
     const body = {
       service,
       local_port: local,
@@ -206,7 +198,7 @@ async function init() {
       loadTunnels();
     } catch (e) { toast(e.message, true); }
   };
-  await Promise.all([loadCerts(), loadTunnels(), loadServices()]);
+  await Promise.all([loadCerts(), loadTunnels()]);
   setInterval(loadTunnels, 2000); // 状态轮询
 }
 
@@ -214,15 +206,32 @@ init();
 
 async function verifyAdmin() {
   const cert = getSel("adminCertList");
-  if (!cert) { toast("请先选择 admin 证书", true); return; }
+  if (!cert) { toast("请先选择证书", true); return; }
   ADMIN_PWD = $("adminPwd").value || "";
   try {
-    await api("/api/admin/verify", jpost({ cert_id: cert, load_pwd: ADMIN_PWD }));
-    $("adminLocked").style.display = "none";
-    $("adminUnlocked").style.display = "";
-    $("adminStatus").textContent = "已解锁：admin 证书已验证，可签发/吊销。";
-    toast("管理台已解锁");
-  } catch (e) { toast("解锁失败: " + e.message, true); }
+    const res = await api("/api/verify", jpost({ cert_id: cert, load_pwd: ADMIN_PWD }));
+    // 服务列表(用该证书的 /info)
+    SERVICES = res.services || [];
+    setSel("newServiceList", SERVICES.map((s) => {
+      const svcTxt = (s.services || []).join(" · ") || "-";
+      return { value: s.listen, label: `${s.listen}  ${svcTxt}`, raw: s };
+    }));
+    $("serviceHint").textContent = SERVICES.length
+      ? `已发现 ${SERVICES.length} 个入口：如 ${SERVICES[0].listen}。选中后本地端口默认填同值(可改)。`
+      : "该证书无可用服务（或非业务证书，仅 admin 用途）。";
+    // admin 解锁
+    if (res.admin) {
+      $("adminLocked").style.display = "none";
+      $("adminUnlocked").style.display = "";
+      $("adminStatus").textContent = "已解锁：admin 证书已验证，可签发/吊销。";
+      toast("验证成功 · 管理台已解锁");
+    } else {
+      $("adminLocked").style.display = "";
+      $("adminUnlocked").style.display = "none";
+      $("adminCertHint").textContent = "证书已生效（可建隧道），但非 admin 用途 —— 管理操作不可用（服务端会拒绝）。";
+      toast("验证成功（非管理员证书）");
+    }
+  } catch (e) { toast("验证失败: " + e.message, true); }
 }
 async function adminIssue() {
   const cert = getSel("adminCertList");
