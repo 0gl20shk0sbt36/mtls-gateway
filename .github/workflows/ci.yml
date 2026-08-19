@@ -32,9 +32,7 @@ jobs:
         run: go vet ./...
 
       - name: Format check
-        run: |
-          gofmt -l cmd internal
-          test -z "$(gofmt -l cmd internal)"
+        run: test -z "$(gofmt -l cmd internal)"
 
       - name: Test
         run: go test -v -race -cover ./...

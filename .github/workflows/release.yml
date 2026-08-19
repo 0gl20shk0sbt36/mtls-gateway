@@ -36,6 +36,9 @@ jobs:
           go-version: '1.26'
           cache: true
 
+      - name: Format check
+        run: test -z "$(gofmt -l cmd internal)"
+
       - name: Build mtls-gw + mtls-relay
         env:
           GOOS: ${{ matrix.os }}

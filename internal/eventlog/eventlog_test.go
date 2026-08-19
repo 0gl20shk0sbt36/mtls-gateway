@@ -1,6 +1,9 @@
 package eventlog
 
 import (
+	"bufio"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -138,5 +141,22 @@ func TestStatusWriterWriteHeaderIdempotent(t *testing.T) {
 	}
 	if rec.Code != 200 {
 		t.Fatalf("recorder code = %d, want 200", rec.Code)
+	}
+}
+
+// 第十七批: Hijack 成功路径记 101(真实 Hijacker)
+type hijackerRecorder struct{ *httptest.ResponseRecorder }
+
+func (h hijackerRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	return nil, nil, nil // 模拟成功 hijack(只验证 status 记录)
+}
+
+func TestStatusWriterHijackRecords101(t *testing.T) {
+	sw := NewStatusWriter(hijackerRecorder{httptest.NewRecorder()})
+	if _, _, err := sw.Hijack(); err != nil {
+		t.Fatalf("hijack: %v", err)
+	}
+	if sw.Status() != http.StatusSwitchingProtocols {
+		t.Fatalf("status = %d, want 101", sw.Status())
 	}
 }

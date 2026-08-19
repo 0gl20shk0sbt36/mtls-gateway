@@ -258,6 +258,9 @@ func (w *statusWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	if !ok {
 		return nil, nil, fmt.Errorf("underlying ResponseWriter does not support hijacking")
 	}
+	if w.status == 0 {
+		w.status = http.StatusSwitchingProtocols // 升级连接: 访问日志记 101(与 eventlog 侧一致)
+	}
 	return hj.Hijack()
 }
 

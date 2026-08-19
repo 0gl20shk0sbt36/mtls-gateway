@@ -27,19 +27,20 @@ type tunnelMetrics struct {
 
 // tunnelRuntime 一条展开路由(服务的一通道)的运行期状态
 type tunnelRuntime struct {
-	r        *Relay
-	key      string // service@channel@local
-	service  string
-	idle     time.Duration // TCP 透传空闲超时
-	route    TunnelRoute
-	certID   string
-	listener net.Listener
-	srv      *http.Server // 本地路径模式时的 HTTP 服务
-	ctx      context.Context
-	cancel   context.CancelFunc
-	metrics  tunnelMetrics
-	mu       sync.Mutex
-	conns    map[net.Conn]struct{}
+	r           *Relay
+	key         string // service@channel@local
+	service     string
+	idle        time.Duration // TCP 透传空闲超时
+	route       TunnelRoute
+	certID      string
+	listener    net.Listener
+	srv         *http.Server    // 本地路径模式时的 HTTP 服务
+	rpTransport *http.Transport // 本地路径模式的反代 Transport(stop 时释放)
+	ctx         context.Context
+	cancel      context.CancelFunc
+	metrics     tunnelMetrics
+	mu          sync.Mutex
+	conns       map[net.Conn]struct{}
 }
 
 // routeSpec 服务级隧道展开出的路由规格(轻量, 无锁)
@@ -321,6 +322,9 @@ func (rt *tunnelRuntime) handleConn(local net.Conn) {
 
 // stop closes the listener and all active connections for this tunnel.
 func (rt *tunnelRuntime) stop() {
+	if rt.rpTransport != nil {
+		rt.rpTransport.CloseIdleConnections() // 反代空闲连接释放
+	}
 	rt.cancel()
 	rt.listener.Close()
 	if rt.srv != nil {
