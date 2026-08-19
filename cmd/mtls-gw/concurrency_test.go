@@ -16,9 +16,9 @@ func TestConfigManagerConcurrent(t *testing.T) {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()
-			id := fmt.Sprintf("m%d", n)
+			id := fmt.Sprintf("cm%d", n) // 避开初始 m1(且不用 listen 9601 段)
 			for j := 0; j < 20; j++ {
-				_ = cm.AddMapping(proxy.Mapping{ID: id, Listen: fmt.Sprintf(":%d", 10000+n*100+j), Target: "http://127.0.0.1:1"})
+				_ = cm.AddMapping(proxy.Mapping{ID: id, Listen: fmt.Sprintf(":%d", 20000+n*100+j), Target: "http://127.0.0.1:1"})
 				_ = cm.DeleteMapping(id)
 			}
 		}(i)
