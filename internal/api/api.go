@@ -278,11 +278,13 @@ func (m *Manager) IssueCert(req IssueRequest) (*IssueResponse, error) {
 		KeyUsage:    x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	}
-	// SAN: 绑定 TS IP (可多 IP 但这里单绑)
+	// SAN: 绑定 TS IP (可多 IP 但这里单绑); 非法 IP 显式报错(避免静默丢 SAN 掩盖事故)
 	if req.TSIP != "" {
-		if ip := net.ParseIP(req.TSIP); ip != nil {
-			tmpl.IPAddresses = []net.IP{ip}
+		ip := net.ParseIP(req.TSIP)
+		if ip == nil {
+			return nil, fmt.Errorf("invalid ts_ip: %s (应为合法 IPv4/IPv6)", req.TSIP)
 		}
+		tmpl.IPAddresses = []net.IP{ip}
 	}
 	// 4. 签发
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, m.caCert, pub, m.caKey)
