@@ -73,9 +73,11 @@
   .sel .sel-list .opt{ padding:8px 10px; font-size:13px; color:var(--text); cursor:pointer; }
   .sel .sel-list .opt:hover{ background:rgba(255,255,255,0.06); }
   .sel .sel-list .opt.sel{ color:var(--accent); }
-  /* 多选(用途): 复选框样式 */
-  .sel .sel-list .opt.chk::before{ content:"☐"; margin-right:6px; color:var(--text4);}
-  .sel .sel-list .opt.chk.on::before{ content:"☑"; color:var(--accent);}
+  /* 多选(用途): 复选框 — 纯 CSS 绘制(不用 ☐/☑ 字形, 避免 Windows 字体回退渲染成 emoji/喇叭) */
+  .sel .sel-list .opt.chk{ position:relative; padding-left:28px; }
+  .sel .sel-list .opt.chk::before{ content:""; position:absolute; left:9px; top:50%; transform:translateY(-50%); width:13px; height:13px; border:1.5px solid var(--text4); border-radius:3px; box-sizing:border-box; }
+  .sel .sel-list .opt.chk.on::before{ border-color:var(--accent); background:var(--accent); }
+  .sel .sel-list .opt.chk.on::after{ content:""; position:absolute; left:12px; top:50%; transform:translateY(-62%) rotate(45deg); width:5px; height:9px; border-right:2px solid #fff; border-bottom:2px solid #fff; }
   /* 角色 chips */
   .chip{ display:inline-flex; align-items:center; gap:4px; background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:2px 8px; margin:2px 4px 2px 0; font-size:12px; }
   .chip-x{ background:none; border:none; color:var(--text4); cursor:pointer; padding:0 2px; font-size:13px; line-height:1; }
