@@ -30,7 +30,7 @@ type IssueResponse struct {
 	Name        string `json:"name"`
 	Serial      string `json:"serial"`
 	CertPEM     string `json:"cert_pem"`
-	KeyPEM      string `json:"key_pem"`
+	KeyPEM      string `json:"key_pem,omitempty"`
 	P12Password string `json:"p12_password,omitempty"`
 }
 

@@ -447,3 +447,51 @@ func TestLoadCertWithPasswordFallback(t *testing.T) {
 		t.Fatal("empty cert")
 	}
 }
+
+// 第十四批: Reload 遇坏隧道(端口被占)不卡死后续隧道
+func TestReloadBadTunnelDoesNotBlockOthers(t *testing.T) {
+	h := newHarness(t)
+	defer h.close()
+	src := h.buildSrc(t)
+	r := New("", src)
+	defer r.Close()
+	port1, port2 := freePort(t), freePort(t)
+	cfg := RelayConfig{
+		ListenHost: "127.0.0.1", ServerAddr: h.gwAddr, ServerCAFile: h.caPath,
+		Tunnels: []Tunnel{{
+			Service: "s1",
+			Routes:  []TunnelRoute{{Channel: ":" + gwPortOf(h.gwAddr), Local: fmt.Sprintf(":%d", port1)}},
+			CertID:  h.clientPairPath, Enabled: true,
+		}},
+	}
+	if err := r.Start(cfg); err != nil {
+		t.Fatal(err)
+	}
+	// 占住 port2, 使第二条隧道启动失败
+	blocker, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer blocker.Close()
+	// Reload: 加一条坏隧道(port2 被占)+ 一条好隧道
+	cfg.Tunnels = append(cfg.Tunnels,
+		Tunnel{Service: "bad", Routes: []TunnelRoute{{Channel: ":" + gwPortOf(h.gwAddr), Local: fmt.Sprintf(":%d", port2)}}, CertID: h.clientPairPath, Enabled: true},
+		Tunnel{Service: "good", Routes: []TunnelRoute{{Channel: ":" + gwPortOf(h.gwAddr), Local: fmt.Sprintf(":%d", port1+1)}}, CertID: h.clientPairPath, Enabled: true},
+	)
+	if err := r.Reload(cfg); err != nil {
+		t.Fatalf("reload should not fail despite bad tunnel: %v", err)
+	}
+	// 好隧道应已监听
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		c, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port1+1))
+		if err == nil {
+			c.Close()
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("good tunnel not listening after reload: %v", err)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}

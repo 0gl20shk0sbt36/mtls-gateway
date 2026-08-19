@@ -123,3 +123,17 @@ type noReaderFromWriter struct{ buf []byte }
 func (w *noReaderFromWriter) Header() http.Header         { return http.Header{} }
 func (w *noReaderFromWriter) WriteHeader(int)             {}
 func (w *noReaderFromWriter) Write(b []byte) (int, error) { w.buf = append(w.buf, b...); return len(b), nil }
+
+// 第十四批: WriteHeader 幂等(双写只记首次)
+func TestStatusWriterWriteHeaderIdempotent(t *testing.T) {
+	rec := httptest.NewRecorder()
+	sw := NewStatusWriter(rec)
+	sw.WriteHeader(200)
+	sw.WriteHeader(500) // 第二次忽略
+	if sw.Status() != 200 {
+		t.Fatalf("status = %d, want 200 (first wins)", sw.Status())
+	}
+	if rec.Code != 200 {
+		t.Fatalf("recorder code = %d, want 200", rec.Code)
+	}
+}

@@ -264,7 +264,8 @@ func (r *Relay) Reload(cfg RelayConfig) error {
 			if _, ok := r.tunnels[key]; !ok {
 				rt := &tunnelRuntime{r: r, key: spec.key, service: spec.service, idle: r.idleTimeout, route: spec.route, certID: spec.certID, conns: map[net.Conn]struct{}{}}
 				if err := r.startTunnel(rt); err != nil {
-					return err
+					log.Printf("reload: tunnel %s failed: %v (继续处理其余隧道)", key, err)
+					continue // 坏隧道不卡死后续启动; 也保证下方清理循环执行
 				}
 				r.tunnels[key] = rt
 			}

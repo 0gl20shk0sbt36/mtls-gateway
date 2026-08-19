@@ -351,6 +351,7 @@ func (r *Router) Close() {
 func (r *Router) Serve(rt *route, w http.ResponseWriter, req *http.Request) {
 	rc := req.Clone(req.Context())
 	rc.URL.Path = substitute(rc.URL.Path, rt.path, rt.target.Path)
+	rc.URL.RawPath = "" // 强制按新 Path 重编码(与 relay 侧对齐)
 	rt.rp.ServeHTTP(w, rc)
 }
 

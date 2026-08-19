@@ -164,6 +164,12 @@ func TestTunnelHTTPPathProxy(t *testing.T) {
 	if resp2.StatusCode != 404 {
 		t.Fatalf("prefix mismatch should be 404, got %d", resp2.StatusCode)
 	}
+	// 前缀碰撞: /adminfoo 不匹配 /admin(边界修复回归)
+	resp4, _ := http.Get(fmt.Sprintf("http://127.0.0.1:%d/adminfoo", localPort))
+	resp4.Body.Close()
+	if resp4.StatusCode != 404 {
+		t.Fatalf("/adminfoo should not match /admin (boundary), got %d", resp4.StatusCode)
+	}
 	// 根路径(边界: /admin 本身 → rest=/)
 	resp3, _ := http.Get(fmt.Sprintf("http://127.0.0.1:%d/admin", localPort))
 	b3, _ := io.ReadAll(resp3.Body)

@@ -235,6 +235,9 @@ type statusWriter struct {
 }
 
 func (w *statusWriter) WriteHeader(c int) {
+	if w.status != 0 {
+		return // 幂等: 只记首次(与 eventlog.StatusWriter 一致)
+	}
 	w.status = c
 	w.ResponseWriter.WriteHeader(c)
 }
@@ -332,7 +335,11 @@ func gatewayHandler(gw *auth.Gateway, cm *ConfigManager, port string, acc *event
 		proxy.SanitizeHeader(r)
 		router.Serve(rt, sw, r)
 		if acc != nil {
-			acc.Write(accessEvent(rec, rt.Listen(), r.Method, r.URL.Path, sw.status, r.ContentLength, sw.bytes))
+			code := sw.status
+		if code == 0 {
+			code = http.StatusOK // Hijack/未写头时记 200
+		}
+		acc.Write(accessEvent(rec, rt.Listen(), r.Method, r.URL.Path, code, r.ContentLength, sw.bytes))
 		}
 	})
 }
