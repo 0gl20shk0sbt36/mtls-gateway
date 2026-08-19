@@ -65,6 +65,8 @@ func localizeLoadErr(l *i18n.L, certID string, err error) error {
 	switch {
 	case strings.Contains(s, "private key needs password"), strings.Contains(s, "failed to parse private key"):
 		return l.E("errPwdNeeded", certID)
+	case strings.Contains(s, "decryption password incorrect"), strings.Contains(s, "password incorrect"):
+		return l.E("errBadPwd", certID)
 	case strings.Contains(s, "not found"):
 		return l.E("errCertNotFound", certID)
 	case strings.Contains(s, "expired"):

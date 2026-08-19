@@ -56,6 +56,7 @@ var messages = map[string][2]string{
 
 	// ---- 服务端/客户端错误消息 (relay/gw 按配置 lang 返回) ----
 	"errPwdNeeded":      {"私钥需要密码：%s，请在\"证书密码\"框输入密码后重试", "Private key needs password: %s — enter the cert password and retry"},
+	"errBadPwd":         {"证书密码错误：%s，请重新输入正确的密码", "Wrong certificate password: %s — please retry with the correct password"},
 	"errNoCert":         {"没有可用客户端证书：证书源为空或证书加载失败", "No usable client certificate: cert source empty or load failed"},
 	"errSvcNotFound":    {"服务端不存在该服务：%s", "Service not found on server: %s"},
 	"errNoChannels":     {"服务 %s 没有可用通道", "Service %s has no channels"},
