@@ -22,6 +22,7 @@ import (
 	"mtls-gateway/internal/db"
 	"mtls-gateway/internal/eventlog"
 	"mtls-gateway/internal/proxy"
+	"golang.org/x/net/websocket"
 )
 
 // gwTestEnv 完整测试环境: CA/服务器证书/客户端证书/网关/日志
@@ -431,4 +432,47 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// 🔴 WebSocket 经 gatewayHandler 真路径(101 升级, statusWriter Hijack 透传)
+func TestGatewayHandler_WebSocket(t *testing.T) {
+	// ws 后端 echo
+	wsBack := httptest.NewServer(websocket.Handler(func(ws *websocket.Conn) {
+		var msg string
+		websocket.Message.Receive(ws, &msg)
+		websocket.Message.Send(ws, "ws:"+msg)
+	}))
+	defer wsBack.Close()
+
+	env, srv, cl := newGWTestEnv(t, map[string]*httptest.Server{"ok": wsBack})
+	cert := genClientCert(t, t.TempDir(), "dev-a", env.caCert, env.caKey)
+	env.registerCert("dev-a", []string{"svc-a"}, cert)
+	cl2 := clientWith(cl, cert)
+
+	// 网关入口 ws://host:port/ws → 后端 ws echo(自定义 TLS: 信任 CA + mTLS 客户端证书)
+	wsURL := "wss" + strings.TrimPrefix(srv.URL, "https") + "/ws"
+	pool := x509.NewCertPool()
+	pool.AddCert(env.caCert)
+	wscfg, err := websocket.NewConfig(wsURL, "http://localhost/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wscfg.TlsConfig = &tls.Config{RootCAs: pool, Certificates: []tls.Certificate{cert}}
+	ws, err := websocket.DialConfig(wscfg)
+	if err != nil {
+		t.Fatalf("ws dial via gateway: %v", err)
+	}
+	defer ws.Close()
+	ws.SetDeadline(time.Now().Add(3 * time.Second))
+	if err := websocket.Message.Send(ws, "ping"); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	var reply string
+	if err := websocket.Message.Receive(ws, &reply); err != nil {
+		t.Fatalf("recv: %v", err)
+	}
+	if reply != "ws:ping" {
+		t.Fatalf("ws echo mismatch: %q", reply)
+	}
+	_ = cl2
 }

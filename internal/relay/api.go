@@ -348,7 +348,9 @@ func (m *Manager) Handler() http.Handler {
 			CertID  string `json:"cert_id"`
 			LoadPwd string `json:"load_pwd,omitempty"`
 		}
-		json.NewDecoder(r.Body).Decode(&b)
+		if !decodeJSON(w, r, &b) {
+			return
+		}
 		res, err := m.Verify(b.CertID, b.LoadPwd)
 		if err != nil {
 			writeErr(w, r, err)
@@ -384,7 +386,9 @@ func (m *Manager) Handler() http.Handler {
 	}
 	mux.HandleFunc("POST /api/admin/verify", func(w http.ResponseWriter, r *http.Request) {
 		var b adminVerifyReq
-		json.NewDecoder(r.Body).Decode(&b)
+		if !decodeJSON(w, r, &b) {
+			return
+		}
 		if err := m.AdminVerify(b.CertID, b.LoadPwd); err != nil {
 			writeErr(w, r, err)
 			return
@@ -393,7 +397,9 @@ func (m *Manager) Handler() http.Handler {
 	})
 	mux.HandleFunc("POST /api/admin/issue", func(w http.ResponseWriter, r *http.Request) {
 		var b adminIssueReq
-		json.NewDecoder(r.Body).Decode(&b)
+		if !decodeJSON(w, r, &b) {
+			return
+		}
 		resp, err := m.AdminIssue(b.CertID, b.LoadPwd, b.IssueRequest)
 		if err != nil {
 			writeErr(w, r, err)
@@ -404,7 +410,9 @@ func (m *Manager) Handler() http.Handler {
 	// POST /api/admin/certs — 服务端证书列表(吊销下拉)
 	mux.HandleFunc("POST /api/admin/certs", func(w http.ResponseWriter, r *http.Request) {
 		var b adminVerifyReq
-		json.NewDecoder(r.Body).Decode(&b)
+		if !decodeJSON(w, r, &b) {
+			return
+		}
 		raw, err := m.AdminListCerts(b.CertID, b.LoadPwd)
 		if err != nil {
 			writeErr(w, r, err)
@@ -416,7 +424,9 @@ func (m *Manager) Handler() http.Handler {
 	// POST /api/admin/mappings — 全部映射(签发选用途)
 	mux.HandleFunc("POST /api/admin/mappings", func(w http.ResponseWriter, r *http.Request) {
 		var b adminVerifyReq
-		json.NewDecoder(r.Body).Decode(&b)
+		if !decodeJSON(w, r, &b) {
+			return
+		}
 		ms, err := m.AdminMappings(b.CertID, b.LoadPwd)
 		if err != nil {
 			writeErr(w, r, err)
@@ -426,7 +436,9 @@ func (m *Manager) Handler() http.Handler {
 	})
 	mux.HandleFunc("POST /api/admin/revoke", func(w http.ResponseWriter, r *http.Request) {
 		var b adminRevokeReq
-		json.NewDecoder(r.Body).Decode(&b)
+		if !decodeJSON(w, r, &b) {
+			return
+		}
 		if err := m.AdminRevoke(b.CertID, b.LoadPwd, b.Serial); err != nil {
 			writeErr(w, r, err)
 			return
@@ -437,7 +449,9 @@ func (m *Manager) Handler() http.Handler {
 	// POST /api/admin/config — 服务端配置总览(mode+mappings+services)
 	mux.HandleFunc("POST /api/admin/config", func(w http.ResponseWriter, r *http.Request) {
 		var b adminVerifyReq
-		json.NewDecoder(r.Body).Decode(&b)
+		if !decodeJSON(w, r, &b) {
+			return
+		}
 		raw, err := m.AdminConfig(b.CertID, b.LoadPwd)
 		if err != nil {
 			writeErr(w, r, err)
@@ -453,7 +467,9 @@ func (m *Manager) Handler() http.Handler {
 			LoadPwd string          `json:"load_pwd"`
 			Body    json.RawMessage `json:"body"`
 		}
-		json.NewDecoder(r.Body).Decode(&b)
+		if !decodeJSON(w, r, &b) {
+			return
+		}
 		raw, err := m.AdminSetConfig(b.CertID, b.LoadPwd, b.Body)
 		if err != nil {
 			writeErr(w, r, err)
@@ -471,7 +487,9 @@ func (m *Manager) Handler() http.Handler {
 			ID      string          `json:"id"`
 			Mapping json.RawMessage `json:"mapping"`
 		}
-		json.NewDecoder(r.Body).Decode(&b)
+		if !decodeJSON(w, r, &b) {
+			return
+		}
 		raw, err := m.AdminMapping(b.CertID, b.LoadPwd, b.Method, b.ID, b.Mapping)
 		if err != nil {
 			writeErr(w, r, err)
@@ -489,7 +507,9 @@ func (m *Manager) Handler() http.Handler {
 			Name    string          `json:"name"`
 			Service json.RawMessage `json:"service"`
 		}
-		json.NewDecoder(r.Body).Decode(&b)
+		if !decodeJSON(w, r, &b) {
+			return
+		}
 		raw, err := m.AdminService(b.CertID, b.LoadPwd, b.Method, b.Name, b.Service)
 		if err != nil {
 			writeErr(w, r, err)
@@ -608,7 +628,8 @@ func writeJSON(w http.ResponseWriter, v any) {
 	json.NewEncoder(w).Encode(v)
 }
 
-// writeErr 输出错误响应; 已知错误按请求语言(X-Lang)翻译, 其余原样
+// writeErr 输出错误响应; 已知错误按请求语言(X-Lang)翻译, 其余原样;
+// 按错误语义映射状态码(4xx 客户端错误, 5xx 服务端错误)
 func writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	msg := err.Error()
 	if r != nil {
@@ -616,8 +637,31 @@ func writeErr(w http.ResponseWriter, r *http.Request, err error) {
 			msg = localizeKnown(lang, err).Error()
 		}
 	}
-	w.WriteHeader(http.StatusInternalServerError) // 失败必须非 2xx, 否则前端无法区分
+	code := http.StatusInternalServerError
+	switch {
+	case strings.Contains(msg, "bad request"):
+		code = http.StatusBadRequest
+	case strings.Contains(msg, "required"), strings.Contains(msg, "必填"), strings.Contains(msg, "不能为空"),
+		strings.Contains(msg, "格式"), strings.Contains(msg, "invalid"), strings.Contains(msg, "非法"),
+		strings.Contains(msg, "已存在"), strings.Contains(msg, "禁止同名"):
+		code = http.StatusBadRequest
+	case strings.Contains(msg, "not found"), strings.Contains(msg, "未找到"), strings.Contains(msg, "不存在"):
+		code = http.StatusNotFound
+	case strings.Contains(msg, "forbidden"), strings.Contains(msg, "无权"), strings.Contains(msg, "拒绝"),
+		strings.Contains(msg, "未声明"), strings.Contains(msg, "保留字"), strings.Contains(msg, "禁"):
+		code = http.StatusForbidden
+	}
+	w.WriteHeader(code) // 保持 JSON 响应体(前端 api() 依赖)
 	writeJSON(w, map[string]string{"error": msg})
+}
+
+// decodeJSON 解码请求体; 失败写 400 并返回 false
+func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
+	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
+		writeErr(w, r, fmt.Errorf("bad request: %v", err))
+		return false
+	}
+	return true
 }
 
 // localizeKnown 已知错误按语言兜底翻译(所有 API 错误出口)

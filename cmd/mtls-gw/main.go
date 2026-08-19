@@ -5,6 +5,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/tls"
 	"encoding/json"
@@ -180,6 +181,7 @@ func main() {
 }
 
 // statusWriter 包装 ResponseWriter: 记录状态码与响应字节数(访问日志用)
+// 实现 Hijacker/Flusher/ReaderFrom: 透传底层能力, 否则 WebSocket 升级(101)与流式响应被破坏
 type statusWriter struct {
 	http.ResponseWriter
 	status int
@@ -197,6 +199,36 @@ func (w *statusWriter) Write(b []byte) (int, error) {
 	if w.status == 0 {
 		w.status = http.StatusOK
 	}
+	return n, err
+}
+
+// Hijack 透传(WebSocket/升级必需)
+func (w *statusWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hj, ok := w.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, fmt.Errorf("underlying ResponseWriter does not support hijacking")
+	}
+	return hj.Hijack()
+}
+
+// Flush 透传(流式响应)
+func (w *statusWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// ReadFrom 透传(io.Copy 优化)
+func (w *statusWriter) ReadFrom(r io.Reader) (int64, error) {
+	if rf, ok := w.ResponseWriter.(io.ReaderFrom); ok {
+		n, err := rf.ReadFrom(r)
+		w.bytes += n
+		if w.status == 0 {
+			w.status = http.StatusOK
+		}
+		return n, err
+	}
+	n, err := io.Copy(struct{ io.Writer }{w}, r)
 	return n, err
 }
 
@@ -593,7 +625,12 @@ func DefaultConfig() Config {
 func loadConfig(path string) Config {
 	cfg := DefaultConfig()
 	if _, err := toml.DecodeFile(path, &cfg); err != nil {
-		log.Printf("config %s: %v (使用默认值)", path, err)
+		if os.IsNotExist(err) {
+			log.Printf("config %s 不存在 (使用默认值)", path)
+		} else {
+			// 解析/语义错误: 静默用默认值可能带错 CA/证书/权限配置启动, 属安全风险
+			log.Fatalf("config %s: %v (配置文件错误, 拒绝启动)", path, err)
+		}
 	}
 	if cfg.AdminRole == "" {
 		cfg.AdminRole = auth.DefaultAdminRole
