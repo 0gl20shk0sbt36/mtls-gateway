@@ -45,6 +45,8 @@
       needCert: "请先选择证书",
       // 新增隧道
       addTunnel: "新增隧道",
+      svcSelect: "服务选择",
+      tunnelMapping: "隧道映射",
       chooseService: "— 选择服务 —",
       refresh: "刷新",
       add: "添加",
@@ -140,6 +142,8 @@
       verifyFail: "Verify failed: {m}",
       needCert: "Select a certificate first",
       addTunnel: "Add Tunnel",
+      svcSelect: "Service",
+      tunnelMapping: "Tunnel Mapping",
       chooseService: "— Select service —",
       refresh: "Refresh",
       add: "Add",

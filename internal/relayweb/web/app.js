@@ -247,7 +247,8 @@ function esc(s) {
 function renderSvcChannels(svc) {
   const box = $("svcChannelRows");
   if (!svc || !svc.channels || !svc.channels.length) { box.innerHTML = ""; return; }
-  let h = `<div class="hint">${t("routeHint")}</div>`;
+  let h = `<div class="hint" style="margin-top:10px">${t("tunnelMapping")}</div>`;
+  h += `<div class="row" style="margin-top:4px;color:var(--text4);font-size:12px"><span style="width:160px">${t("thChannel")}</span><span style="flex:1">${t("thLocal")}</span></div>`;
   svc.channels.forEach((ch) => {
     h += `<div class="row" style="margin-top:6px">
       <span class="mono" style="width:160px;align-self:center">${esc(ch.listen)}</span>
