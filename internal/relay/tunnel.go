@@ -155,7 +155,8 @@ func (rt *tunnelRuntime) localHTTPHandler(localPath string) http.Handler {
 		builtAt = time.Now()
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		// 前缀边界: /foo 不匹配 /foobar(与服务端 matchPath 一致)
+		// 匹配前规范化(dot-segment): 防 /admin/../x 逃逸; 前缀边界: /foo 不匹配 /foobar
+		req.URL.Path = pathutil.CleanDotSegments(req.URL.Path)
 		p := req.URL.Path
 		if !(p == localPath || strings.HasPrefix(p, localPath+"/")) {
 			http.Error(w, "local path prefix mismatch: "+p, http.StatusNotFound)

@@ -481,3 +481,27 @@ func TestGatewayHandler_WebSocket(t *testing.T) {
 	}
 	_ = cl2
 }
+
+// 第十六批: 匹配前规范化 — /a/../secret 不逃逸 /a 前缀映射
+func TestGatewayHandlerDotSegmentNormalized(t *testing.T) {
+	be := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, r.URL.Path) // 回显路径
+	}))
+	defer be.Close()
+	env, srv, cl := newGWTestEnv(t, map[string]*httptest.Server{"ok": be})
+	cert := genClientCert(t, t.TempDir(), "dev-a", env.caCert, env.caKey)
+	env.registerCert("dev-a", []string{"svc-a"}, cert)
+	// /admin/../secret → 匹配前规范化 → /secret(.. 不逃逸, 无残留 dot-segment)
+	resp, err := clientWith(cl, cert).Get(srv.URL + "/admin/../secret")
+	if err != nil {
+		t.Fatalf("req: %v", err)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("status = %d: %s", resp.StatusCode, b)
+	}
+	if !strings.Contains(string(b), "/secret") {
+		t.Fatalf("backend should receive normalized path, got: %q", b)
+	}
+}

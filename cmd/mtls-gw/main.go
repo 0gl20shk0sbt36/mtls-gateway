@@ -31,6 +31,7 @@ import (
 	"mtls-gateway/internal/db"
 	"mtls-gateway/internal/eventlog"
 	"mtls-gateway/internal/i18n"
+	"mtls-gateway/internal/pathutil"
 	"mtls-gateway/internal/proxy"
 )
 
@@ -314,6 +315,9 @@ func gatewayHandler(gw *auth.Gateway, cm *ConfigManager, port string, acc *event
 		}
 		remote := auth.RemoteIP(r)
 
+		// 匹配前规范化请求路径: 防 /admin/../secret 命中 /admin 映射后逃逸 target 前缀
+		// (dot-segment 只清替换结果不够 — 匹配用的是原始路径)
+		r.URL.Path = pathutil.CleanDotSegments(r.URL.Path)
 		router := cm.Router()
 		rt := router.Match(port, r.URL.Path)
 		if rt == nil {

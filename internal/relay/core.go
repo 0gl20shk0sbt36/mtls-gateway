@@ -8,7 +8,6 @@ import (
 	"log"
 	"net"
 	"os"
-	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -269,11 +268,18 @@ func (r *Relay) Reload(cfg RelayConfig) error {
 					continue // 坏隧道不卡死后续启动; 也保证下方清理循环执行
 				}
 				r.tunnels[key] = rt
-			} else if old.certID != spec.certID || !reflect.DeepEqual(old.route, spec.route) {
-				// 证书/路由变更: 停旧起新(热切换), 否则配置变更静默失效
+			} else if old.certID != spec.certID || old.route != spec.route {
+				// 证书/路由变更: 热切换。同端口无法共存, 先停旧释放端口, 起新失败则恢复旧隧道
 				old.stop()
 				rt := &tunnelRuntime{r: r, key: spec.key, service: spec.service, idle: r.idleTimeout, route: spec.route, certID: spec.certID, conns: map[net.Conn]struct{}{}}
 				if err := r.startTunnel(rt); err != nil {
+					// 回滚: 恢复旧隧道(避免服务中断 + 状态虚报)
+					oldRT := &tunnelRuntime{r: r, key: spec.key, service: spec.service, idle: r.idleTimeout, route: old.route, certID: old.certID, conns: map[net.Conn]struct{}{}}
+					if rerr := r.startTunnel(oldRT); rerr != nil {
+						delete(r.tunnels, key) // 恢复也失败: 删除条目, 不虚报 Running
+					} else {
+						r.tunnels[key] = oldRT
+					}
 					reloadErrs = append(reloadErrs, fmt.Errorf("tunnel %s (update): %w", key, err))
 					continue
 				}
@@ -289,7 +295,7 @@ func (r *Relay) Reload(cfg RelayConfig) error {
 		}
 	}
 	if len(reloadErrs) > 0 {
-		return fmt.Errorf("reload: %d tunnel(s) failed, first: %v", len(reloadErrs), reloadErrs[0])
+		return fmt.Errorf("reload: %d tunnel(s) failed, first: %w", len(reloadErrs), reloadErrs[0])
 	}
 	return nil
 }

@@ -534,3 +534,52 @@ func TestReloadCertSwitch(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 }
+
+// 第十六批: certID 热切换真触发(换不同 CertID → 走 else if 分支)
+func TestReloadCertIDSwitch(t *testing.T) {
+	h := newHarness(t)
+	defer h.close()
+	// 同一证书内容拷两份不同文件名 → 不同 certID(fileSource 按路径为 ID)
+	dir2 := t.TempDir()
+	cp1 := filepath.Join(dir2, "dev-a.pem")
+	cp2 := filepath.Join(dir2, "dev-b.pem")
+	data, _ := os.ReadFile(h.clientPairPath)
+	os.WriteFile(cp1, data, 0o600)
+	os.WriteFile(cp2, data, 0o600)
+	src2, err := certsource.OpenFile(cp1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := New("", src2)
+	defer r.Close()
+	localPort := freePort(t)
+	cfg := RelayConfig{
+		ListenHost: "127.0.0.1", ServerAddr: h.gwAddr, ServerCAFile: h.caPath,
+		Tunnels: []Tunnel{{
+			Service: "s1",
+			Routes:  []TunnelRoute{{Channel: ":" + gwPortOf(h.gwAddr), Local: fmt.Sprintf(":%d", localPort)}},
+			CertID:  cp1, Enabled: true,
+		}},
+	}
+	if err := r.Start(cfg); err != nil {
+		t.Fatal(err)
+	}
+	// 切换 CertID 为 cp2(不同值)→ 热切换分支
+	cfg.Tunnels[0].CertID = cp2
+	if err := r.Reload(cfg); err != nil {
+		t.Fatalf("reload cert switch: %v", err)
+	}
+	// 隧道仍在监听
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		c, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", localPort))
+		if err == nil {
+			c.Close()
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("tunnel not listening after cert switch: %v", err)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
