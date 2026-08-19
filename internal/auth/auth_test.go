@@ -351,3 +351,45 @@ func TestIsAdminPurpose(t *testing.T) {
 		t.Fatal("admin purpose record should be admin")
 	}
 }
+
+// P1-1: 证书过期边界 — 当天到期仍有效/昨天过期被拒/空 ExpiresAt 不判(注入 timeNow)
+func TestCertExpiryBoundary(t *testing.T) {
+	store := testStore(t)
+	gw, ca, caKey := testGateway(t, store)
+	oldNow := timeNow
+	defer func() { timeNow = oldNow }()
+	timeNow = func() string { return "2026-08-19" }
+
+	issue := func(exp string) {
+		t.Helper()
+		cert := issueTestCert(t, ca, caKey, "edge-"+exp, "100.64.0.10")
+		store.Upsert(db.CertRecord{
+			Serial: cert.SerialNumber.String(), Name: "edge-" + exp, Purposes: []string{"dsh"},
+			TSIP: "100.64.0.10", Status: "enabled", ExpiresAt: exp,
+		})
+		req := authRequest(cert, "100.64.0.10:12345")
+		if _, err := gw.Authorize(req); err != nil {
+			t.Fatalf("expires=%q should pass: %v", exp, err)
+		}
+	}
+	expire := func(exp string) {
+		t.Helper()
+		cert := issueTestCert(t, ca, caKey, "edgex-"+exp, "100.64.0.10")
+		store.Upsert(db.CertRecord{
+			Serial: cert.SerialNumber.String(), Name: "edgex-" + exp, Purposes: []string{"dsh"},
+			TSIP: "100.64.0.10", Status: "enabled", ExpiresAt: exp,
+		})
+		req := authRequest(cert, "100.64.0.10:12345")
+		if _, err := gw.Authorize(req); err == nil {
+			t.Fatalf("expires=%q should be rejected", exp)
+		}
+	}
+	// 当天到期 → 有效(字符串 < 语义, 当天 23:59 仍有效)
+	issue("2026-08-19")
+	// 明天到期 → 有效
+	issue("2026-08-20")
+	// 空 ExpiresAt → 不判过期(DB 侧无约束)
+	issue("")
+	// 昨天到期 → 过期
+	expire("2026-08-18")
+}
