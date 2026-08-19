@@ -295,17 +295,6 @@ func (m *Manager) reqL(r *http.Request) *i18n.L {
 	return m.relay.L
 }
 
-// localizeErr 通用错误本地化: 证书加载类错误(私钥密码/不存在/过期)按语言翻译, 其余原样
-func (m *Manager) localizeErr(lang string, certID string, err error) error {
-	if err == nil {
-		return nil
-	}
-	if lang == "en" || lang == "zh" {
-		return localizeLoadErr(i18n.New(lang), certID, err)
-	}
-	return localizeLoadErr(m.relay.L, certID, err)
-}
-
 // webUILogger 懒创建 WebUI 事件日志(从配置 webui_log_file; 空=禁用)
 func (m *Manager) webUILogger() *eventlog.Logger {
 	cfg := m.Config()
@@ -342,7 +331,7 @@ func (m *Manager) Handler() http.Handler {
 	mux.HandleFunc("GET /api/certs", func(w http.ResponseWriter, r *http.Request) {
 		metas, err := m.ListCerts()
 		if err != nil {
-			writeErr(w, err)
+			writeErr(w, r, err)
 			return
 		}
 		writeJSON(w, metas)
@@ -357,7 +346,7 @@ func (m *Manager) Handler() http.Handler {
 		json.NewDecoder(r.Body).Decode(&b)
 		res, err := m.Verify(b.CertID, b.LoadPwd)
 		if err != nil {
-			writeErr(w, m.localizeErr(r.Header.Get("X-Lang"), b.CertID, err))
+			writeErr(w, r, err)
 			return
 		}
 		writeJSON(w, res)
@@ -367,7 +356,7 @@ func (m *Manager) Handler() http.Handler {
 	mux.HandleFunc("GET /api/services", func(w http.ResponseWriter, r *http.Request) {
 		svcs, err := m.Services()
 		if err != nil {
-			writeErr(w, err)
+			writeErr(w, r, err)
 			return
 		}
 		writeJSON(w, svcs)
@@ -392,7 +381,7 @@ func (m *Manager) Handler() http.Handler {
 		var b adminVerifyReq
 		json.NewDecoder(r.Body).Decode(&b)
 		if err := m.AdminVerify(b.CertID, b.LoadPwd); err != nil {
-			writeErr(w, err)
+			writeErr(w, r, err)
 			return
 		}
 		writeJSON(w, map[string]any{"ok": true})
@@ -402,7 +391,7 @@ func (m *Manager) Handler() http.Handler {
 		json.NewDecoder(r.Body).Decode(&b)
 		resp, err := m.AdminIssue(b.CertID, b.LoadPwd, b.IssueRequest)
 		if err != nil {
-			writeErr(w, err)
+			writeErr(w, r, err)
 			return
 		}
 		writeJSON(w, resp)
@@ -413,7 +402,7 @@ func (m *Manager) Handler() http.Handler {
 		json.NewDecoder(r.Body).Decode(&b)
 		raw, err := m.AdminListCerts(b.CertID, b.LoadPwd)
 		if err != nil {
-			writeErr(w, err)
+			writeErr(w, r, err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -425,7 +414,7 @@ func (m *Manager) Handler() http.Handler {
 		json.NewDecoder(r.Body).Decode(&b)
 		ms, err := m.AdminMappings(b.CertID, b.LoadPwd)
 		if err != nil {
-			writeErr(w, err)
+			writeErr(w, r, err)
 			return
 		}
 		writeJSON(w, map[string]any{"mappings": ms})
@@ -434,7 +423,7 @@ func (m *Manager) Handler() http.Handler {
 		var b adminRevokeReq
 		json.NewDecoder(r.Body).Decode(&b)
 		if err := m.AdminRevoke(b.CertID, b.LoadPwd, b.Serial); err != nil {
-			writeErr(w, err)
+			writeErr(w, r, err)
 			return
 		}
 		writeJSON(w, map[string]any{"ok": true})
@@ -446,7 +435,7 @@ func (m *Manager) Handler() http.Handler {
 		json.NewDecoder(r.Body).Decode(&b)
 		raw, err := m.AdminConfig(b.CertID, b.LoadPwd)
 		if err != nil {
-			writeErr(w, err)
+			writeErr(w, r, err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -462,7 +451,7 @@ func (m *Manager) Handler() http.Handler {
 		json.NewDecoder(r.Body).Decode(&b)
 		raw, err := m.AdminSetConfig(b.CertID, b.LoadPwd, b.Body)
 		if err != nil {
-			writeErr(w, err)
+			writeErr(w, r, err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -480,7 +469,7 @@ func (m *Manager) Handler() http.Handler {
 		json.NewDecoder(r.Body).Decode(&b)
 		raw, err := m.AdminMapping(b.CertID, b.LoadPwd, b.Method, b.ID, b.Mapping)
 		if err != nil {
-			writeErr(w, err)
+			writeErr(w, r, err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -498,7 +487,7 @@ func (m *Manager) Handler() http.Handler {
 		json.NewDecoder(r.Body).Decode(&b)
 		raw, err := m.AdminService(b.CertID, b.LoadPwd, b.Method, b.Name, b.Service)
 		if err != nil {
-			writeErr(w, err)
+			writeErr(w, r, err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -517,16 +506,16 @@ func (m *Manager) Handler() http.Handler {
 			CertID  string            `json:"cert_id"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
-			writeErr(w, err)
+			writeErr(w, r, err)
 			return
 		}
 		if b.Service == "" || b.CertID == "" {
-			writeErr(w, m.reqL(r).E("errNeedSvcCert"))
+			writeErr(w, r, m.reqL(r).E("errNeedSvcCert"))
 			return
 		}
 		svcs, err := m.ServicesForCert(b.CertID, r.Header.Get("X-Lang"))
 		if err != nil {
-			writeErr(w, err)
+			writeErr(w, r, err)
 			return
 		}
 		var svc *ServiceInfo
@@ -537,16 +526,16 @@ func (m *Manager) Handler() http.Handler {
 			}
 		}
 		if svc == nil {
-			writeErr(w, m.reqL(r).E("errSvcNotFound", b.Service))
+			writeErr(w, r, m.reqL(r).E("errSvcNotFound", b.Service))
 			return
 		}
 		t, err := m.BuildServiceTunnels(*svc, b.Locals, b.CertID, r.Header.Get("X-Lang"))
 		if err != nil {
-			writeErr(w, err)
+			writeErr(w, r, err)
 			return
 		}
 		if err := m.AddTunnel(t); err != nil {
-			writeErr(w, err)
+			writeErr(w, r, err)
 			return
 		}
 		writeJSON(w, map[string]any{"ok": true, "service": t.Service, "count": len(t.Routes)})
@@ -556,12 +545,12 @@ func (m *Manager) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/tunnels/", func(w http.ResponseWriter, r *http.Request) {
 		id := strings.TrimPrefix(r.URL.Path, "/api/tunnels/")
 		if id == "" {
-			writeErr(w, m.reqL(r).E("errNeedTunnelID"))
+			writeErr(w, r, m.reqL(r).E("errNeedTunnelID"))
 			return
 		}
 		ok, err := m.DelTunnel(id)
 		if err != nil {
-			writeErr(w, err)
+			writeErr(w, r, err)
 			return
 		}
 		writeJSON(w, map[string]bool{"ok": ok})
@@ -570,7 +559,7 @@ func (m *Manager) Handler() http.Handler {
 	// POST /api/start | /api/stop | /api/reload
 	mux.HandleFunc("POST /api/start", func(w http.ResponseWriter, r *http.Request) {
 		if err := m.Start(); err != nil {
-			writeErr(w, err)
+			writeErr(w, r, err)
 			return
 		}
 		writeJSON(w, map[string]bool{"ok": true})
@@ -581,7 +570,7 @@ func (m *Manager) Handler() http.Handler {
 	})
 	mux.HandleFunc("POST /api/reload", func(w http.ResponseWriter, r *http.Request) {
 		if err := m.Reload(); err != nil {
-			writeErr(w, err)
+			writeErr(w, r, err)
 			return
 		}
 		writeJSON(w, map[string]bool{"ok": true})
@@ -614,7 +603,67 @@ func writeJSON(w http.ResponseWriter, v any) {
 	json.NewEncoder(w).Encode(v)
 }
 
-func writeErr(w http.ResponseWriter, err error) {
+// writeErr 输出错误响应; 已知错误按请求语言(X-Lang)翻译, 其余原样
+func writeErr(w http.ResponseWriter, r *http.Request, err error) {
+	msg := err.Error()
+	if r != nil {
+		if lang := r.Header.Get("X-Lang"); lang == "en" || lang == "zh" {
+			msg = localizeKnown(lang, err).Error()
+		}
+	}
 	w.WriteHeader(http.StatusInternalServerError) // 失败必须非 2xx, 否则前端无法区分
-	writeJSON(w, map[string]string{"error": err.Error()})
+	writeJSON(w, map[string]string{"error": msg})
+}
+
+// localizeKnown 已知错误按语言兜底翻译(所有 API 错误出口)
+func localizeKnown(lang string, err error) error {
+	if err == nil {
+		return nil
+	}
+	l := i18n.New("zh")
+	if lang == "en" {
+		l = i18n.New("en")
+	}
+	s := err.Error()
+	switch {
+	case strings.Contains(s, "private key needs password"), strings.Contains(s, "failed to parse private key"):
+		return l.E("errPwdNeeded", tailName(s))
+	case strings.Contains(s, "decryption password incorrect"), strings.Contains(s, "password incorrect"):
+		return l.E("errBadPwd", tailName(s))
+	case strings.Contains(s, "expired certificate"), strings.Contains(s, "certificate has expired"):
+		return l.E("errExpired")
+	case strings.Contains(s, "no certificates in source"), strings.Contains(s, "no client cert"):
+		return l.E("errNoCert")
+	case strings.Contains(s, "admin_addr not set"):
+		return l.E("errNoAdminAddr")
+	case strings.Contains(s, "server address not configured"):
+		return l.E("errNoServerAddr")
+	case strings.Contains(s, "name and purposes required"):
+		return l.E("errNameRequired")
+	case strings.Contains(s, "missing listen"):
+		return l.E("errMapNoListen")
+	case strings.Contains(s, "missing id"):
+		return l.E("errMapMissingID")
+	case strings.Contains(s, "duplicate listen"):
+		return l.E("errListenDup", tailName(s))
+	case strings.Contains(s, "duplicate service name"):
+		return l.E("errSvcExists", tailName(s))
+	case strings.Contains(s, "has no channels"):
+		return l.E("errNoChannels", tailName(s))
+	case strings.Contains(s, "immutable"):
+		return l.E("errImmutable")
+	case strings.Contains(s, "forbidden"):
+		return l.E("errDenied")
+	case strings.Contains(s, "not found"):
+		return l.E("errNotFound", tailName(s))
+	}
+	return err
+}
+
+// tailName 取错误消息最后一段(: 之后)
+func tailName(s string) string {
+	if i := strings.LastIndex(s, ": "); i >= 0 {
+		return s[i+2:]
+	}
+	return s
 }
