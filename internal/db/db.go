@@ -142,8 +142,8 @@ func (s *Store) Upsert(r CertRecord) error {
 
 // FindByName 按名称查所有记录(含吊销的; 禁止同名签发用)
 func (s *Store) FindByName(name string) []CertRecord {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	var out []CertRecord
 	for _, r := range s.table {
 		if r.Name == name {

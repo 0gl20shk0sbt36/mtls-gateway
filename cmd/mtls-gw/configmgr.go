@@ -74,9 +74,13 @@ func (m *ConfigManager) checkWritable() error {
 
 // rebuild 用当前 cfg 重建路由器(热重载); 失败回滚
 func (m *ConfigManager) rebuild() error {
+	old := m.router
 	r, err := proxy.NewRouter(m.cfg.Mappings, m.cfg.Services, m.cfg.Roles)
 	if err != nil {
 		return err
+	}
+	if old != nil {
+		old.Close() // 释放旧路由的 idle 连接(热重载不累积 Transport)
 	}
 	m.router = r
 	return nil

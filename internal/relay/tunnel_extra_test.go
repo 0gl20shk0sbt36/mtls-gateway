@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -219,5 +220,67 @@ func TestTunnelEncryptedCertFails(t *testing.T) {
 	// 懒加载: 拨号时加载证书 → 加密私钥无密码 → 失败
 	if _, err := r.dialTLSConfig(pairPath); err == nil || !(strings.Contains(err.Error(), "password") || strings.Contains(err.Error(), "密码")) {
 		t.Fatalf("dialTLSConfig should fail with password error: %v", err)
+	}
+}
+
+// M-1: 隧道并发 — 多 goroutine 同时经隧道 echo(-race 下运行)
+func TestTunnelConcurrentEcho(t *testing.T) {
+	h := newHarness(t)
+	defer h.close()
+	src := h.buildSrc(t)
+	localPort := freePort(t)
+	r := New("", src)
+	defer r.Close()
+	cfg := RelayConfig{
+		ListenHost: "127.0.0.1", ServerAddr: h.gwAddr, ServerCAFile: h.caPath,
+		Tunnels: []Tunnel{{
+			Service: "s1",
+			Routes:  []TunnelRoute{{Channel: ":" + gwPortOf(h.gwAddr), Local: fmt.Sprintf(":%d", localPort)}},
+			CertID:  h.clientPairPath, Enabled: true,
+		}},
+	}
+	if err := r.Start(cfg); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		c, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", localPort))
+		if err == nil {
+			c.Close()
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("tunnel not listening: %v", err)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	// 20 goroutine × 5 次 echo
+	var wg sync.WaitGroup
+	errCh := make(chan error, 200)
+	for g := 0; g < 20; g++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			for j := 0; j < 5; j++ {
+				conn, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", localPort))
+				if err != nil {
+					errCh <- err
+					continue
+				}
+				msg := []byte(fmt.Sprintf("g%d-j%d", n, j))
+				conn.Write(msg)
+				buf := make([]byte, len(msg))
+				conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+				if _, err := io.ReadFull(conn, buf); err != nil || string(buf) != string(msg) {
+					errCh <- fmt.Errorf("echo mismatch g%d j%d: %q err=%v", n, j, buf, err)
+				}
+				conn.Close()
+			}
+		}(g)
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Error(err)
 	}
 }

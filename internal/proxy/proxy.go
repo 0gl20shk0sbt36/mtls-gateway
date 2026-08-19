@@ -327,6 +327,18 @@ func rolesMatch(want, have []string) bool {
 	return false
 }
 
+// Close 释放资源(热重载丢弃旧 router 时调用): 关闭全部 route 的 idle 连接, 防 Transport/goroutine 累积
+func (r *Router) Close() {
+	for _, rt := range r.routes {
+		if rt.rp == nil {
+			continue
+		}
+		if tr, ok := rt.rp.Transport.(*http.Transport); ok {
+			tr.CloseIdleConnections()
+		}
+	}
+}
+
 // Serve 执行前缀替换并转发
 func (r *Router) Serve(rt *route, w http.ResponseWriter, req *http.Request) {
 	rc := req.Clone(req.Context())

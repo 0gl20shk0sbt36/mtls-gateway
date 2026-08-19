@@ -39,11 +39,13 @@ func NewManager(relay *Relay, cfgPath string) (*Manager, error) {
 	return m, nil
 }
 
-// Config 返回当前配置的副本
+// Config 返回当前配置的深拷贝(Tunnels 切片底层数组不共享, 防外部改动)
 func (m *Manager) Config() RelayConfig {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.cfg
+	out := m.cfg
+	out.Tunnels = append([]Tunnel(nil), m.cfg.Tunnels...)
+	return out
 }
 
 // Save 将当前配置落盘 (noPersist 时跳过)
