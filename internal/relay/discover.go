@@ -19,16 +19,21 @@ import (
 	"time"
 )
 
-// ServiceInfo 服务端 /info 返回的一条映射(服务)
+// ServiceInfo 服务端 /info 返回的一个服务(含其全部通道)
 type ServiceInfo struct {
-	Listen   string   `json:"listen"`   // ":9443" 或 ":9445/admin"
-	Services []string `json:"services"` // 允许的用途; ["any"]=任一已登记
-	Target   string   `json:"target"`   // 后端 URL
+	Name     string        `json:"name"`     // 服务名
+	Channels []ChannelInfo `json:"channels"` // 该服务的通道列表
+}
+
+// ChannelInfo 服务的一个通道
+type ChannelInfo struct {
+	Listen string `json:"listen"` // ":9443" 或 ":9445/admin"
+	Target string `json:"target"` // 后端 URL
 }
 
 // DiscoverResult /info 响应包装
 type DiscoverResult struct {
-	Mappings []ServiceInfo `json:"mappings"`
+	Services []ServiceInfo `json:"services"`
 }
 
 // discoverHTTPClient 为该次发现构造带客户端证书的 HTTPS 客户端(验服务端证书用 rootCAs)。
@@ -92,7 +97,7 @@ func (r *Relay) DiscoverWithCert(cert tls.Certificate) ([]ServiceInfo, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return nil, fmt.Errorf("relay: parse /info: %w", err)
 	}
-	return out.Mappings, nil
+	return out.Services, nil
 }
 
 // loadFirstCert 取来源里第一枚可用证书(用于发现/默认)
@@ -132,11 +137,20 @@ func stripPort(addr string) string {
 
 // portOfListen 从 ":9443[/path]" 取端口; 失败返回空串。
 func portOfListen(l string) string {
-	p := strings.TrimPrefix(l, ":")
+	p := strings.TrimPrefix(strings.TrimSpace(l), ":")
 	if i := strings.IndexByte(p, '/'); i >= 0 {
 		p = p[:i]
 	}
 	return p
+}
+
+// pathOfListen 从 ":9443[/path]" 取路径前缀; 无路径返回 ""。
+func pathOfListen(l string) string {
+	p := strings.TrimPrefix(strings.TrimSpace(l), ":")
+	if i := strings.IndexByte(p, '/'); i >= 0 {
+		return p[i:]
+	}
+	return ""
 }
 
 func firstLine(s string) string {

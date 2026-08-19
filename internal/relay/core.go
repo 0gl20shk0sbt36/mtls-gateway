@@ -100,12 +100,23 @@ func (r *Relay) relayDial(ctx context.Context, t Tunnel) (net.Conn, error) {
 		return nil, err
 	}
 	d := &Dialer{
-		ServerAddr: t.RemoteAddr,
-		ServerName: t.ServerName,
+		ServerAddr: net.JoinHostPort(r.serverHost(), t.ChannelPort()),
+		ServerName: r.serverHost(),
 		ClientCert: &cert,
 		RootCAs:    r.rootCAs,
 	}
 	return d.Dial(ctx)
+}
+
+// serverHost 服务端发现端点的主机部分 (serverAddr = host:port → host)
+func (r *Relay) serverHost() string {
+	r.mu.Lock()
+	addr := r.serverAddr
+	r.mu.Unlock()
+	if h, _, err := net.SplitHostPort(addr); err == nil {
+		return h
+	}
+	return addr
 }
 
 // Start 监听并启动所有隧道。
@@ -139,7 +150,7 @@ func (r *Relay) Start(cfg RelayConfig) error {
 			return err
 		}
 		runtimes = append(runtimes, rt)
-		r.tunnels[t.ID] = rt
+		r.tunnels[t.ID()] = rt
 	}
 	r.started = true
 	log.Printf("relay: started %d tunnel(s)", len(runtimes))
@@ -162,13 +173,13 @@ func (r *Relay) Reload(cfg RelayConfig) error {
 		if !t.Enabled {
 			continue
 		}
-		next[t.ID] = true
-		if _, ok := r.tunnels[t.ID]; !ok {
+		next[t.ID()] = true
+		if _, ok := r.tunnels[t.ID()]; !ok {
 			rt, err := r.startTunnel(t)
 			if err != nil {
 				return err
 			}
-			r.tunnels[t.ID] = rt
+			r.tunnels[t.ID()] = rt
 		}
 	}
 	// 停止已从配置移除的隧道

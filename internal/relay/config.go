@@ -22,17 +22,29 @@ type CertSel struct {
 	Arg    string `json:"arg"`    // 非 system 来源时的目录/文件路径 (system 时忽略)
 }
 
-// Tunnel 一条隧道 = 本地端口 + 远端 + 服务/用途 + 绑定证书
+// Tunnel 一条隧道 = 服务 + 服务端通道 + 本地路由 (v4)
 type Tunnel struct {
-	ID         string `json:"id"`                    // 隧道 ID (稳定)
-	LocalPort  int    `json:"local_port"`            // 本地监听端口 (程序连这里)
-	RemoteAddr string `json:"remote_addr"`           // 远端网关入口, 如 gw.example:9499
-	Service    string `json:"service,omitempty"`     // 所选服务端服务名(规则名); 空=手动填写
-	Purpose    string `json:"purpose,omitempty"`     // 用途 (记录用, 与规则名对应)
-	CertID     string `json:"cert_id"`               // 绑定的证书身份 (可多条隧道复用)
-	ServerName string `json:"server_name,omitempty"` // TLS SNI (可选)
-	Enabled    bool   `json:"enabled"`               // 是否启用
+	Service string `json:"service"` // 服务名 (一个服务可多条通道)
+	Channel string `json:"channel"` // 服务端入口 :port[/path]
+	Local   string `json:"local"`   // 本地路由 :port[/path] (默认同 channel; 带路径=HTTP反代模式)
+	CertID  string `json:"cert_id"` // 绑定的证书身份
+	Enabled bool   `json:"enabled"` // 是否启用
 }
+
+// ID 隧道唯一标识 (稳定)
+func (t Tunnel) ID() string { return t.Service + "@" + t.Channel }
+
+// LocalPort 本地监听端口 (":8080/foo" → "8080")
+func (t Tunnel) LocalPort() string { return portOfListen(t.Local) }
+
+// LocalPath 本地路径前缀 (":8080/foo" → "/foo"; 空=TCP 透传模式)
+func (t Tunnel) LocalPath() string { return pathOfListen(t.Local) }
+
+// ChannelPort 服务端入口端口 (":9445/admin" → "9445")
+func (t Tunnel) ChannelPort() string { return portOfListen(t.Channel) }
+
+// ChannelPath 服务端入口路径前缀
+func (t Tunnel) ChannelPath() string { return pathOfListen(t.Channel) }
 
 // RelayConfig 持久化配置: 允许多条隧道, 证书可复用
 type RelayConfig struct {
@@ -86,7 +98,7 @@ func SaveConfig(path string, cfg RelayConfig) error {
 // FindTunnel 按 ID 查找隧道
 func (c *RelayConfig) FindTunnel(id string) (*Tunnel, bool) {
 	for i := range c.Tunnels {
-		if c.Tunnels[i].ID == id {
+		if c.Tunnels[i].ID() == id {
 			return &c.Tunnels[i], true
 		}
 	}
@@ -96,7 +108,7 @@ func (c *RelayConfig) FindTunnel(id string) (*Tunnel, bool) {
 // UpsertTunnel 新增或覆盖隧道 (按 ID)
 func (c *RelayConfig) UpsertTunnel(t Tunnel) {
 	for i := range c.Tunnels {
-		if c.Tunnels[i].ID == t.ID {
+		if c.Tunnels[i].ID() == t.ID() {
 			c.Tunnels[i] = t
 			return
 		}
@@ -107,7 +119,7 @@ func (c *RelayConfig) UpsertTunnel(t Tunnel) {
 // DelTunnel 删除隧道 (按 ID), 返回是否删除
 func (c *RelayConfig) DelTunnel(id string) bool {
 	for i := range c.Tunnels {
-		if c.Tunnels[i].ID == id {
+		if c.Tunnels[i].ID() == id {
 			c.Tunnels = append(c.Tunnels[:i], c.Tunnels[i+1:]...)
 			return true
 		}

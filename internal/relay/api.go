@@ -3,9 +3,7 @@ package relay
 import (
 	"encoding/json"
 	"fmt"
-	"net"
 	"net/http"
-	"strconv"
 	"strings"
 	"sync"
 
@@ -243,39 +241,30 @@ func (m *Manager) AdminMappings(certID, password string) ([]ServiceInfo, error) 
 	return ac.ListMappings()
 }
 
-// BuildServiceTunnel 依据服务端规则生成一条隧道。
-// RemoteAddr = 服务端host:服务入口端口; 本地端口默认与服务端入口一致, 传 localPort>0 可覆盖。
-func (m *Manager) BuildServiceTunnel(svc ServiceInfo, localPort int, certID, serverName string) (Tunnel, error) {
-	cfg := m.Config()
-	sa := m.serverOverride
-	if sa == "" {
-		sa = cfg.ServerAddr
-	}
-	serverHost := stripPort(sa)
-	if serverHost == "" {
-		return Tunnel{}, fmt.Errorf("server_addr not set")
-	}
-	port := portOfListen(svc.Listen)
-	if port == "" {
-		return Tunnel{}, fmt.Errorf("service %s has no listen port", svc.Listen)
-	}
-	if localPort <= 0 {
-		p, err := strconv.Atoi(port)
-		if err != nil {
-			return Tunnel{}, fmt.Errorf("service port %q: %w", port, err)
+// BuildServiceTunnels 依据服务端服务定义生成该服务所有通道的隧道。
+// locals: 通道 listen → 本地路由 (缺省 = 通道 listen 原样, 含冒号)
+func (m *Manager) BuildServiceTunnels(svc ServiceInfo, locals map[string]string, certID string) ([]Tunnel, error) {
+	var out []Tunnel
+	for _, ch := range svc.Channels {
+		local := ""
+		if locals != nil {
+			local = locals[ch.Listen]
 		}
-		localPort = p
+		if local == "" {
+			local = ch.Listen // 默认本地路由 = 服务端通道内容一致 (含冒号与路径)
+		}
+		out = append(out, Tunnel{
+			Service: svc.Name,
+			Channel: ch.Listen,
+			Local:   local,
+			CertID:  certID,
+			Enabled: true,
+		})
 	}
-	return Tunnel{
-		ID:         svc.Listen,
-		LocalPort:  localPort,
-		RemoteAddr: net.JoinHostPort(serverHost, port),
-		Service:    svc.Listen,
-		Purpose:    svc.Listen,
-		CertID:     certID,
-		ServerName: serverName,
-		Enabled:    true,
-	}, nil
+	if len(out) == 0 {
+		return nil, fmt.Errorf("service %s has no channels", svc.Name)
+	}
+	return out, nil
 }
 
 // Handler 返回管理 HTTP handler (仅 bind loopback)
@@ -456,42 +445,49 @@ func (m *Manager) Handler() http.Handler {
 		writeJSON(w, m.Config())
 	})
 
-	// POST /api/tunnels  (body: Tunnel json) — 新增/覆盖; 支持按 service 生成
+	// POST /api/tunnels  (body: {service, locals:{channel:local}, cert_id}) — 为服务所有通道建隧道
 	mux.HandleFunc("POST /api/tunnels", func(w http.ResponseWriter, r *http.Request) {
-		var t Tunnel
-		if err := json.NewDecoder(r.Body).Decode(&t); err != nil {
+		var b struct {
+			Service string            `json:"service"`
+			Locals  map[string]string `json:"locals"`
+			CertID  string            `json:"cert_id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
 			writeErr(w, err)
 			return
 		}
-		if t.Service != "" {
-			svcs, err := m.Services()
-			if err != nil {
-				writeErr(w, err)
-				return
-			}
-			var svc *ServiceInfo
-			for i := range svcs {
-				if svcs[i].Listen == t.Service {
-					svc = &svcs[i]
-					break
-				}
-			}
-			if svc == nil {
-				writeErr(w, fmt.Errorf("service not found on server: %s", t.Service))
-				return
-			}
-			built, err := m.BuildServiceTunnel(*svc, t.LocalPort, t.CertID, t.ServerName)
-			if err != nil {
-				writeErr(w, err)
-				return
-			}
-			t = built
+		if b.Service == "" || b.CertID == "" {
+			writeErr(w, fmt.Errorf("service and cert_id required"))
+			return
 		}
-		if err := m.AddTunnel(t); err != nil {
+		svcs, err := m.Services()
+		if err != nil {
 			writeErr(w, err)
 			return
 		}
-		writeJSON(w, map[string]bool{"ok": true})
+		var svc *ServiceInfo
+		for i := range svcs {
+			if svcs[i].Name == b.Service {
+				svc = &svcs[i]
+				break
+			}
+		}
+		if svc == nil {
+			writeErr(w, fmt.Errorf("service not found on server: %s", b.Service))
+			return
+		}
+		tunnels, err := m.BuildServiceTunnels(*svc, b.Locals, b.CertID)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		for _, t := range tunnels {
+			if err := m.AddTunnel(t); err != nil {
+				writeErr(w, err)
+				return
+			}
+		}
+		writeJSON(w, map[string]any{"ok": true, "count": len(tunnels)})
 	})
 
 	// DELETE /api/tunnels/{id}

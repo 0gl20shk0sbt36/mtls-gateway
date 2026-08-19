@@ -2,9 +2,14 @@ package relay
 
 import (
 	"context"
+	"crypto/tls"
 	"io"
 	"log"
 	"net"
+	"net/http"
+	"net/http/httputil"
+	"net/url"
+	"strings"
 	"sync"
 	"sync/atomic"
 )
@@ -23,6 +28,7 @@ type tunnelRuntime struct {
 	r        *Relay
 	tunnel   Tunnel
 	listener net.Listener
+	srv      *http.Server // 本地路径模式时的 HTTP 服务
 	ctx      context.Context
 	cancel   context.CancelFunc
 	metrics  tunnelMetrics
@@ -30,11 +36,12 @@ type tunnelRuntime struct {
 	conns    map[net.Conn]struct{}
 }
 
-// start starts the local listener for the tunnel and serves.
-// Returns after listener is bound, or error.
+// startTunnel 启动本地监听:
+//   - 本地路由带路径 → HTTP 反代模式(剥本地前缀, 补通道前缀, mTLS 转发服务端通道)
+//   - 无路径 → TCP 透传模式(管道到服务端通道端口)
 func (r *Relay) startTunnel(t Tunnel) (*tunnelRuntime, error) {
 	host := r.cfgListenHost()
-	addr := net.JoinHostPort(host, itoa(t.LocalPort))
+	addr := net.JoinHostPort(host, t.LocalPort())
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, err
@@ -48,8 +55,66 @@ func (r *Relay) startTunnel(t Tunnel) (*tunnelRuntime, error) {
 		cancel:   cancel,
 		conns:    make(map[net.Conn]struct{}),
 	}
-	go rt.acceptLoop()
+	if p := t.LocalPath(); p != "" {
+		rt.srv = &http.Server{Handler: rt.localHTTPHandler(p)}
+		go func() {
+			if err := rt.srv.Serve(ln); err != nil && err != http.ErrServerClosed {
+				log.Printf("tunnel[%s] http serve: %v", t.ID(), err)
+			}
+		}()
+	} else {
+		go rt.acceptLoop()
+	}
 	return rt, nil
+}
+
+// localHTTPHandler 本地路径模式: 剥本地前缀 → 补通道前缀 → mTLS 转发服务端通道
+func (rt *tunnelRuntime) localHTTPHandler(localPath string) http.Handler {
+	upstream, err := url.Parse("https://" + net.JoinHostPort(rt.r.serverHost(), rt.tunnel.ChannelPort()) + rt.tunnel.ChannelPath())
+	if err != nil {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "bad upstream: "+err.Error(), http.StatusInternalServerError)
+		})
+	}
+	tlsCfg, err := rt.r.dialTLSConfig(rt.tunnel.CertID)
+	if err != nil {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "load cert: "+err.Error(), http.StatusInternalServerError)
+		})
+	}
+	rp := &httputil.ReverseProxy{
+		Director: func(req *http.Request) {
+			rest := strings.TrimPrefix(req.URL.Path, localPath)
+			if rest == "" {
+				rest = "/"
+			}
+			req.URL.Scheme = upstream.Scheme
+			req.URL.Host = upstream.Host
+			req.URL.Path = joinSlash(upstream.Path, rest) // 补通道前缀(如 /admin + /x)
+			req.URL.RawPath = ""
+			req.Host = upstream.Host
+		},
+		Transport: &http.Transport{TLSClientConfig: tlsCfg},
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if !strings.HasPrefix(req.URL.Path, localPath) {
+			http.Error(w, "local path prefix mismatch: "+req.URL.Path, http.StatusNotFound)
+			return
+		}
+		rp.ServeHTTP(w, req)
+	})
+}
+
+// joinSlash 拼接路径并去重斜杠 (nginx proxy_pass 语义)
+func joinSlash(a, b string) string {
+	switch {
+	case a == "" || a == "/":
+		return "/" + strings.TrimPrefix(b, "/")
+	case b == "" || b == "/":
+		return strings.TrimSuffix(a, "/") + "/"
+	default:
+		return strings.TrimSuffix(a, "/") + "/" + strings.TrimPrefix(b, "/")
+	}
 }
 
 // acceptLoop accepts local connections and proxies each to the mTLS upstream.
@@ -62,7 +127,7 @@ func (rt *tunnelRuntime) acceptLoop() {
 			case <-rt.ctx.Done():
 				return // 关闭
 			default:
-				log.Printf("tunnel[%s] accept: %v", rt.tunnel.ID, err)
+				log.Printf("tunnel[%s] accept: %v", rt.tunnel.ID(), err)
 				continue
 			}
 		}
@@ -88,12 +153,11 @@ func (rt *tunnelRuntime) handleConn(local net.Conn) {
 	upstream, err := rt.r.relayDial(rt.ctx, rt.tunnel)
 	if err != nil {
 		rt.metrics.lastErr.Store(err.Error())
-		log.Printf("tunnel[%s] dial upstream: %v", rt.tunnel.ID, err)
+		log.Printf("tunnel[%s] dial upstream: %v", rt.tunnel.ID(), err)
 		return
 	}
 	defer upstream.Close()
 
-	// 双向复制
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
@@ -113,6 +177,9 @@ func (rt *tunnelRuntime) handleConn(local net.Conn) {
 func (rt *tunnelRuntime) stop() {
 	rt.cancel()
 	rt.listener.Close()
+	if rt.srv != nil {
+		rt.srv.Close()
+	}
 	rt.mu.Lock()
 	for c := range rt.conns {
 		c.Close()
@@ -123,12 +190,12 @@ func (rt *tunnelRuntime) stop() {
 // snapshot returns a status snapshot for this tunnel.
 func (rt *tunnelRuntime) snapshot() TunnelStatus {
 	s := TunnelStatus{
-		ID:          rt.tunnel.ID,
-		LocalPort:   rt.tunnel.LocalPort,
-		RemoteAddr:  rt.tunnel.RemoteAddr,
-		Purpose:     rt.tunnel.Purpose,
+		ID:          rt.tunnel.ID(),
+		Service:     rt.tunnel.Service,
+		Channel:     rt.tunnel.Channel,
+		Local:       rt.tunnel.Local,
 		CertID:      rt.tunnel.CertID,
-		Running:     true, // snapshot 只在运行中的 runtime 上调用
+		Running:     true,
 		ActiveConns: atomic.LoadInt64(&rt.metrics.activeConns),
 		ConnsTotal:  atomic.LoadInt64(&rt.metrics.connsTotal),
 		BytesIn:     atomic.LoadInt64(&rt.metrics.bytesIn),
@@ -140,24 +207,15 @@ func (rt *tunnelRuntime) snapshot() TunnelStatus {
 	return s
 }
 
-func itoa(v int) string {
-	if v == 0 {
-		return "0"
+// dialTLSConfig 构造带客户端证书的 TLS 配置(本地 HTTP 反代用)
+func (r *Relay) dialTLSConfig(certID string) (*tls.Config, error) {
+	cert, err := r.loadCert(certID)
+	if err != nil {
+		return nil, err
 	}
-	neg := v < 0
-	if neg {
-		v = -v
-	}
-	var b [20]byte
-	i := len(b)
-	for v > 0 {
-		i--
-		b[i] = byte('0' + v%10)
-		v /= 10
-	}
-	if neg {
-		i--
-		b[i] = '-'
-	}
-	return string(b[i:])
+	return &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		RootCAs:      r.rootCAs,
+		ServerName:   r.serverHost(),
+	}, nil
 }
