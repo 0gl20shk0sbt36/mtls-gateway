@@ -92,8 +92,8 @@ function initMultiSel(btnId, listId, onChange) {
     const s = SEL_MULTI[listId];
     const v = d.dataset.val;
     if (v === "any") {
-      s.clear();
-      s.add("any"); // any 互斥: 选中后清空其他
+      if (s.has("any")) s.delete("any"); // 再点取消 any
+      else { s.clear(); s.add("any"); }  // 选中 any 互斥: 清空其他
     } else {
       if (s.has("any")) return; // any 已选, 其他禁点(双保险)
       if (s.has(v)) s.delete(v); else s.add(v);

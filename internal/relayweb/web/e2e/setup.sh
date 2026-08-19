@@ -6,7 +6,8 @@ D="${1:-/tmp/mtls-e2e-ci}"
 mkdir -p "$D/certs"
 cd "$D"
 
-REPO="$(cd "$(dirname "$0")/../../../.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
 echo "repo: $REPO"
 
 # ---- 1. 构建二进制(CI 里 Go 可用; 本地也可直接用) ----
@@ -94,6 +95,9 @@ sleep 1
 "$D/mtls-gw-cli" issue admin --sock "$D/gw.sock" --purpose mtls-superadmin --password ci-admin-pw --days 365 >/dev/null 2>&1
 "$D/mtls-gw-cli" issue e2e-a --sock "$D/gw.sock" --purpose svc-a --days 365 >/dev/null 2>&1
 mkdir -p "$D/certs/admin" "$D/certs/e2e-a"
+# admin 私钥转 legacy 加密(与真实演示一致: 私钥需密码, 任意密码不能通过验证)
+openssl rsa -in "$D/issued/admin/key.pem" -traditional -aes256 -passout pass:ci-admin-pw -out "$D/issued/admin/key.enc.pem" 2>/dev/null
+mv -f "$D/issued/admin/key.enc.pem" "$D/issued/admin/key.pem"
 cp -f "$D/issued/admin/cert.pem" "$D/issued/admin/key.pem" "$D/certs/admin/"
 cp -f "$D/issued/e2e-a/cert.pem" "$D/issued/e2e-a/key.pem" "$D/certs/e2e-a/"
 

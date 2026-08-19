@@ -200,6 +200,7 @@ func (r *IssueRequest) normalizePurposes(adminRole string) (warnings []string) {
 
 // IssueResponse 签发结果
 type IssueResponse struct {
+	Name        string   `json:"name"` // 证书名(回显)
 	Serial      string   `json:"serial"`
 	CertPEM     string   `json:"cert_pem"`
 	KeyPEM      string   `json:"key_pem"` // 仅本机返回; 生产建议只给 p12
@@ -329,6 +330,7 @@ func (m *Manager) IssueCert(req IssueRequest) (*IssueResponse, error) {
 		return nil, err
 	}
 	return &IssueResponse{
+		Name:        req.Name,
 		Serial:      serial.String(),
 		CertPEM:     string(certPEM),
 		KeyPEM:      string(keyPEM),

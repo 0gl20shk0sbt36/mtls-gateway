@@ -71,14 +71,11 @@ func main() {
 	}
 	r.SetServerAddr(cfgServerAddr)   // 让 Discover(/api/services) 在未 Start 时也能用
 	r.SetServerCA(cfg.ServerCAFile)  // 证书验证根的加载
-	if len(cfg.Tunnels) > 0 {
-		if n := countEnabled(cfg.Tunnels); n > 0 {
-			if err := mgr.Start(); err != nil {
-				log.Printf("start on boot: %v", err)
-			} else {
-				log.Printf("relay started on boot: %d tunnel(s)", n)
-			}
-		}
+	// 无条件启动核心(0 隧道也可): 否则空配置下 WebUI 添加隧道无法 Reload 启动
+	if err := mgr.Start(); err != nil {
+		log.Printf("start: %v", err)
+	} else {
+		log.Printf("relay started: %d tunnel(s)", countEnabled(cfg.Tunnels))
 	}
 
 	// 管理 HTTP server (提供管理 API + WebUI 面板); --no-web 或空 listen 则不起 (纯中继)
