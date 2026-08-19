@@ -68,7 +68,21 @@ type portRouter struct {
 }
 
 // NewRouter 从 mappings + services 构建路由器; 校验失败返回 error。
-func NewRouter(ms []Mapping, ss []ServiceCfg) (*Router, error) {
+// NewRouter 构建路由器; declaredRoles = 配置里声明的角色列表(服务 roles 必须 ⊆ 它, 除内置 "any")
+func NewRouter(ms []Mapping, ss []ServiceCfg, declaredRoles []string) (*Router, error) {
+	declared := map[string]bool{}
+	for _, r := range declaredRoles {
+		if r == "any" {
+			return nil, fmt.Errorf("角色名 %q 是内置保留字(服务声明里直接写 any 即对任意证书开放), 禁止在 roles 声明列表中声明", r)
+		}
+		if !ValidRoleName(r) {
+			return nil, fmt.Errorf("bad role name %q (只允许字母/数字/下划线/连字符)", r)
+		}
+		if declared[r] {
+			return nil, fmt.Errorf("duplicate role %q", r)
+		}
+		declared[r] = true
+	}
 	r := &Router{byPort: map[string]*portRouter{}, mappings: ms, services: ss}
 	seenListen, seenID := map[string]bool{}, map[string]bool{}
 	for i := range ms {
@@ -121,6 +135,18 @@ func NewRouter(ms []Mapping, ss []ServiceCfg) (*Router, error) {
 		if len(s.Channels) == 0 {
 			return nil, fmt.Errorf("service %s has no channels", s.Name)
 		}
+		// 服务 roles: "any"(内置)= 任意已登记证书; 其他必须在声明列表中
+		for _, r := range s.Roles {
+			if r == "any" {
+				continue
+			}
+			if !ValidRoleName(r) {
+				return nil, fmt.Errorf("service %s bad role %q (只允许字母/数字/下划线/连字符)", s.Name, r)
+			}
+			if !declared[r] {
+				return nil, fmt.Errorf("service %s role %q 未在 roles 声明列表中", s.Name, r)
+			}
+		}
 		for _, ch := range s.Channels {
 			idx := -1
 			if n, err := strconv.Atoi(ch); err == nil {
@@ -158,6 +184,19 @@ func mergeRoles(a, b []string) []string {
 		out = append(out, r)
 	}
 	return out
+}
+
+// ValidRoleName 角色名合法性: 字母/数字/下划线/连字符 (无特殊符号, 无通配符)
+func ValidRoleName(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, c := range s {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-') {
+			return false
+		}
+	}
+	return true
 }
 
 // parseListen 解析 ":9443" / ":9445/admin" → (port, path)
@@ -214,10 +253,10 @@ func matchPath(p, pref string) bool {
 	return p == pref || strings.HasPrefix(p, pref+"/")
 }
 
-// Allows 判断证书角色是否允许访问该映射(引用它的服务 roles 并集 ∩ 证书 roles, 或含 "*")
+// Allows 判断证书角色是否允许访问该映射(服务 roles 含内置 "any" = 任意已登记证书; 否则并集 ∩ 证书 roles)
 func (r *route) Allows(roles []string) bool {
 	for _, want := range r.roles {
-		if want == "*" {
+		if want == "any" {
 			return true
 		}
 		for _, have := range roles {
@@ -274,7 +313,7 @@ func (r *Router) ServicesAllowed(roles []string) []ServiceInfo {
 
 func rolesMatch(want, have []string) bool {
 	for _, w := range want {
-		if w == "*" {
+		if w == "any" {
 			return true
 		}
 		for _, h := range have {

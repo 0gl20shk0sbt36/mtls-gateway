@@ -49,8 +49,8 @@ func main() {
 		log.Fatalf("auth: %v", err)
 	}
 
-	// 映射 + 服务注册 → 路由器 (listen 判重 / 通道引用校验在此报错)
-	router, err := proxy.NewRouter(cfg.Mappings, cfg.Services)
+	// 映射 + 服务注册 → 路由器 (listen 判重 / 通道引用校验 / 角色声明校验在此报错)
+	router, err := proxy.NewRouter(cfg.Mappings, cfg.Services, cfg.Roles)
 	if err != nil {
 		log.Fatalf("invalid config: %v", err)
 	}
@@ -103,10 +103,11 @@ func main() {
 		OU:          cfg.OU,
 		DefaultDays: cfg.DefaultDays,
 		AdminDays:   cfg.AdminDays,
-	}, cfg.AdminRole, cfg.KeyType, cfg.KeyBits, cfg.PwdLength)
+	}, cfg.AdminRole, cfg.KeyType, cfg.KeyBits, cfg.PwdLength, cfg.Roles)
 	if err != nil {
 		log.Fatalf("manager: %v", err)
 	}
+	mgr.SetDeclaredRoles(cfg.Roles)
 
 	// ===== Unix socket 管理通道 (本机直接 admin) =====
 	go func() {
@@ -191,14 +192,40 @@ func resolveListen(bindHost, spec string) string {
 func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *ConfigManager) http.Handler {
 	mux := http.NewServeMux()
 
-	// 配置总览(UI 用): 模式 + 通道 + 服务
+	// 配置总览(UI 用): 模式 + 通道 + 服务 + 角色
 	mux.HandleFunc("GET /admin/config", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{
 			"mode":       cm.Mode(),
 			"admin_role": cm.AdminRole(),
+			"roles":      cm.Roles(),
 			"mappings":   cm.Mappings(),
 			"services":   cm.Services(),
 		})
+	})
+
+	// 角色声明列表 CRUD
+	mux.HandleFunc("POST /admin/roles", func(w http.ResponseWriter, r *http.Request) {
+		var b struct {
+			Name string `json:"name"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := cm.AddRole(b.Name); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		mgr.SetDeclaredRoles(cm.Roles())
+		writeJSON(w, map[string]any{"ok": true})
+	})
+	mux.HandleFunc("DELETE /admin/roles", func(w http.ResponseWriter, r *http.Request) {
+		if err := cm.DeleteRole(r.URL.Query().Get("name")); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		mgr.SetDeclaredRoles(cm.Roles())
+		writeJSON(w, map[string]any{"ok": true})
 	})
 
 	// 通道 CRUD
@@ -324,6 +351,7 @@ type Config struct {
 	DefaultDays   int                `toml:"default_days"`  // 普通证书默认天数
 	AdminDays     int                `toml:"admin_days"`    // 管理角色证书默认天数
 	RequireIPBind *bool              `toml:"require_ip_bind"`
+	Roles         []string           `toml:"roles"`    // 角色声明列表(服务 roles / 签发 purposes 必须在此声明)
 	Mappings      []proxy.Mapping    `toml:"mappings"` // 通道: id + listen(:port[/path]) + target
 	Services      []proxy.ServiceCfg `toml:"services"` // 服务注册: name + channels + roles
 }
@@ -357,6 +385,7 @@ func DefaultConfig() Config {
 		OU:            "device",
 		DefaultDays:   365,
 		AdminDays:     30,
+		Roles:         []string{},
 		Mappings:      []proxy.Mapping{},
 		Services:      []proxy.ServiceCfg{},
 	}
@@ -398,6 +427,17 @@ func loadConfig(path string) Config {
 		}
 	default:
 		log.Fatalf("bad key_type %q (rsa|ecdsa)", cfg.KeyType)
+	}
+	// 角色声明列表校验: 命名合法 + 去重 (服务 roles 校验在 NewRouter)
+	seen := map[string]bool{}
+	for _, r := range cfg.Roles {
+		if !proxy.ValidRoleName(r) {
+			log.Fatalf("bad role name %q (只允许字母/数字/下划线/连字符)", r)
+		}
+		if seen[r] {
+			log.Fatalf("duplicate role %q", r)
+		}
+		seen[r] = true
 	}
 	return cfg
 }

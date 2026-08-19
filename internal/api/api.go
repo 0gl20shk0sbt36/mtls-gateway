@@ -65,6 +65,7 @@ type Manager struct {
 	KeyType   string       // 签发密钥类型: rsa | ecdsa
 	KeyBits   int          // rsa: 2048/3072/4096; ecdsa: 256/384/521
 	PwdLength int          // 自动生成 p12 密码长度
+	roles     map[string]bool // 声明角色集合 (签发 purposes 校验用)
 }
 
 // orgName 返回证书 O 字段
@@ -75,8 +76,8 @@ func (m *Manager) ouName() string { return m.tmpl.OU }
 
 // NewManager 创建管理器, 加载 CA 私钥用于签发
 // tmpl: 证书模板配置 (可传零值, 自动用默认)
-// adminRole: 内置管理角色名; keyType/keyBits: 签发密钥; pwdLength: 自动密码长度
-func NewManager(store *db.Store, caCertPath, caKeyPath, certDir, sockPath string, tmpl CertTemplate, adminRole, keyType string, keyBits, pwdLength int) (*Manager, error) {
+// adminRole: 内置管理角色名; keyType/keyBits: 签发密钥; pwdLength: 自动密码长度; declaredRoles: 声明角色列表
+func NewManager(store *db.Store, caCertPath, caKeyPath, certDir, sockPath string, tmpl CertTemplate, adminRole, keyType string, keyBits, pwdLength int, declaredRoles []string) (*Manager, error) {
 	caPEM, err := os.ReadFile(caCertPath)
 	if err != nil {
 		return nil, fmt.Errorf("read ca cert: %w", err)
@@ -113,6 +114,10 @@ func NewManager(store *db.Store, caCertPath, caKeyPath, certDir, sockPath string
 		return nil, fmt.Errorf("mkdir certdir: %w", err)
 	}
 	tmpl.ApplyDefaults()
+	roles := map[string]bool{}
+	for _, r := range declaredRoles {
+		roles[r] = true
+	}
 	return &Manager{
 		store:     store,
 		caCert:    caCert,
@@ -124,8 +129,17 @@ func NewManager(store *db.Store, caCertPath, caKeyPath, certDir, sockPath string
 		KeyType:   keyType,
 		KeyBits:   keyBits,
 		PwdLength: pwdLength,
+		roles:     roles,
 		tmpl:      tmpl,
 	}, nil
+}
+
+// SetDeclaredRoles 更新声明角色集合 (服务端配置管理热更新时调用)
+func (m *Manager) SetDeclaredRoles(declaredRoles []string) {
+	m.roles = map[string]bool{}
+	for _, r := range declaredRoles {
+		m.roles[r] = true
+	}
 }
 
 // IssueRequest 签发请求
@@ -201,6 +215,15 @@ func (m *Manager) IssueCert(req IssueRequest) (*IssueResponse, error) {
 	warnings := req.normalizePurposes(m.AdminRole)
 	if req.Name == "" || len(req.Purposes) == 0 {
 		return nil, fmt.Errorf("name and purposes required")
+	}
+	// 签发校验: purposes 必须 ∈ 声明角色 ∪ {admin_role}; "any" 禁止签发给证书
+	for _, p := range req.Purposes {
+		if p == "any" {
+			return nil, fmt.Errorf("角色 %q 是内置保留字, 只可用于服务声明, 不能签发给证书", p)
+		}
+		if p != m.AdminRole && !m.roles[p] {
+			return nil, fmt.Errorf("角色 %q 未在 roles 声明列表中声明", p)
+		}
 	}
 	if req.Days <= 0 {
 		// 默认天数: admin 用途用 AdminDays, 其他用 DefaultDays

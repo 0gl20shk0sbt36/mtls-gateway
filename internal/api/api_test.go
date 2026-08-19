@@ -54,7 +54,7 @@ func testManager(t *testing.T, tmpl CertTemplate) *Manager {
 		t.Fatalf("open db: %v", err)
 	}
 	t.Cleanup(func() { store.Close() })
-	m, err := NewManager(store, caPath, caKeyPath, filepath.Join(dir, "certs"), filepath.Join(dir, "gw.sock"), tmpl, "mtls-superadmin", "rsa", 2048, 16)
+	m, err := NewManager(store, caPath, caKeyPath, filepath.Join(dir, "certs"), filepath.Join(dir, "gw.sock"), tmpl, "mtls-superadmin", "rsa", 2048, 16, []string{"dsh", "vaultwarden", "svc-a", "app"})
 	if err != nil {
 		t.Fatalf("new manager: %v", err)
 	}

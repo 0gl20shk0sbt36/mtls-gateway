@@ -57,6 +57,12 @@ func (m *ConfigManager) Services() []proxy.ServiceCfg {
 	return m.cfg.Services
 }
 
+func (m *ConfigManager) Roles() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.cfg.Roles
+}
+
 func (m *ConfigManager) checkWritable() error {
 	if m.mode == "immutable" {
 		return fmt.Errorf("config is immutable (read-only): 修改被服务端拒绝")
@@ -66,7 +72,7 @@ func (m *ConfigManager) checkWritable() error {
 
 // rebuild 用当前 cfg 重建路由器(热重载); 失败回滚
 func (m *ConfigManager) rebuild() error {
-	r, err := proxy.NewRouter(m.cfg.Mappings, m.cfg.Services)
+	r, err := proxy.NewRouter(m.cfg.Mappings, m.cfg.Services, m.cfg.Roles)
 	if err != nil {
 		return err
 	}
@@ -95,6 +101,69 @@ func copyFile(src, dst string) error {
 		return err
 	}
 	return os.WriteFile(dst, data, 0o600)
+}
+
+// ---- 角色 (roles 声明列表) ----
+
+func (m *ConfigManager) AddRole(name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.checkWritable(); err != nil {
+		return err
+	}
+	if name == "any" {
+		return fmt.Errorf("any 是内置保留字, 禁止声明")
+	}
+	if !proxy.ValidRoleName(name) {
+		return fmt.Errorf("bad role name %q (只允许字母/数字/下划线/连字符)", name)
+	}
+	for _, r := range m.cfg.Roles {
+		if r == name {
+			return fmt.Errorf("role %q 已声明", name)
+		}
+	}
+	old := m.cfg.Roles
+	m.cfg.Roles = append(m.cfg.Roles, name)
+	if err := m.rebuild(); err != nil {
+		m.cfg.Roles = old
+		return err
+	}
+	return m.persist()
+}
+
+func (m *ConfigManager) DeleteRole(name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.checkWritable(); err != nil {
+		return err
+	}
+	if name == "any" {
+		return fmt.Errorf("any 是内置保留字, 不可删除")
+	}
+	// 被服务引用时禁止删除
+	for _, s := range m.cfg.Services {
+		for _, r := range s.Roles {
+			if r == name {
+				return fmt.Errorf("role %q 仍被服务 %s 引用, 先改服务再删", name, s.Name)
+			}
+		}
+	}
+	old := m.cfg.Roles
+	out := m.cfg.Roles[:0]
+	for _, r := range m.cfg.Roles {
+		if r != name {
+			out = append(out, r)
+		}
+	}
+	if len(out) == len(m.cfg.Roles) {
+		return fmt.Errorf("role %q 未声明", name)
+	}
+	m.cfg.Roles = out
+	if err := m.rebuild(); err != nil {
+		m.cfg.Roles = old
+		return err
+	}
+	return m.persist()
 }
 
 // ---- 通道 (mappings) ----

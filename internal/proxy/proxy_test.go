@@ -20,7 +20,7 @@ func TestLongestPrefixMatch(t *testing.T) {
 		{ID: "aa", Listen: ":9001/a", Target: "http://127.0.0.1:1"},
 	}, []ServiceCfg{
 		{Name: "s", Channels: []string{"a", "ab", "aa"}, Roles: []string{"x"}},
-	})
+	}, []string{"x"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +41,7 @@ func TestLongestPrefixMatch(t *testing.T) {
 func TestWholePortFallback(t *testing.T) {
 	r, _ := NewRouter([]Mapping{
 		{ID: "w", Listen: ":9002", Target: "http://127.0.0.1:1"},
-	}, []ServiceCfg{{Name: "s", Channels: []string{"w"}, Roles: []string{"x"}}})
+	}, []ServiceCfg{{Name: "s", Channels: []string{"w"}, Roles: []string{"x"}}}, []string{"x"})
 	for _, p := range []string{"/", "/x", "/a/b"} {
 		if rt := r.Match("9002", p); rt == nil {
 			t.Errorf("whole-port should match %q", p)
@@ -57,7 +57,7 @@ func TestSubstitution(t *testing.T) {
 		{ID: "prep", Listen: ":9004", Target: back.URL + "/x"},
 	}, []ServiceCfg{
 		{Name: "s", Channels: []string{"strip", "prep"}, Roles: []string{"x"}},
-	})
+	}, []string{"x"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,29 +101,39 @@ func TestDupAndIDChecks(t *testing.T) {
 	if _, err := NewRouter([]Mapping{
 		{ID: "a", Listen: ":9101", Target: "http://127.0.0.1:1"},
 		{ID: "b", Listen: ":9101", Target: "http://127.0.0.1:2"},
-	}, nil); err == nil {
+	}, nil, nil); err == nil {
 		t.Fatal("duplicate listen should error")
 	}
 	if _, err := NewRouter([]Mapping{
 		{ID: "a", Listen: ":9102", Target: "http://127.0.0.1:1"},
 		{ID: "a", Listen: ":9103", Target: "http://127.0.0.1:1"},
-	}, nil); err == nil {
+	}, nil, nil); err == nil {
 		t.Fatal("duplicate id should error")
 	}
 	if _, err := NewRouter([]Mapping{
 		{Listen: ":9104", Target: "http://127.0.0.1:1"},
-	}, nil); err == nil {
+	}, nil, nil); err == nil {
 		t.Fatal("missing id should error")
 	}
 	if _, err := NewRouter([]Mapping{
 		{ID: "a", Listen: ":9105", Target: "http://127.0.0.1:1"},
-	}, []ServiceCfg{{Name: "s", Channels: []string{"nope"}, Roles: []string{"x"}}}); err == nil {
+	}, []ServiceCfg{{Name: "s", Channels: []string{"nope"}, Roles: []string{"x"}}}, []string{"x"}); err == nil {
 		t.Fatal("bad channel ref should error")
 	}
 	if _, err := NewRouter([]Mapping{
 		{ID: "a", Listen: ":9106", Target: "http://127.0.0.1:1"},
-	}, []ServiceCfg{{Name: "s", Channels: []string{"a"}, Roles: []string{"x"}}, {Name: "s", Channels: []string{"a"}, Roles: []string{"x"}}}); err == nil {
+	}, []ServiceCfg{{Name: "s", Channels: []string{"a"}, Roles: []string{"x"}}, {Name: "s", Channels: []string{"a"}, Roles: []string{"x"}}}, []string{"x"}); err == nil {
 		t.Fatal("duplicate service should error")
+	}
+	// 未声明的角色 → 报错
+	if _, err := NewRouter([]Mapping{
+		{ID: "a", Listen: ":9107", Target: "http://127.0.0.1:1"},
+	}, []ServiceCfg{{Name: "s", Channels: []string{"a"}, Roles: []string{"ghost"}}}, []string{"x"}); err == nil {
+		t.Fatal("undeclared role should error")
+	}
+	// "any" 禁止声明
+	if _, err := NewRouter(nil, nil, []string{"any"}); err == nil {
+		t.Fatal("declaring reserved any should error")
 	}
 }
 
@@ -135,8 +145,8 @@ func TestRolesAuth(t *testing.T) {
 	}, []ServiceCfg{
 		{Name: "svc-a", Channels: []string{"m1"}, Roles: []string{"ra", "rb"}},
 		{Name: "svc-b", Channels: []string{"m2", "m1"}, Roles: []string{"rb", "rc"}}, // m1 被两个服务引用
-		{Name: "svc-open", Channels: []string{"m3"}, Roles: []string{"*"}},
-	})
+		{Name: "svc-open", Channels: []string{"m3"}, Roles: []string{"any"}},        // 内置 any = 任意证书
+	}, []string{"ra", "rb", "rc"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,6 +163,10 @@ func TestRolesAuth(t *testing.T) {
 	if rt := r.Match("9201", "/x"); rt.Allows([]string{"zz"}) {
 		t.Error("zz should not access m1")
 	}
+	// any 服务: 任意证书可访问
+	if rt := r.Match("9203", "/x"); !rt.Allows([]string{"zz"}) {
+		t.Error("any service should allow zz")
+	}
 	// ServicesAllowed 按角色过滤
 	svcs := r.ServicesAllowed([]string{"rb"})
 	if len(svcs) != 3 {
@@ -160,12 +174,12 @@ func TestRolesAuth(t *testing.T) {
 	}
 	svcs = r.ServicesAllowed([]string{"zz"})
 	if len(svcs) != 1 || svcs[0].Name != "svc-open" {
-		t.Errorf("zz should only see svc-open (*), got %+v", svcs)
+		t.Errorf("zz should only see svc-open (any), got %+v", svcs)
 	}
 	// 通道索引引用
 	r2, err := NewRouter([]Mapping{
 		{ID: "a", Listen: ":9301", Target: "http://127.0.0.1:1"},
-	}, []ServiceCfg{{Name: "s", Channels: []string{"0"}, Roles: []string{"x"}}})
+	}, []ServiceCfg{{Name: "s", Channels: []string{"0"}, Roles: []string{"x"}}}, []string{"x"})
 	if err != nil || len(r2.ServicesAllowed([]string{"x"})) != 1 {
 		t.Errorf("index channel ref failed: %v", err)
 	}

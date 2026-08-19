@@ -15,9 +15,10 @@ func testConfigManager(t *testing.T, mode string) (*ConfigManager, string) {
 	path := filepath.Join(dir, "config.toml")
 	cfg := DefaultConfig()
 	cfg.ConfigMode = mode
+	cfg.Roles = []string{"x"}
 	cfg.Mappings = []proxy.Mapping{{ID: "m1", Listen: ":9601", Target: "http://127.0.0.1:1"}}
 	cfg.Services = []proxy.ServiceCfg{{Name: "s1", Channels: []string{"m1"}, Roles: []string{"x"}}}
-	router, err := proxy.NewRouter(cfg.Mappings, cfg.Services)
+	router, err := proxy.NewRouter(cfg.Mappings, cfg.Services, cfg.Roles)
 	if err != nil {
 		t.Fatal(err)
 	}
