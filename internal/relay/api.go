@@ -398,5 +398,6 @@ func writeJSON(w http.ResponseWriter, v any) {
 }
 
 func writeErr(w http.ResponseWriter, err error) {
+	w.WriteHeader(http.StatusInternalServerError) // 失败必须非 2xx, 否则前端无法区分
 	writeJSON(w, map[string]string{"error": err.Error()})
 }

@@ -61,6 +61,7 @@ async function api(path, opts) {
   const resp = await fetch(path, opts);
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) throw new Error(data.error || ("HTTP " + resp.status));
+  if (data && data.error) throw new Error(data.error);
   return data;
 }
 const jpost = (body) => ({
