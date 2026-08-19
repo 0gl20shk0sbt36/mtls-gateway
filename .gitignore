@@ -43,3 +43,4 @@ certs/
 *.bak-*
 .idea/
 .vscode/
+node_modules/

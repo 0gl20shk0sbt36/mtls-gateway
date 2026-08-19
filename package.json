@@ -1,0 +1,12 @@
+{
+  "name": "mtls-gateway-webui",
+  "private": true,
+  "description": "WebUI 前端测试 (node:test + playwright-core)",
+  "scripts": {
+    "test:webui": "node --test \"internal/relayweb/web/test/*.test.js\"",
+    "test:e2e": "node --test \"internal/relayweb/web/e2e/*.test.mjs\""
+  },
+  "devDependencies": {
+    "playwright-core": "^1.45.0"
+  }
+}

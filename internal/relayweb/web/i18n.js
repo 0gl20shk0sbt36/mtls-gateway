@@ -267,6 +267,10 @@
     return lang;
   }
 
-  // 全局暴露
-  window.I18N = { t, setLang, currentLang, detect, langOptions, currentLangLabel };
+  // 全局暴露 (Node 单测: module.exports)
+  if (typeof module !== "undefined" && module.exports) {
+    module.exports = { L, LANGS };
+  } else {
+    window.I18N = { t, setLang, currentLang, detect, langOptions, currentLangLabel };
+  }
 })();

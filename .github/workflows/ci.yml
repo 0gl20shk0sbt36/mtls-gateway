@@ -39,8 +39,45 @@ jobs:
           go build -o /tmp/mtls-gw ./cmd/mtls-gw
           go build -o /tmp/mtls-gw-cli ./cmd/mtls-gw-cli
           go build -o /tmp/mtls-relay ./cmd/mtls-relay
-          go build -o /tmp/mtls-relay-cli ./cmd/mtls-relay-cli
-          file /tmp/mtls-gw /tmp/mtls-gw-cli /tmp/mtls-relay /tmp/mtls-relay-cli
+
+  webui-unit:
+    name: WebUI unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install deps
+        run: npm install
+      - name: Run unit tests
+        run: npm run test:webui
+
+  webui-e2e:
+    name: WebUI E2E (playwright)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install deps
+        run: npm install
+      - name: Install chromium
+        run: npx playwright-core install chromium --with-deps
+      - name: Setup E2E env (gw + relay + certs)
+        run: bash internal/relayweb/web/e2e/setup.sh
+      - name: Run E2E tests
+        run: npm run test:e2e
 
   windows-build:
     name: Cross-compile (windows)
