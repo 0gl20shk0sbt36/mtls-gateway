@@ -281,3 +281,73 @@ func TestAuthorizeIPMismatchAllowed(t *testing.T) {
 		t.Fatalf("expected allow when require_ip_bind=false: %v", err)
 	}
 }
+
+// testGatewayFiles 生成 CA + 服务器证书文件, 返回路径(供 New 直接调用)
+func testGatewayFiles(t *testing.T) (caPath, certPath, keyPath string) {
+	t.Helper()
+	dir := t.TempDir()
+	caKey, _ := rsa.GenerateKey(rand.Reader, 2048)
+	caTmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(101), Subject: pkix.Name{CommonName: "tls-test-ca"},
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(24 * time.Hour),
+		IsCA: true, KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature, BasicConstraintsValid: true,
+	}
+	caDER, err := x509.CreateCertificate(rand.Reader, caTmpl, caTmpl, &caKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatalf("create ca: %v", err)
+	}
+	caCert, _ := x509.ParseCertificate(caDER)
+	sk, _ := rsa.GenerateKey(rand.Reader, 2048)
+	stmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(102), Subject: pkix.Name{CommonName: "tls-test-server"},
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(24 * time.Hour),
+		IPAddresses: []net.IP{net.ParseIP("127.0.0.1")},
+	}
+	sDER, err := x509.CreateCertificate(rand.Reader, stmpl, caCert, &sk.PublicKey, caKey)
+	if err != nil {
+		t.Fatalf("create server: %v", err)
+	}
+	caPath = filepath.Join(dir, "ca.crt")
+	certPath = filepath.Join(dir, "server.crt")
+	keyPath = filepath.Join(dir, "server.key")
+	writePEM(t, caPath, caDER)
+	writePEM(t, certPath, sDER)
+	writeKeyPEM(t, keyPath, sk)
+	return
+}
+
+// L7: tls_min_version 校验(1.2/1.3/非法)
+func TestTLSMinVersionValidation(t *testing.T) {
+	store := testStore(t)
+	caPath, certPath, keyPath := testGatewayFiles(t)
+	for _, v := range []string{"1.2", "1.3"} {
+		g, err := New(store, caPath, certPath, keyPath, false, DefaultAdminRole, v)
+		if err != nil {
+			t.Fatalf("tls_min_version=%s should be ok: %v", v, err)
+		}
+		if g.ServerTLSConfig().MinVersion == 0 {
+			t.Fatalf("tls_min_version=%s not applied", v)
+		}
+	}
+	if _, err := New(store, caPath, certPath, keyPath, false, DefaultAdminRole, "1.0"); err == nil {
+		t.Fatal("tls_min_version=1.0 should be rejected")
+	}
+	if _, err := New(store, caPath, certPath, keyPath, false, DefaultAdminRole, "garbage"); err == nil {
+		t.Fatal("garbage tls_min_version should be rejected")
+	}
+}
+
+// L7: IsAdminPurpose / IsAdmin
+func TestIsAdminPurpose(t *testing.T) {
+	if !IsAdminPurpose(DefaultAdminRole) {
+		t.Fatal("DefaultAdminRole should be admin")
+	}
+	if IsAdminPurpose("dsh") {
+		t.Fatal("dsh should not be admin")
+	}
+	rec := &db.CertRecord{Name: "x", Purposes: []string{DefaultAdminRole}}
+	g := &Gateway{AdminRole: DefaultAdminRole}
+	if !g.IsAdmin(rec) {
+		t.Fatal("admin purpose record should be admin")
+	}
+}

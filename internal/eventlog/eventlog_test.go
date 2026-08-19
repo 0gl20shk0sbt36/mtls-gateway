@@ -56,3 +56,22 @@ func TestJSONShape(t *testing.T) {
 		}
 	}
 }
+
+// L3: maxFiles 保留策略 — 超过后最旧被修剪
+func TestRotatePrunesOldFiles(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "evt2.log")
+	l, err := New(path, 1, 2) // 只留 2 份历史
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	big := strings.Repeat("y", 700*1024)
+	for i := 0; i < 6; i++ {
+		l.Write(Event{Type: "access", Cert: "c1", Msg: big})
+	}
+	files := l.Files()
+	if len(files) > 3 { // 当前 + 2 份历史
+		t.Fatalf("maxFiles=2 should keep <=3 files, got %d: %v", len(files), files)
+	}
+}
