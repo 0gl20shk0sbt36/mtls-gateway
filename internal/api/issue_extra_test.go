@@ -2,6 +2,7 @@ package api
 
 import (
 	"crypto/ecdsa"
+	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
 	"net"
@@ -176,6 +177,9 @@ func TestIssueCert_RSA_4096(t *testing.T) {
 	cert := parseCertPEM(t, resp.CertPEM)
 	if cert.PublicKeyAlgorithm != x509.RSA {
 		t.Fatalf("expected RSA, got %v", cert.PublicKeyAlgorithm)
+	}
+	if k, ok := cert.PublicKey.(*rsa.PublicKey); !ok || k.N.BitLen() != 4096 {
+		t.Fatalf("expected 4096-bit RSA key, got %T %v", cert.PublicKey, k)
 	}
 }
 

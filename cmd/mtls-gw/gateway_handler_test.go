@@ -288,26 +288,72 @@ func TestGatewayHandler_UnregisteredCert(t *testing.T) {
 	}
 }
 
-// H3: 有权证书但路径不匹配 → 404(用整口兜底外的路径场景)
+// H3: 无路径映射=整口兜底; 404 分支用纯路径映射通道验证
 func TestGatewayHandler_NoRoute(t *testing.T) {
-	back := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	back := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("ok"))
+	}))
 	defer back.Close()
-	env, srv, cl := newGWTestEnv(t, map[string]*httptest.Server{"ok": back})
-	cert := genClientCert(t, t.TempDir(), "dev-a", env.caCert, env.caKey)
-	env.registerCert("dev-a", []string{"svc-a"}, cert)
-	// m1 无路径 = 整口兜底, /no/such/route 命中 m1 → 200(验证兜底)
-	resp, err := clientWith(cl, cert).Get(srv.URL + "/no/such/route")
+	dir := t.TempDir()
+	caCert, caKey, caPath, _ := genCA(t, dir)
+	certPath, keyPath := genServerCert(t, dir, caCert, caKey)
+	store, _ := db.Open(filepath.Join(dir, "gw.db"))
+	defer store.Close()
+	gw, err := auth.New(store, caPath, certPath, keyPath, false, "mtls-superadmin", "1.2")
+	if err != nil {
+		t.Fatalf("auth: %v", err)
+	}
+	cfg := DefaultConfig()
+	cfg.Roles = []string{"svc-a"}
+	// 只有带路径的映射: :9601/admin — 无整口兜底
+	cfg.Mappings = []proxy.Mapping{{ID: "m1x", Listen: ":9601/admin", Target: back.URL}}
+	cfg.Services = []proxy.ServiceCfg{{Name: "svc-a", Channels: []string{"m1x"}, Roles: []string{"svc-a"}}}
+	router, _ := proxy.NewRouter(cfg.Mappings, cfg.Services, cfg.Roles)
+	cm := NewConfigManager(filepath.Join(dir, "c.toml"), cfg, router)
+	accPath := filepath.Join(dir, "a.log")
+	acc, _ := eventlog.New(accPath, 5, 2)
+	defer acc.Close()
+
+	h := gatewayHandler(gw, cm, "9601", acc)
+	srv := httptest.NewUnstartedServer(h)
+	srv.TLS = gw.ServerTLSConfig()
+	srv.StartTLS()
+	defer srv.Close()
+
+	cert := genClientCert(t, t.TempDir(), "dev-a", caCert, caKey)
+	leaf, _ := x509.ParseCertificate(cert.Certificate[0])
+	store.Upsert(db.CertRecord{Serial: leaf.SerialNumber.String(), Name: "dev-a", Purposes: []string{"svc-a"}, Status: "enabled", IssuedAt: time.Now().Format(time.RFC3339), ExpiresAt: "2099-01-01"})
+	pool := x509.NewCertPool()
+	pool.AddCert(caCert)
+	cl := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, Certificates: []tls.Certificate{cert}}}}
+
+	// 命中 /admin → 200
+	resp, err := cl.Get(srv.URL + "/admin/x")
 	if err != nil {
 		t.Fatalf("req: %v", err)
 	}
 	resp.Body.Close()
 	if resp.StatusCode != 200 {
-		t.Fatalf("whole-port fallback should be 200, got %d", resp.StatusCode)
+		t.Fatalf("admin path should be 200, got %d", resp.StatusCode)
 	}
-	// 404 路径: 网关路由不匹配时 — 用 infoHandler 无路由场景无法测; 直接用 proxy.Match 验证
-	// router.Match 对不存在端口返回 nil(路由层 404 由外层判定)
-	if rt := env.cm.Router().Match("9999", "/x"); rt != nil {
-		t.Fatal("match on unknown port should be nil")
+	// 无整口兜底: /other 不匹配任何映射 → 404
+	resp2, err := cl.Get(srv.URL + "/other")
+	if err != nil {
+		t.Fatalf("req2: %v", err)
+	}
+	b2, _ := io.ReadAll(resp2.Body)
+	resp2.Body.Close()
+	if resp2.StatusCode != 404 {
+		t.Fatalf("no route should be 404, got %d body: %s", resp2.StatusCode, b2)
+	}
+	if !strings.Contains(string(b2), "no route") {
+		t.Fatalf("404 body should mention no route: %s", b2)
+	}
+	// deny 事件(404)已写入
+	acc.Close()
+	data, _ := os.ReadFile(accPath)
+	if !strings.Contains(string(data), `"status":404`) {
+		t.Fatalf("404 deny event missing: %s", string(data)[:min(len(data), 200)])
 	}
 }
 
@@ -372,8 +418,11 @@ func TestInfoHandler_FiltersByRole(t *testing.T) {
 	if resp.StatusCode != 200 {
 		t.Fatalf("info status: %d", resp.StatusCode)
 	}
-	if strings.Contains(string(b), "svc-a") && !strings.Contains(string(b), "any-svc") {
-		t.Fatalf("admin should only see any-svc: %s", b)
+	if strings.Contains(string(b), "svc-a") {
+		t.Fatalf("admin should not see svc-a: %s", b)
+	}
+	if !strings.Contains(string(b), "any-svc") {
+		t.Fatalf("admin should see any-svc: %s", b)
 	}
 }
 
