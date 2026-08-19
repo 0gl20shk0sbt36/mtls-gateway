@@ -332,7 +332,7 @@ func (m *Manager) handler(isLocal bool) http.Handler {
 	mux.HandleFunc("POST /admin/certs/issue", func(w http.ResponseWriter, r *http.Request) {
 		if !isLocal {
 			// 远程通道: 管理 API 只给 admin 用途 (由外层 middleware 检查, 这里再兜底)
-			if r.Header.Get("X-Auth-Purpose") != "admin" {
+			if r.Header.Get("X-Auth-Purpose") != m.AdminRole {
 				http.Error(w, "admin required", http.StatusForbidden)
 				return
 			}
@@ -350,7 +350,7 @@ func (m *Manager) handler(isLocal bool) http.Handler {
 		json.NewEncoder(w).Encode(resp)
 	})
 	mux.HandleFunc("POST /admin/certs/revoke", func(w http.ResponseWriter, r *http.Request) {
-		if !isLocal && r.Header.Get("X-Auth-Purpose") != "admin" {
+		if !isLocal && r.Header.Get("X-Auth-Purpose") != m.AdminRole {
 			http.Error(w, "admin required", http.StatusForbidden)
 			return
 		}
@@ -368,7 +368,7 @@ func (m *Manager) handler(isLocal bool) http.Handler {
 		json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 	})
 	mux.HandleFunc("GET /admin/certs", func(w http.ResponseWriter, r *http.Request) {
-		if !isLocal && r.Header.Get("X-Auth-Purpose") != "admin" {
+		if !isLocal && r.Header.Get("X-Auth-Purpose") != m.AdminRole {
 			http.Error(w, "admin required", http.StatusForbidden)
 			return
 		}
@@ -386,7 +386,7 @@ func (m *Manager) HTTPHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// 管理路径只允许 admin 用途
 		if strings.HasPrefix(r.URL.Path, "/api/") {
-			if r.Header.Get("X-Auth-Purpose") != "admin" {
+			if r.Header.Get("X-Auth-Purpose") != m.AdminRole {
 				http.Error(w, "admin required", http.StatusForbidden)
 				return
 			}

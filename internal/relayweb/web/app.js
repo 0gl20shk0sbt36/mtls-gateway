@@ -224,6 +224,10 @@ async function init() {
   $("adminRevoke").onclick = adminRevoke;
   $("cfgAddMapping").onclick = cfgAddMapping;
   $("cfgAddService").onclick = cfgAddService;
+  $("nmapOk").onclick = nmapOk;
+  $("nmapCancel").onclick = () => { $("cfgAddMappingForm").style.display = "none"; };
+  $("nsvcOk").onclick = nsvcOk;
+  $("nsvcCancel").onclick = () => { $("cfgAddServiceForm").style.display = "none"; };
   initMultiSel("newPurposesBtn", "newPurposesList");
   initSel("pwdModeBtn", "pwdModeList", (it) => { $("newCertPwd").disabled = it.value !== "custom"; });
   setSel("pwdModeList", [
@@ -378,23 +382,33 @@ document.addEventListener("click", (e) => {
   }
 });
 
-async function cfgAddMapping() {
-  const id = prompt("通道 id(助记符):");
-  if (!id) return;
-  const listen = prompt("listen (:端口[/路径]):");
-  if (!listen) return;
-  const target = prompt("target (后端 URL):");
-  if (!target) return;
-  cfgDo("/api/admin/mapping", { method: "POST", mapping: { id, listen, target } });
+function cfgAddMapping() {
+  if (!CFG || CFG.mode === "immutable") { cfgSay("immutable 模式不可修改", true); return; }
+  $("cfgAddServiceForm").style.display = "none";
+  $("cfgAddMappingForm").style.display = "";
+  $("nmapId").focus();
 }
-async function cfgAddService() {
-  const name = prompt("服务名:");
-  if (!name) return;
-  const ch = prompt("通道(id, 逗号分隔):");
-  if (!ch) return;
-  const roles = prompt("roles(逗号分隔; * = 任意):");
-  if (!roles) return;
-  cfgDo("/api/admin/service", { method: "POST", service: { name, channels: ch.split(",").map(x => x.trim()).filter(Boolean), roles: roles.split(",").map(x => x.trim()).filter(Boolean) } });
+async function nmapOk() {
+  const id = $("nmapId").value.trim(), listen = $("nmapListen").value.trim(), target = $("nmapTarget").value.trim();
+  if (!id || !listen || !target) { cfgSay("id/listen/target 都要填", true); return; }
+  if (await cfgDo("/api/admin/mapping", { method: "POST", mapping: { id, listen, target } })) {
+    $("cfgAddMappingForm").style.display = "none";
+    $("nmapId").value = $("nmapListen").value = $("nmapTarget").value = "";
+  }
+}
+function cfgAddService() {
+  if (!CFG || CFG.mode === "immutable") { cfgSay("immutable 模式不可修改", true); return; }
+  $("cfgAddMappingForm").style.display = "none";
+  $("cfgAddServiceForm").style.display = "";
+  $("nsvcName").focus();
+}
+async function nsvcOk() {
+  const name = $("nsvcName").value.trim(), ch = $("nsvcCh").value.trim(), roles = $("nsvcRoles").value.trim();
+  if (!name || !ch || !roles) { cfgSay("name/channels/roles 都要填", true); return; }
+  if (await cfgDo("/api/admin/service", { method: "POST", service: { name, channels: ch.split(",").map(x => x.trim()).filter(Boolean), roles: roles.split(",").map(x => x.trim()).filter(Boolean) } })) {
+    $("cfgAddServiceForm").style.display = "none";
+    $("nsvcName").value = $("nsvcCh").value = $("nsvcRoles").value = "";
+  }
 }
 
 async function adminIssue() {

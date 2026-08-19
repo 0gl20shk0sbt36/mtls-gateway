@@ -215,6 +215,24 @@
           <button type="button" class="primary small" id="cfgAddMapping">新增通道</button>
           <button type="button" class="ghost small" id="cfgAddService">新增服务</button>
         </div>
+        <div id="cfgAddMappingForm" style="display:none;margin-top:8px">
+          <div class="row">
+            <input id="nmapId" placeholder="id (助记符)" style="width:110px">
+            <input id="nmapListen" placeholder=":端口[/路径]" style="flex:1">
+            <input id="nmapTarget" placeholder="target (后端 URL)" style="flex:1.6">
+            <button type="button" class="primary small" id="nmapOk">确定</button>
+            <button type="button" class="ghost small" id="nmapCancel">取消</button>
+          </div>
+        </div>
+        <div id="cfgAddServiceForm" style="display:none;margin-top:8px">
+          <div class="row">
+            <input id="nsvcName" placeholder="服务名" style="width:110px">
+            <input id="nsvcCh" placeholder="通道(id, 逗号)" style="flex:1">
+            <input id="nsvcRoles" placeholder="roles(逗号; *=任意)" style="flex:1">
+            <button type="button" class="primary small" id="nsvcOk">确定</button>
+            <button type="button" class="ghost small" id="nsvcCancel">取消</button>
+          </div>
+        </div>
         <div class="hint" id="cfgResult" style="margin-top:8px;white-space:pre-wrap"></div>
       </div>
     </div>
