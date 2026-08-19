@@ -292,6 +292,9 @@ async function init() {
   $("adminVerify").onclick = verifyAdmin;
   $("adminPwd").onkeydown = (e) => { if (e.key === "Enter") verifyAdmin(); }; // 回车即验证
   $("adminIssue").onclick = adminIssue;
+  // 证书管理表单即时校验(红框)
+  $("newName").oninput = () => { const v = $("newName").value.trim(); $("newName").classList.toggle("err", v !== "" && !RE_NAME.test(v)); };
+  $("newTSIP").oninput = () => { const v = $("newTSIP").value.trim(); $("newTSIP").classList.toggle("err", v !== "" && !/^[\d.:a-fA-F]+$/.test(v)); };
   $("adminRevoke").onclick = adminRevoke;
   $("cfgSave").onclick = cfgSave;
   $("cfgCancel").onclick = cfgCancel;
@@ -399,6 +402,59 @@ async function loadAdminData() {
   } catch (e) { /* 加载失败不阻塞 */ }
 }
 
+// 新建通道的 target 自动联动: 填 listen 时自动拼到 http://127.0.0.1 后面;
+// target 被手动修改后(TARGET_TOUCHED)停止联动
+const TARGET_TOUCHED = new WeakSet();
+function autoTarget(listen) {
+  if (!listen) return "http://127.0.0.1";
+  return "http://127.0.0.1" + (listen.startsWith(":") ? listen : ":" + listen);
+}
+
+// ---- 配置区前端校验(本地即时 + 保存前整体) ----
+const RE_LISTEN = /^:\d{1,5}(\/[A-Za-z0-9_\-./]+)?$/;
+const RE_NAME = /^[A-Za-z0-9_-]+$/;
+
+// 单字段即时格式检查: 非法→红框, 合法→移除
+function cfgFieldCheck(inp) {
+  const i = +inp.dataset.i;
+  const k = inp.dataset.cfg;
+  const v = inp.value.trim();
+  let bad = false;
+  if (k === "m-listen") bad = v !== "" && !RE_LISTEN.test(v);
+  else if (k === "m-target") bad = v !== "" && !/^https?:\/\/\S+/.test(v);
+  else if (k === "m-id") bad = v !== "" && !RE_NAME.test(v);
+  else if (k === "s-name") bad = v !== "" && !RE_NAME.test(v);
+  inp.classList.toggle("err", bad);
+}
+
+// cfgValidate: 保存前整体校验, 返回错误列表(与服务端规则一致)
+function cfgValidate() {
+  const errs = [];
+  const mIds = new Set(), listens = new Set(), svcNames = new Set();
+  (DRAFT.mappings || []).forEach((m, i) => {
+    if (!m.id.trim()) errs.push(`通道 ${i + 1}: id 不能为空`);
+    else if (!RE_NAME.test(m.id)) errs.push(`通道 ${i + 1}: id 只允许字母/数字/下划线/连字符`);
+    else if (mIds.has(m.id)) errs.push(`通道 id 重复: ${m.id}`);
+    else mIds.add(m.id);
+    if (!m.listen.trim()) errs.push(`通道 ${i + 1}: listen 不能为空`);
+    else if (!RE_LISTEN.test(m.listen.trim())) errs.push(`通道 ${i + 1}: listen 格式应为 :端口[/路径]`);
+    else if (listens.has(m.listen)) errs.push(`监听地址重复: ${m.listen}`);
+    else listens.add(m.listen);
+    if (!m.target.trim()) errs.push(`通道 ${i + 1}: target 不能为空`);
+    else if (!/^https?:\/\/\S+/.test(m.target.trim())) errs.push(`通道 ${i + 1}: target 应为 http(s)://host:port`);
+  });
+  (DRAFT.services || []).forEach((s, i) => {
+    if (!s.name.trim()) errs.push(`服务 ${i + 1}: name 不能为空`);
+    else if (!RE_NAME.test(s.name)) errs.push(`服务 ${i + 1}: name 只允许字母/数字/下划线/连字符`);
+    else if (svcNames.has(s.name)) errs.push(`服务名重复: ${s.name}`);
+    else svcNames.add(s.name);
+    if (!(s.channels || []).length) errs.push(`服务 ${s.name || i + 1}: 至少选一个通道`);
+    (s.channels || []).forEach((c) => { if (!mIds.has(c)) errs.push(`服务 ${s.name}: 通道引用不存在 ${c}`); });
+    (s.roles || []).forEach((r) => { if (r !== "any" && !(DRAFT.roles || []).includes(r)) errs.push(`服务 ${s.name}: 角色 ${r} 未声明`); });
+  });
+  return errs;
+}
+
 function renderCfg() {
   const imm = CFG.mode === "immutable";
   $("cfgMode").textContent = CFG.mode + (imm ? " 🔒" : "");
@@ -486,7 +542,7 @@ function renderCfg() {
     };
     const nr = $("cfgNewRole");
     if (nr) nr.onkeydown = roleEnter;
-    $("cfgAddMap").onclick = () => { DRAFT.mappings.push({ id: "", listen: "", target: "" }); renderCfg(); };
+    $("cfgAddMap").onclick = () => { DRAFT.mappings.push({ id: "", listen: "", target: "http://127.0.0.1" }); renderCfg(); };
     $("cfgAddSvc").onclick = () => { DRAFT.services.push({ name: "", channels: [], roles: [] }); renderCfg(); };
     // 服务行多选 (any 置顶; 互斥由组件处理)
     s.forEach((x, i) => {
@@ -499,13 +555,22 @@ function renderCfg() {
     });
   }
   cfgSync();
-  // 输入 → DRAFT
+  // 输入 → DRAFT (listen 联动 target, 手动改过 target 后停止)
   document.querySelectorAll("input[data-cfg]").forEach((inp) => {
     inp.addEventListener("input", () => {
       const i = +inp.dataset.i;
       const k = inp.dataset.cfg;
-      if (k.startsWith("m-")) DRAFT.mappings[i][k.slice(2)] = inp.value;
-      else if (k.startsWith("s-")) DRAFT.services[i][k.slice(2)] = inp.value;
+      if (k.startsWith("m-")) {
+        const obj = DRAFT.mappings[i];
+        obj[k.slice(2)] = inp.value;
+        if (k === "m-listen" && !TARGET_TOUCHED.has(obj)) {
+          obj.target = autoTarget(inp.value); // 自动补 http://127.0.0.1 + listen
+          const tgt = document.querySelector(`input[data-cfg="m-target"][data-i="${i}"]`);
+          if (tgt) tgt.value = obj.target;
+        }
+      } else if (k.startsWith("s-")) DRAFT.services[i][k.slice(2)] = inp.value;
+      if (k === "m-target") TARGET_TOUCHED.add(DRAFT.mappings[i]); // 手动改过 → 联动失效
+      cfgFieldCheck(inp); // 即时格式校验(红框)
       cfgSync(); // 有变更才点亮保存
     });
   });
@@ -535,6 +600,9 @@ function cfgSay(msg, err) { $("cfgResult").textContent = (err ? "✘ " : "✔ ")
 async function cfgSave() {
   const cert = getSel("adminCertList");
   if (!cert) return;
+  // 保存前整体校验(本地, 与服务端规则一致)
+  const errs = cfgValidate();
+  if (errs.length) { cfgSay(errs[0], true); toast(errs[0], true); return; }
   try {
     await api("/api/admin/config", {
       method: "PUT",
@@ -552,7 +620,15 @@ async function adminIssue() {
   const cert = getSel("adminCertList");
   const name = $("newName").value.trim();
   const purps = getMultiSel("newPurposesList");
-  if (!cert || !name || !purps.length) { toast(t("issueNeed"), true); return; }
+  // 本地校验(与服务端 IssueCert 规则一致)
+  const errs = [];
+  if (!cert) errs.push(t("needCertForTunnel"));
+  if (!name) errs.push(t("issueNeedName"));
+  else if (!RE_NAME.test(name)) errs.push(t("issueBadName"));
+  if (!purps.length) errs.push(t("issueNeedPurps"));
+  const tsip = $("newTSIP").value.trim();
+  if (tsip && !/^[\d.:a-fA-F]+$/.test(tsip)) errs.push(t("issueBadIP"));
+  if (errs.length) { toast(errs[0], true); return; }
   const pwdMode = getSel("pwdModeList") || "auto";
   const body = { cert_id: cert, load_pwd: ADMIN_PWD, name, purposes: purps, ts_ip: $("newTSIP").value.trim() };
   if (pwdMode === "none") body.no_password = true;
