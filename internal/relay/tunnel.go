@@ -165,10 +165,17 @@ func (rt *tunnelRuntime) localHTTPHandler(localPath string) http.Handler {
 			http.Error(w, "local path prefix mismatch: "+p, http.StatusNotFound)
 			return
 		}
-		init() // 每次请求: 内部按 serverAddr/证书轮换条件判断是否重建
+		// double-checked locking: 快路径只读锁判断是否需重建(serverAddr 变化/证书轮换窗口)
 		mu.RLock()
+		need := rp == nil || builtHost != rt.r.serverHost() || time.Since(builtAt) >= certCacheTTL
 		r := rp
 		mu.RUnlock()
+		if need {
+			init() // 重建(写锁内)
+			mu.RLock()
+			r = rp
+			mu.RUnlock()
+		}
 		if r == nil {
 			http.Error(w, "upstream not ready (retry later)", http.StatusBadGateway)
 			return

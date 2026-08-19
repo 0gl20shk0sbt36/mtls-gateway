@@ -463,3 +463,59 @@ func TestCleanDotSegments(t *testing.T) {
 		}
 	}
 }
+
+// 第十九批: serverAddr 变化触发 HTTP 反代重建(代理命中新网关)
+func TestTunnelHTTPRebuildOnServerAddrChange(t *testing.T) {
+	// 两个 echo 网关, 响应不同标记
+	h1 := newHarness(t)
+	defer h1.close()
+	src := h1.buildSrc(t)
+	localPort := freePort(t)
+	r := New("", src)
+	defer r.Close()
+	cfg := RelayConfig{
+		ListenHost: "127.0.0.1", ServerAddr: h1.gwAddr, ServerCAFile: h1.caPath,
+		Tunnels: []Tunnel{{
+			Service: "s1",
+			Routes:  []TunnelRoute{{Channel: ":" + gwPortOf(h1.gwAddr) + "/p", Local: fmt.Sprintf(":%d/p", localPort)}},
+			CertID:  h1.clientPairPath, Enabled: true,
+		}},
+	}
+	if err := r.Start(cfg); err != nil {
+		t.Fatal(err)
+	}
+	// 等监听
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		c, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", localPort))
+		if err == nil {
+			c.Close()
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("tunnel not listening: %v", err)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	// 首次请求(构建 rp)
+	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/p/x", localPort))
+	if err != nil {
+		t.Fatalf("first req: %v", err)
+	}
+	resp.Body.Close()
+	// Reload 换 ServerAddr(端口+1 的假地址 → 重建条件 builtHost 变化)
+	badAddr := fmt.Sprintf("127.0.0.1:%d", freePort(t)) // 无监听 → 502 证明用了新地址
+	cfg.ServerAddr = badAddr
+	if err := r.Reload(cfg); err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	// 再次请求: builtHost 变化 → 重建 → 拨新地址(无监听 → 502)
+	resp2, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/p/x", localPort))
+	if err == nil {
+		b, _ := io.ReadAll(resp2.Body)
+		resp2.Body.Close()
+		if resp2.StatusCode != 502 {
+			t.Fatalf("after serverAddr change, expect 502 (new addr unreachable), got %d: %s", resp2.StatusCode, b)
+		}
+	}
+}

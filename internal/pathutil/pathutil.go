@@ -8,7 +8,7 @@ import "strings"
 // 仅用于以 / 开头的 URL 路径。
 func CleanDotSegments(p string) string {
 	// 短路: 无点段且无反斜杠的路径原样返回(热路径零分配)
-	if !strings.Contains(p, "/.") && !strings.Contains(p, "\\.") && !strings.Contains(p, "\\") {
+	if !strings.Contains(p, "/.") && !strings.Contains(p, "\\") {
 		return p
 	}
 	p = strings.ReplaceAll(p, "\\", "/") // 反斜杠归一化为分隔符(URL path 中 \ 无特殊语义)
