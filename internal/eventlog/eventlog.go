@@ -5,6 +5,7 @@ package eventlog
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -114,7 +115,10 @@ func (l *Logger) Write(ev Event) {
 	if l.size+int64(len(b)) > l.maxSize {
 		l.rotate()
 	}
-	n, _ := l.f.Write(b)
+	n, err := l.f.Write(b)
+	if err != nil || n != len(b) {
+		log.Printf("eventlog write: n=%d err=%v", n, err)
+	}
 	l.size += int64(n)
 }
 

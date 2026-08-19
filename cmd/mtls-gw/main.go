@@ -16,8 +16,10 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -196,7 +198,11 @@ func main() {
 		}()
 	}
 
-	select {}
+	// 优雅退出: SIGINT/SIGTERM (避免 goroutine 内 log.Fatalf 跳过 defer Close)
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
+	<-quit
+	log.Println("shutting down...")
 }
 
 // statusWriter 包装 ResponseWriter: 记录状态码与响应字节数(访问日志用)

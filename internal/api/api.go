@@ -20,6 +20,7 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"crypto/sha256"
 	"os"
 	"path/filepath"
 	"strings"
@@ -344,7 +345,7 @@ func (m *Manager) IssueCert(req IssueRequest) (*IssueResponse, error) {
 		Status:      "enabled",
 		IssuedAt:    notBefore.Format(time.RFC3339),
 		ExpiresAt:   notAfter.Format("2006-01-02"),
-		Fingerprint: fmt.Sprintf("%X", cert.RawSubjectPublicKeyInfo),
+		Fingerprint: fmt.Sprintf("%X", sha256.Sum256(cert.Raw)), // SHA-256 指纹
 	}
 	if err := m.store.Upsert(rec); err != nil {
 		return nil, err

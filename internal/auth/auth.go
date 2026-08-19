@@ -107,23 +107,22 @@ func (g *Gateway) Authorize(r *http.Request) (*db.CertRecord, error) {
 		return nil, err
 	}
 
-	// 1. 取证书 SAN IP (绑定检查用)
-	var sanIP string
-	for _, ip := range cert.IPAddresses {
-		sanIP = ip.String()
-		break // 证书只绑一个 TS IP
-	}
-
 	// 2. IP 预检: 证书绑定的 IP 必须等于来源 IP (防私钥复制到别的设备)
-	//    仅当 requireIPBind=true (默认); false = 允许不绑 IP 的证书 (配置显式关闭)
+	//    多 SAN IP 时任一命中即可; 仅当 requireIPBind=true (默认); false = 允许不绑 IP (配置显式关闭)
 	remote := RemoteIP(r)
 	if g.requireIPBind {
-		if sanIP != "" && sanIP != remote {
-			return nil, fmt.Errorf("ip bind mismatch: cert=%s remote=%s", sanIP, remote)
-		}
-		// 证书没绑 IP 时, 视为未绑定 → 拒绝 (除非关闭 IP 绑定要求)
-		if sanIP == "" {
+		if len(cert.IPAddresses) == 0 {
 			return nil, fmt.Errorf("cert has no IP bind but require_ip_bind=true")
+		}
+		matched := false
+		for _, ip := range cert.IPAddresses {
+			if ip.String() == remote {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return nil, fmt.Errorf("ip bind mismatch: remote=%s", remote)
 		}
 	}
 	// requireIPBind=false: 跳过 IP 预检, 仅凭证书身份授权
