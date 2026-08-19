@@ -18,11 +18,11 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/net/websocket"
 	"mtls-gateway/internal/auth"
 	"mtls-gateway/internal/db"
 	"mtls-gateway/internal/eventlog"
 	"mtls-gateway/internal/proxy"
-	"golang.org/x/net/websocket"
 )
 
 // gwTestEnv 完整测试环境: CA/服务器证书/客户端证书/网关/日志

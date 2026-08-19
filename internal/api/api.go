@@ -11,6 +11,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/json"
@@ -20,7 +21,6 @@ import (
 	"math/big"
 	"net"
 	"net/http"
-	"crypto/sha256"
 	"os"
 	"path/filepath"
 	"strings"
@@ -59,15 +59,15 @@ type Manager struct {
 	store     *db.Store
 	caCert    *x509.Certificate
 	caKey     *rsa.PrivateKey
-	certDir   string       // 已签发证书输出目录
-	sockPath  string       // Unix socket 路径
-	adminOnly bool         // TCP 通道是否要求 admin 用途
-	tmpl      CertTemplate // 证书模板 (可配置)
-	AdminRole string       // 内置管理角色名 (config admin_role)
-	KeyType   string       // 签发密钥类型: rsa | ecdsa
-	KeyBits   int          // rsa: 2048/3072/4096; ecdsa: 256/384/521
-	PwdLength int          // 自动生成 p12 密码长度
-	rolesMu   sync.RWMutex // 保护 roles(热更新与签发并发)
+	certDir   string          // 已签发证书输出目录
+	sockPath  string          // Unix socket 路径
+	adminOnly bool            // TCP 通道是否要求 admin 用途
+	tmpl      CertTemplate    // 证书模板 (可配置)
+	AdminRole string          // 内置管理角色名 (config admin_role)
+	KeyType   string          // 签发密钥类型: rsa | ecdsa
+	KeyBits   int             // rsa: 2048/3072/4096; ecdsa: 256/384/521
+	PwdLength int             // 自动生成 p12 密码长度
+	rolesMu   sync.RWMutex    // 保护 roles(热更新与签发并发)
 	roles     map[string]bool // 声明角色集合 (签发 purposes 校验用)
 }
 
@@ -164,12 +164,12 @@ func (m *Manager) hasRole(p string) bool {
 
 // IssueRequest 签发请求
 type IssueRequest struct {
-	Name     string   `json:"name"`     // 设备名
-	Purposes []string `json:"purposes"` // 可访问的用途列表: admin | dsh | vaultwarden | ...
-	TSIP     string   `json:"ts_ip"`    // 绑定 TS IP (写入 SAN)
-	Days     int      `json:"days"`     // 有效期天数 (默认 365)
-	Password   string `json:"password"`     // p12 密码; 留空且未设 NoPassword 时自动生成
-	NoPassword bool   `json:"no_password"`  // true = 无密码(留空=真的没密码)
+	Name       string   `json:"name"`        // 设备名
+	Purposes   []string `json:"purposes"`    // 可访问的用途列表: admin | dsh | vaultwarden | ...
+	TSIP       string   `json:"ts_ip"`       // 绑定 TS IP (写入 SAN)
+	Days       int      `json:"days"`        // 有效期天数 (默认 365)
+	Password   string   `json:"password"`    // p12 密码; 留空且未设 NoPassword 时自动生成
+	NoPassword bool     `json:"no_password"` // true = 无密码(留空=真的没密码)
 }
 
 // normalizePurposes 规范化用途列表, 返回警告列表 (不终止)
@@ -177,6 +177,7 @@ type IssueRequest struct {
 //   - admin 在首位 + 有其他 → 警告, 仅保留 admin (剔除其他)
 //   - admin 在非首位 → 警告, 剔除 admin (保留其他)
 //   - 仅 admin → 无警告
+//
 // normalizePurposes 规范化用途列表; adminRole 为内置管理角色名(可配置)
 func (r *IssueRequest) normalizePurposes(adminRole string) (warnings []string) {
 	if len(r.Purposes) == 0 {

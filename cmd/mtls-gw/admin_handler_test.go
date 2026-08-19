@@ -24,15 +24,15 @@ import (
 
 // adminEnv adminHandler 完整测试环境
 type adminEnv struct {
-	store   *db.Store
-	gw      *auth.Gateway
-	cm      *ConfigManager
-	mgr     *api.Manager
-	ev      *eventlog.Logger
-	evPath  string
-	caCert  *x509.Certificate
-	caKey   *rsa.PrivateKey
-	srv     *httptest.Server
+	store    *db.Store
+	gw       *auth.Gateway
+	cm       *ConfigManager
+	mgr      *api.Manager
+	ev       *eventlog.Logger
+	evPath   string
+	caCert   *x509.Certificate
+	caKey    *rsa.PrivateKey
+	srv      *httptest.Server
 	adminTLS tls.Certificate // admin 客户端证书
 	userTLS  tls.Certificate // 普通证书(非 admin)
 }
@@ -195,6 +195,13 @@ func TestAdminHandler_IssueAndRevoke(t *testing.T) {
 	json.Unmarshal([]byte(body), &ir)
 	if ir.Serial == "" {
 		t.Fatalf("issue response: %s", body)
+	}
+	// 远程通道(HTTPHandler→handler(false))不回明文私钥(KeyPEM 置空 + omitempty 省略)
+	if ir.KeyPEM != "" {
+		t.Fatalf("remote channel must not return KeyPEM: %s", body)
+	}
+	if strings.Contains(body, "key_pem") {
+		t.Fatalf("remote channel JSON should omit key_pem: %s", body)
 	}
 	// 库中已登记
 	if len(e.store.FindByName("dev-http")) != 1 {

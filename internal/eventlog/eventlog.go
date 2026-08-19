@@ -83,18 +83,18 @@ func (l *Logger) rotate() {
 
 // Event 一条事件记录
 type Event struct {
-	Time    time.Time `json:"time"`
-	Type    string    `json:"type"` // start|stop|tunnel_add|tunnel_del|config_change|cert_issue|cert_revoke|access|deny
-	Cert    string    `json:"cert,omitempty"`
-	Serial  string    `json:"serial,omitempty"`
-	Role    string    `json:"role,omitempty"`
-	Channel string    `json:"channel,omitempty"`
-	Method  string    `json:"method,omitempty"`
-	Path    string    `json:"path,omitempty"`
-	Status  int       `json:"status,omitempty"`
-	BytesIn int64     `json:"bytes_in,omitempty"`
-	BytesOut int64    `json:"bytes_out,omitempty"`
-	Msg     string    `json:"msg,omitempty"`
+	Time     time.Time `json:"time"`
+	Type     string    `json:"type"` // start|stop|tunnel_add|tunnel_del|config_change|cert_issue|cert_revoke|access|deny
+	Cert     string    `json:"cert,omitempty"`
+	Serial   string    `json:"serial,omitempty"`
+	Role     string    `json:"role,omitempty"`
+	Channel  string    `json:"channel,omitempty"`
+	Method   string    `json:"method,omitempty"`
+	Path     string    `json:"path,omitempty"`
+	Status   int       `json:"status,omitempty"`
+	BytesIn  int64     `json:"bytes_in,omitempty"`
+	BytesOut int64     `json:"bytes_out,omitempty"`
+	Msg      string    `json:"msg,omitempty"`
 }
 
 // Write 写一条事件(JSON 行)

@@ -57,8 +57,10 @@ func NewHandler(mgr *relay.Manager, allowRemote bool) http.Handler {
 
 // sameOrigin DNS rebinding / CSRF 防护:
 // ① Host 必须为 loopback(localhost/127.0.0.1/::1) — 管理面无鉴权, 只服务本机;
-//    否则 DNS rebinding 攻击者可让 Origin 与 Host 同值(都为 evil.com)绕过纯 Origin 校验。
-//    allowRemote=true(--allow-remote 显式选择)时跳过此检查。
+//
+//	否则 DNS rebinding 攻击者可让 Origin 与 Host 同值(都为 evil.com)绕过纯 Origin 校验。
+//	allowRemote=true(--allow-remote 显式选择)时跳过此检查。
+//
 // ② 带 Origin 的请求(浏览器跨源)要求 Origin 的 host 与请求 Host 一致; 无 Origin(CLI/curl)放行。
 func sameOrigin(r *http.Request, allowRemote bool) bool {
 	if !allowRemote {

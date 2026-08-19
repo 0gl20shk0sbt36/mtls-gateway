@@ -120,9 +120,12 @@ func TestStatusWriterReadFromFallback(t *testing.T) {
 // noReaderFromWriter 仅实现 ResponseWriter(不含 ReaderFrom), 强制走回退分支
 type noReaderFromWriter struct{ buf []byte }
 
-func (w *noReaderFromWriter) Header() http.Header         { return http.Header{} }
-func (w *noReaderFromWriter) WriteHeader(int)             {}
-func (w *noReaderFromWriter) Write(b []byte) (int, error) { w.buf = append(w.buf, b...); return len(b), nil }
+func (w *noReaderFromWriter) Header() http.Header { return http.Header{} }
+func (w *noReaderFromWriter) WriteHeader(int)     {}
+func (w *noReaderFromWriter) Write(b []byte) (int, error) {
+	w.buf = append(w.buf, b...)
+	return len(b), nil
+}
 
 // 第十四批: WriteHeader 幂等(双写只记首次)
 func TestStatusWriterWriteHeaderIdempotent(t *testing.T) {

@@ -35,7 +35,7 @@ func TestDetect(t *testing.T) {
 		{"", "", "zh_CN.UTF-8", Zh},
 		{"en_US.UTF-8", "", "", En},
 		{"", "", "en_US", En},
-		{"", "", "", Zh}, // 全空 → 默认 zh
+		{"", "", "", Zh},      // 全空 → 默认 zh
 		{"fr_FR", "", "", Zh}, // 未知语言 → 默认 zh
 	}
 	for _, c := range cases {

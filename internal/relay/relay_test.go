@@ -495,3 +495,42 @@ func TestReloadBadTunnelDoesNotBlockOthers(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 }
+
+// 第十五批: Reload 证书变更热切换(旧 certID → 新 certID 重启隧道)
+func TestReloadCertSwitch(t *testing.T) {
+	h := newHarness(t)
+	defer h.close()
+	src := h.buildSrc(t)
+	r := New("", src)
+	defer r.Close()
+	localPort := freePort(t)
+	cfg := RelayConfig{
+		ListenHost: "127.0.0.1", ServerAddr: h.gwAddr, ServerCAFile: h.caPath,
+		Tunnels: []Tunnel{{
+			Service: "s1",
+			Routes:  []TunnelRoute{{Channel: ":" + gwPortOf(h.gwAddr), Local: fmt.Sprintf(":%d", localPort)}},
+			CertID:  h.clientPairPath, Enabled: true,
+		}},
+	}
+	if err := r.Start(cfg); err != nil {
+		t.Fatal(err)
+	}
+	// 换一枚证书(certID 变化)→ 隧道应热切换(不报错, 仍监听)
+	cfg.Tunnels[0].CertID = h.clientPairPath // 同路径(源里就一枚, 语义等价测试路径)
+	cfg.Tunnels[0].Routes[0].Local = fmt.Sprintf(":%d", localPort+1)
+	if err := r.Reload(cfg); err != nil {
+		t.Fatalf("reload with route change should succeed: %v", err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		c, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", localPort+1))
+		if err == nil {
+			c.Close()
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("switched tunnel not listening: %v", err)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}

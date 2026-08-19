@@ -70,7 +70,7 @@ func main() {
 	if *server != "" {
 		cfgServerAddr = *server
 	}
-	r.SetServerAddr(cfgServerAddr)   // 让 Discover(/api/services) 在未 Start 时也能用
+	r.SetServerAddr(cfgServerAddr) // 让 Discover(/api/services) 在未 Start 时也能用
 	if err := r.SetServerCA(cfg.ServerCAFile); err != nil {
 		log.Fatalf("server_ca: %v", err) // 配置的 CA 不可用 → 拒绝启动(防 MITM)
 	}

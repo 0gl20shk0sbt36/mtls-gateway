@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"mtls-gateway/internal/certsource"
+	"mtls-gateway/internal/pathutil"
 )
 
 // H1: joinSlash 纯函数边界
@@ -443,22 +444,22 @@ func TestTunnelHalfClose(t *testing.T) {
 	_ = err // EOF 或超时都算通过(重点是没死锁)
 }
 
-// 第十三批: cleanDotSegments 根钳制与 .. 逃逸
+// 第十三批: CleanDotSegments 根钳制与 .. 逃逸(实现移至 internal/pathutil)
 func TestCleanDotSegments(t *testing.T) {
 	cases := []struct{ in, want string }{
-		{"/admin/../../x", "/x"},        // .. 钳制在根, 不丢失前导斜杠
-		{"/../x", "/x"},                 // 根上 .. 不逃逸
-		{"/..", "/"},                    // 纯 .. → 根
-		{"/a/./b", "/a/b"},              // . 跳过
-		{"/a//b", "/a//b"},              // // 保留
-		{"/admin/", "/admin/"},          // 尾斜杠保留
-		{"/a/b/../../c", "/c"},          // 多层回退
-		{"/a/../../../b", "/b"},         // 超出根不逃逸
-		{"/a/..", "/"},                  // 回退到根
+		{"/admin/../../x", "/x"}, // .. 钳制在根, 不丢失前导斜杠
+		{"/../x", "/x"},          // 根上 .. 不逃逸
+		{"/..", "/"},             // 纯 .. → 根
+		{"/a/./b", "/a/b"},       // . 跳过
+		{"/a//b", "/a//b"},       // // 保留
+		{"/admin/", "/admin/"},   // 尾斜杠保留
+		{"/a/b/../../c", "/c"},   // 多层回退
+		{"/a/../../../b", "/b"},  // 超出根不逃逸
+		{"/a/..", "/"},           // 回退到根
 	}
 	for _, c := range cases {
-		if got := cleanDotSegments(c.in); got != c.want {
-			t.Errorf("cleanDotSegments(%q) = %q, want %q", c.in, got, c.want)
+		if got := pathutil.CleanDotSegments(c.in); got != c.want {
+			t.Errorf("CleanDotSegments(%q) = %q, want %q", c.in, got, c.want)
 		}
 	}
 }

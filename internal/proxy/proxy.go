@@ -3,6 +3,7 @@
 // 模型:
 //   - mappings: 唯一实体, 每条 = id(助记符, 唯一) + listen(:port[/path]) + target; 判重靠 listen
 //   - services: 服务注册表(所有服务必须注册): name + channels(mapping id 或索引) + roles(允许的证书角色)
+//
 // 授权: 请求命中映射 → 取引用该映射的所有服务的 roles 并集 → 证书 roles 与并集有交集(或含 "*")→ 放行
 // 匹配: 同端口按入口路径最长前缀; 无路径 = 整口兜底。前缀替换(nginx proxy_pass 语义)。
 package proxy
@@ -18,6 +19,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"mtls-gateway/internal/pathutil"
 )
 
 // Mapping 一条映射(通道)配置 (TOML [[mappings]] 直接对应)
@@ -29,9 +32,9 @@ type Mapping struct {
 
 // ServiceCfg 服务注册条目 (TOML [[services]] 直接对应)
 type ServiceCfg struct {
-	Name     string   `toml:"name" json:"name"`           // 服务名(唯一)
-	Channels []string `toml:"channels" json:"channels"`   // 通道: mapping id 或索引(不建议)
-	Roles    []string `toml:"roles" json:"roles"`         // 允许访问本服务的证书角色; "*"=任一已登记
+	Name     string   `toml:"name" json:"name"`         // 服务名(唯一)
+	Channels []string `toml:"channels" json:"channels"` // 通道: mapping id 或索引(不建议)
+	Roles    []string `toml:"roles" json:"roles"`       // 允许访问本服务的证书角色; "*"=任一已登记
 }
 
 // ChannelInfo /info 返回的通道信息
@@ -50,7 +53,7 @@ type ServiceInfo struct {
 type route struct {
 	id     string
 	port   string
-	path   string // 入口路径前缀 ("/a" 或 "")
+	path   string   // 入口路径前缀 ("/a" 或 "")
 	roles  []string // 引用本映射的所有服务的 roles 并集
 	target *url.URL
 	rp     *httputil.ReverseProxy
@@ -375,35 +378,7 @@ func joinURLPath(base, tail string) string {
 	if r == "" || r == "/" {
 		return "/"
 	}
-	return cleanDotSegments(r)
-}
-
-// cleanDotSegments 移除 .. 段与 . 段(保留 // 与尾斜杠语义; .. 钳制在根, 不丢失前导斜杠)
-func cleanDotSegments(p string) string {
-	segments := strings.Split(p, "/")
-	var out []string
-	for _, seg := range segments {
-		switch seg {
-		case "..":
-			if len(out) > 1 || (len(out) == 1 && out[0] != "") {
-				out = out[:len(out)-1] // 回退一层(根空段保留)
-			}
-		case ".":
-			// 跳过
-		default:
-			out = append(out, seg)
-		}
-	}
-	res := strings.Join(out, "/")
-	if strings.HasPrefix(p, "/") {
-		if res == "" {
-			return "/"
-		}
-		if !strings.HasPrefix(res, "/") {
-			res = "/" + res
-		}
-	}
-	return res
+	return pathutil.CleanDotSegments(r)
 }
 
 // newReverseProxy Host/Origin 改写为后端 loopback (信任围栏放行); 路径替换由 Serve 负责

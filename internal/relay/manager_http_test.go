@@ -97,7 +97,9 @@ func TestManagerHTTP_VerifyLang(t *testing.T) {
 	if recZh.Code < 400 {
 		t.Fatalf("admin verify without admin_addr should fail, got %d", recZh.Code)
 	}
-	var e struct{ Error string `json:"error"` }
+	var e struct {
+		Error string `json:"error"`
+	}
 	json.Unmarshal(recZh.Body.Bytes(), &e)
 	if e.Error == "" || !strings.Contains(e.Error, "管理") {
 		t.Fatalf("zh error expected: %s", e.Error)

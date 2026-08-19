@@ -12,6 +12,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"mtls-gateway/internal/pathutil"
 )
 
 // tunnelMetrics 单路由运行指标
@@ -143,8 +145,8 @@ func (rt *tunnelRuntime) localHTTPHandler(localPath string) http.Handler {
 				req.Host = upCopy.Host
 			},
 			Transport: &http.Transport{
-				TLSClientConfig: tcCopy,
-				DialContext:     (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+				TLSClientConfig:       tcCopy,
+				DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
 				ResponseHeaderTimeout: 30 * time.Second,
 				IdleConnTimeout:       90 * time.Second,
 			},
@@ -188,35 +190,7 @@ func joinSlash(a, b string) string {
 		joined = strings.TrimSuffix(a, "/") + "/" + strings.TrimPrefix(b, "/")
 	}
 	// 仅移除 .. 段(不折叠 //、不丢尾斜杠 — 两者都有语义), 防路径逃逸
-	return cleanDotSegments(joined)
-}
-
-// cleanDotSegments 移除 .. 段与 . 段(保留 // 与尾斜杠语义; .. 钳制在根, 不丢失前导斜杠)
-func cleanDotSegments(p string) string {
-	segments := strings.Split(p, "/")
-	var out []string
-	for _, seg := range segments {
-		switch seg {
-		case "..":
-			if len(out) > 1 || (len(out) == 1 && out[0] != "") {
-				out = out[:len(out)-1] // 回退一层(根空段保留)
-			}
-		case ".":
-			// 跳过
-		default:
-			out = append(out, seg)
-		}
-	}
-	res := strings.Join(out, "/")
-	if strings.HasPrefix(p, "/") {
-		if res == "" {
-			return "/"
-		}
-		if !strings.HasPrefix(res, "/") {
-			res = "/" + res
-		}
-	}
-	return res
+	return pathutil.CleanDotSegments(joined)
 }
 
 // acceptLoop accepts local connections and proxies each to the mTLS upstream.

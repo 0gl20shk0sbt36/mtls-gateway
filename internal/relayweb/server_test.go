@@ -13,7 +13,7 @@ func TestSameOrigin(t *testing.T) {
 		allowRemote  bool
 		want         bool
 	}{
-		{"127.0.0.1:18081", "", false, true},               // 无 Origin(CLI/同源)放行
+		{"127.0.0.1:18081", "", false, true},                       // 无 Origin(CLI/同源)放行
 		{"127.0.0.1:18081", "http://127.0.0.1:18081", false, true}, // 同源
 		{"127.0.0.1:18081", "http://evil.com", false, false},       // 跨源
 		{"127.0.0.1:18081", "http://127.0.0.1:9999", false, false}, // 端口不同=跨源

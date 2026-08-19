@@ -571,7 +571,7 @@ func (m *Manager) Handler() http.Handler {
 			return
 		}
 		writeJSON(w, map[string]any{"ok": true, "service": t.Service, "count": len(t.Routes)})
-		})
+	})
 
 	// DELETE /api/tunnels/{id}
 	mux.HandleFunc("DELETE /api/tunnels/", func(w http.ResponseWriter, r *http.Request) {

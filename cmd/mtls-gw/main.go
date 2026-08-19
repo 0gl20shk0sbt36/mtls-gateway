@@ -284,13 +284,13 @@ func (w *statusWriter) ReadFrom(r io.Reader) (int64, error) {
 // accessEvent 组装访问事件(元数据, 不记数据内容)
 func accessEvent(rec *db.CertRecord, channel, method, path string, status int, in, out int64) eventlog.Event {
 	ev := eventlog.Event{
-		Type:    "access",
-		Cert:    rec.Name,
-		Serial:  rec.Serial,
-		Role:    strings.Join(rec.Purposes, ","),
-		Channel: channel,
-		Method:  method,
-		Path:    path,
+		Type:     "access",
+		Cert:     rec.Name,
+		Serial:   rec.Serial,
+		Role:     strings.Join(rec.Purposes, ","),
+		Channel:  channel,
+		Method:   method,
+		Path:     path,
 		Status:   status,
 		BytesIn:  in,
 		BytesOut: out,
@@ -336,10 +336,10 @@ func gatewayHandler(gw *auth.Gateway, cm *ConfigManager, port string, acc *event
 		router.Serve(rt, sw, r)
 		if acc != nil {
 			code := sw.status
-		if code == 0 {
-			code = http.StatusOK // Hijack/未写头时记 200
-		}
-		acc.Write(accessEvent(rec, rt.Listen(), r.Method, r.URL.Path, code, r.ContentLength, sw.bytes))
+			if code == 0 {
+				code = http.StatusOK // Hijack/未写头时记 200
+			}
+			acc.Write(accessEvent(rec, rt.Listen(), r.Method, r.URL.Path, code, r.ContentLength, sw.bytes))
 		}
 	})
 }
@@ -359,7 +359,11 @@ func infoHandler(gw *auth.Gateway, cm *ConfigManager, acc *eventlog.Logger) http
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(sw).Encode(map[string]any{"services": cm.Router().ServicesAllowed(rec.Purposes)})
 		if acc != nil {
-			acc.Write(accessEvent(rec, "/info", r.Method, r.URL.Path, sw.status, r.ContentLength, sw.bytes))
+			code := sw.status
+			if code == 0 {
+				code = http.StatusOK // 兜底(与 gatewayHandler 一致)
+			}
+			acc.Write(accessEvent(rec, "/info", r.Method, r.URL.Path, code, r.ContentLength, sw.bytes))
 		}
 	})
 }
@@ -615,8 +619,8 @@ func tlsListener(ln net.Listener, tlsCfg *tls.Config) net.Listener {
 type Config struct {
 	BindHost      string             `toml:"bind_host"`       // 全局绑定地址 (默认 0.0.0.0)
 	DB            string             `toml:"db"`              // SQLite 数据库路径
-	ConfigMode    string             `toml:"config_mode"` // mutable | ephemeral | immutable
-	Lang          string             `toml:"lang"`        // 错误消息语言: zh | en (默认 zh)
+	ConfigMode    string             `toml:"config_mode"`     // mutable | ephemeral | immutable
+	Lang          string             `toml:"lang"`            // 错误消息语言: zh | en (默认 zh)
 	AdminRole     string             `toml:"admin_role"`      // 内置管理角色名 (默认 mtls-superadmin)
 	PwdLength     int                `toml:"pwd_length"`      // 自动生成 p12 密码长度
 	KeyType       string             `toml:"key_type"`        // 签发密钥: rsa | ecdsa
@@ -630,18 +634,18 @@ type Config struct {
 	ServerKey     string             `toml:"server_key"`
 	CertDir       string             `toml:"cert_dir"`
 	SockPath      string             `toml:"sock_path"`
-	Org           string             `toml:"org"`           // 证书 O 字段
-	OU            string             `toml:"ou"`            // 证书 OU 字段
-	DefaultDays   int                `toml:"default_days"`  // 普通证书默认天数
-	AdminDays     int                `toml:"admin_days"`    // 管理角色证书默认天数
+	Org           string             `toml:"org"`          // 证书 O 字段
+	OU            string             `toml:"ou"`           // 证书 OU 字段
+	DefaultDays   int                `toml:"default_days"` // 普通证书默认天数
+	AdminDays     int                `toml:"admin_days"`   // 管理角色证书默认天数
 	RequireIPBind *bool              `toml:"require_ip_bind"`
-	LogFile       string             `toml:"log_file"`       // 事件日志(系统/配置/证书操作); 空=关
+	LogFile       string             `toml:"log_file"`        // 事件日志(系统/配置/证书操作); 空=关
 	AccessLogFile string             `toml:"access_log_file"` // 访问日志(大量, 单独文件); 空=关
-	LogMaxSizeMB  int                `toml:"log_max_size"`  // 单文件上限 MB (默认 10)
-	LogMaxFiles   int                `toml:"log_max_files"` // 保留历史份数 (默认 5)
-	Roles         []string           `toml:"roles"`    // 角色声明列表(服务 roles / 签发 purposes 必须在此声明)
-	Mappings      []proxy.Mapping    `toml:"mappings"` // 通道: id + listen(:port[/path]) + target
-	Services      []proxy.ServiceCfg `toml:"services"` // 服务注册: name + channels + roles
+	LogMaxSizeMB  int                `toml:"log_max_size"`    // 单文件上限 MB (默认 10)
+	LogMaxFiles   int                `toml:"log_max_files"`   // 保留历史份数 (默认 5)
+	Roles         []string           `toml:"roles"`           // 角色声明列表(服务 roles / 签发 purposes 必须在此声明)
+	Mappings      []proxy.Mapping    `toml:"mappings"`        // 通道: id + listen(:port[/path]) + target
+	Services      []proxy.ServiceCfg `toml:"services"`        // 服务注册: name + channels + roles
 }
 
 // RequireIPBindResolved 返回实际 IP 绑定要求 (默认 true)

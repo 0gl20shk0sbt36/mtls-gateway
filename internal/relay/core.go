@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -23,21 +24,20 @@ type Relay struct {
 	cfgPath string
 	mu      sync.Mutex
 
-	listenHost string                     // 当前配置的本地监听地址 (Start/Reload 更新)
-	serverAddr string                     // 服务端 /info 发现端点 (Start/Reload 更新; 亦可用 SetServerAddr)
-	serverCA   string                     // 网关 CA 文件路径 (验服务器证书; 空=系统根)
-	rootCAs    *x509.CertPool             // 由 serverCA 构建; nil=系统根
-	src        certsource.Source          // 证书来源 (由外层/daemon 注入)
+	listenHost string                    // 当前配置的本地监听地址 (Start/Reload 更新)
+	serverAddr string                    // 服务端 /info 发现端点 (Start/Reload 更新; 亦可用 SetServerAddr)
+	serverCA   string                    // 网关 CA 文件路径 (验服务器证书; 空=系统根)
+	rootCAs    *x509.CertPool            // 由 serverCA 构建; nil=系统根
+	src        certsource.Source         // 证书来源 (由外层/daemon 注入)
 	certCache  map[string]certCacheEntry // source-CertID -> 证书 (复用, TTL 失效支持证书轮换)
 
-
-	ctx       context.Context
-	cancel    context.CancelFunc
-	runCtx    context.Context // 当前运行周期上下文 (Start 时重建)
-	runCancel context.CancelFunc
-	tunnels   map[string]*tunnelRuntime // tunnel ID -> runtime
-	L         *i18n.L                   // 错误消息语言(zh/en, 默认 zh)
-	started   bool
+	ctx         context.Context
+	cancel      context.CancelFunc
+	runCtx      context.Context // 当前运行周期上下文 (Start 时重建)
+	runCancel   context.CancelFunc
+	tunnels     map[string]*tunnelRuntime // tunnel ID -> runtime
+	L           *i18n.L                   // 错误消息语言(zh/en, 默认 zh)
+	started     bool
 	idleTimeout time.Duration // TCP 透传空闲超时(0=默认 120s; 测试可注入)
 }
 
@@ -240,7 +240,7 @@ func (r *Relay) Start(cfg RelayConfig) error {
 	return nil
 }
 
-// Reload 增量应用隧道集变更: 新增/更新的隧道起监听, 已删的停止。
+// Reload 增量应用隧道集变更: 新增的起监听, 证书/路由变更的热切换, 已删的停止。
 // 不改动仍在运行且未变的隧道(不做断流热切换)。
 func (r *Relay) Reload(cfg RelayConfig) error {
 	r.mu.Lock()
@@ -254,6 +254,7 @@ func (r *Relay) Reload(cfg RelayConfig) error {
 		return err
 	}
 	next := map[string]bool{}
+	var reloadErrs []error
 	for _, t := range cfg.Tunnels {
 		if !t.Enabled {
 			continue
@@ -261,11 +262,20 @@ func (r *Relay) Reload(cfg RelayConfig) error {
 		for _, spec := range tunnelRoutes(t) {
 			key := spec.key
 			next[key] = true
-			if _, ok := r.tunnels[key]; !ok {
+			if old, ok := r.tunnels[key]; !ok {
 				rt := &tunnelRuntime{r: r, key: spec.key, service: spec.service, idle: r.idleTimeout, route: spec.route, certID: spec.certID, conns: map[net.Conn]struct{}{}}
 				if err := r.startTunnel(rt); err != nil {
-					log.Printf("reload: tunnel %s failed: %v (继续处理其余隧道)", key, err)
+					reloadErrs = append(reloadErrs, fmt.Errorf("tunnel %s: %w", key, err))
 					continue // 坏隧道不卡死后续启动; 也保证下方清理循环执行
+				}
+				r.tunnels[key] = rt
+			} else if old.certID != spec.certID || !reflect.DeepEqual(old.route, spec.route) {
+				// 证书/路由变更: 停旧起新(热切换), 否则配置变更静默失效
+				old.stop()
+				rt := &tunnelRuntime{r: r, key: spec.key, service: spec.service, idle: r.idleTimeout, route: spec.route, certID: spec.certID, conns: map[net.Conn]struct{}{}}
+				if err := r.startTunnel(rt); err != nil {
+					reloadErrs = append(reloadErrs, fmt.Errorf("tunnel %s (update): %w", key, err))
+					continue
 				}
 				r.tunnels[key] = rt
 			}
