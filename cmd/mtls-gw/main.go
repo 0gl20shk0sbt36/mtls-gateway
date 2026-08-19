@@ -196,9 +196,10 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *ConfigManager) http.Ha
 	// 配置总览(UI 用): 模式 + 通道 + 服务
 	mux.HandleFunc("GET /admin/config", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{
-			"mode":     cm.Mode(),
-			"mappings": cm.Mappings(),
-			"services": cm.Services(),
+			"mode":       cm.Mode(),
+			"admin_role": cm.AdminRole(),
+			"mappings":   cm.Mappings(),
+			"services":   cm.Services(),
 		})
 	})
 

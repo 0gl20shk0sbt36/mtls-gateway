@@ -33,6 +33,12 @@ func (m *ConfigManager) Mode() string {
 	return m.mode
 }
 
+func (m *ConfigManager) AdminRole() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.cfg.AdminRole
+}
+
 func (m *ConfigManager) Router() *proxy.Router {
 	m.mu.Lock()
 	defer m.mu.Unlock()

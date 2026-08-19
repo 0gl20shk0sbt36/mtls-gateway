@@ -206,6 +206,17 @@
         <button type="button" class="ghost small danger" id="adminRevoke">吊销</button>
       </div>
       <div class="hint" id="adminResult" style="margin-top:8px;white-space:pre-wrap"></div>
+      <div style="margin-top:14px;border-top:1px solid var(--border);padding-top:10px">
+        <h3 style="margin:0 0 6px">服务端配置 <span id="cfgMode" class="hint"></span></h3>
+        <p class="hint" style="margin:0 0 6px">mutable=改后落盘 / ephemeral=仅内存 / immutable=只读(灰显, 服务端拦截修改)。热重载即时生效。</p>
+        <div id="cfgMappings"></div>
+        <div id="cfgServices" style="margin-top:8px"></div>
+        <div class="row" style="margin-top:10px">
+          <button type="button" class="primary small" id="cfgAddMapping">新增通道</button>
+          <button type="button" class="ghost small" id="cfgAddService">新增服务</button>
+        </div>
+        <div class="hint" id="cfgResult" style="margin-top:8px;white-space:pre-wrap"></div>
+      </div>
     </div>
   </div>
 </main>

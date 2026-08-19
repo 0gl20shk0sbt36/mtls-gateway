@@ -222,6 +222,8 @@ async function init() {
   $("adminVerify").onclick = verifyAdmin;
   $("adminIssue").onclick = adminIssue;
   $("adminRevoke").onclick = adminRevoke;
+  $("cfgAddMapping").onclick = cfgAddMapping;
+  $("cfgAddService").onclick = cfgAddService;
   initMultiSel("newPurposesBtn", "newPurposesList");
   initSel("pwdModeBtn", "pwdModeList", (it) => { $("newCertPwd").disabled = it.value !== "custom"; });
   setSel("pwdModeList", [
@@ -293,21 +295,106 @@ async function verifyAdmin() {
     $("adminPwd").value = ""; // 验证成功即清空密码(失败保留)
   } catch (e) { toast("验证失败: " + e.message, true); }
 }
+let CFG = null;
+let CFG_ADMIN_ROLE = "mtls-superadmin";
 async function loadAdminData() {
   const cert = getSel("adminCertList");
   if (!cert) return;
   try {
-    const [m, cs] = await Promise.all([
-      api("/api/admin/mappings", jpost({ cert_id: cert, load_pwd: ADMIN_PWD })),
+    const [cfg, cs] = await Promise.all([
+      api("/api/admin/config", jpost({ cert_id: cert, load_pwd: ADMIN_PWD })),
       api("/api/admin/certs", jpost({ cert_id: cert, load_pwd: ADMIN_PWD })),
     ]);
-    const purps = new Set(["admin"]);
-    (m.mappings || []).forEach((mp) => (mp.services || []).forEach((s) => purps.add(s)));
-    purps.delete("any");
+    CFG = cfg;
+    CFG_ADMIN_ROLE = cfg.admin_role || CFG_ADMIN_ROLE;
+    renderCfg(cfg);
+    // 用途选项: 所有服务 roles 并集 + admin_role + "*"
+    const purps = new Set([CFG_ADMIN_ROLE, "*"]);
+    (cfg.services || []).forEach((s) => (s.roles || []).forEach((r) => purps.add(r)));
     setMultiOpts("newPurposesList", [...purps].map((p) => ({ value: p, label: p })));
+    // 吊销下拉: 服务端证书列表
     const arr = Array.isArray(cs) ? cs : (cs.certs || []);
     setSel("revokeCertList", arr.map((c) => ({ value: c.serial || "", label: `${c.name || "(无名)"} · ${c.serial || ""}` })));
-  } catch (e) { /* 加载失败不阻塞签发/吊销主流程 */ }
+  } catch (e) { /* 加载失败不阻塞 */ }
+}
+
+function renderCfg(cfg) {
+  const imm = cfg.mode === "immutable";
+  $("cfgMode").textContent = cfg.mode + (imm ? " 🔒" : "");
+  const dis = imm ? " disabled" : "";
+  let h = '<div class="hint">通道 (mappings)</div>';
+  (cfg.mappings || []).forEach((m, i) => {
+    h += `<div class="row" style="margin-top:6px">
+      <input class="cfg-m-id" value="${esc(m.id)}" placeholder="id" style="width:110px"${dis}>
+      <input class="cfg-m-listen" value="${esc(m.listen)}" placeholder=":port[/path]" style="flex:1"${dis}>
+      <input class="cfg-m-target" value="${esc(m.target)}" placeholder="target" style="flex:1.6"${dis}>
+      <button type="button" class="ghost small cfg-m-save" data-i="${i}"${dis}>存</button>
+      <button type="button" class="danger small cfg-m-del" data-i="${i}"${dis}>删</button>
+    </div>`;
+  });
+  $("cfgMappings").innerHTML = h;
+  let s = '<div class="hint" style="margin-top:8px">服务 (services)</div>';
+  (cfg.services || []).forEach((sv, i) => {
+    s += `<div class="row" style="margin-top:6px">
+      <input class="cfg-s-name" value="${esc(sv.name)}" placeholder="name" style="width:110px"${dis}>
+      <input class="cfg-s-ch" value="${esc((sv.channels || []).join(","))}" placeholder="channels(id,逗号)" style="flex:1"${dis}>
+      <input class="cfg-s-roles" value="${esc((sv.roles || []).join(","))}" placeholder="roles(逗号)" style="flex:1"${dis}>
+      <button type="button" class="ghost small cfg-s-save" data-i="${i}"${dis}>存</button>
+      <button type="button" class="danger small cfg-s-del" data-i="${i}"${dis}>删</button>
+    </div>`;
+  });
+  $("cfgServices").innerHTML = s;
+}
+
+function cfgSay(msg, err) { $("cfgResult").textContent = (err ? "✘ " : "✔ ") + msg; }
+
+async function cfgDo(apiPath, body) {
+  const cert = getSel("adminCertList");
+  try {
+    await api(apiPath, jpost(Object.assign({ cert_id: cert, load_pwd: ADMIN_PWD }, body)));
+    cfgSay("已应用(热重载生效)");
+    await loadAdminData();
+    return true;
+  } catch (e) {
+    cfgSay(e.message, true);
+    return false;
+  }
+}
+
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-i]");
+  if (!btn || !CFG) return;
+  const i = +btn.dataset.i;
+  const row = btn.closest(".row");
+  const gv = (cls) => row.querySelector(cls).value.trim();
+  if (btn.classList.contains("cfg-m-save")) {
+    cfgDo("/api/admin/mapping", { method: "PUT", id: CFG.mappings[i].id, mapping: { id: gv(".cfg-m-id"), listen: gv(".cfg-m-listen"), target: gv(".cfg-m-target") } });
+  } else if (btn.classList.contains("cfg-m-del")) {
+    cfgDo("/api/admin/mapping", { method: "DELETE", id: CFG.mappings[i].id });
+  } else if (btn.classList.contains("cfg-s-save")) {
+    cfgDo("/api/admin/service", { method: "PUT", name: CFG.services[i].name, service: { name: gv(".cfg-s-name"), channels: gv(".cfg-s-ch").split(",").map(x => x.trim()).filter(Boolean), roles: gv(".cfg-s-roles").split(",").map(x => x.trim()).filter(Boolean) } });
+  } else if (btn.classList.contains("cfg-s-del")) {
+    cfgDo("/api/admin/service", { method: "DELETE", name: CFG.services[i].name });
+  }
+});
+
+async function cfgAddMapping() {
+  const id = prompt("通道 id(助记符):");
+  if (!id) return;
+  const listen = prompt("listen (:端口[/路径]):");
+  if (!listen) return;
+  const target = prompt("target (后端 URL):");
+  if (!target) return;
+  cfgDo("/api/admin/mapping", { method: "POST", mapping: { id, listen, target } });
+}
+async function cfgAddService() {
+  const name = prompt("服务名:");
+  if (!name) return;
+  const ch = prompt("通道(id, 逗号分隔):");
+  if (!ch) return;
+  const roles = prompt("roles(逗号分隔; * = 任意):");
+  if (!roles) return;
+  cfgDo("/api/admin/service", { method: "POST", service: { name, channels: ch.split(",").map(x => x.trim()).filter(Boolean), roles: roles.split(",").map(x => x.trim()).filter(Boolean) } });
 }
 
 async function adminIssue() {
