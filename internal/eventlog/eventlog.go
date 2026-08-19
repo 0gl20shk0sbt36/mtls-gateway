@@ -169,8 +169,11 @@ func NewStatusWriter(w http.ResponseWriter) *StatusWriter {
 	return &StatusWriter{ResponseWriter: w}
 }
 
-// WriteHeader 记录状态码并转发
+// WriteHeader 记录状态码并转发(幂等: 只记首次)
 func (w *StatusWriter) WriteHeader(c int) {
+	if w.status != 0 {
+		return
+	}
 	w.status = c
 	w.ResponseWriter.WriteHeader(c)
 }

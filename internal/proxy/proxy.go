@@ -366,7 +366,7 @@ func substitute(p, inPath, outPath string) string {
 	return joinURLPath(outPath, rest)
 }
 
-// joinURLPath 拼接两个路径段, 去除多余斜杠
+// joinURLPath 拼接两个路径段, 去除多余斜杠; 并清除 dot-segment(防 .. 穿透前缀)
 func joinURLPath(base, tail string) string {
 	base = strings.TrimSuffix(base, "/")
 	tail = strings.TrimPrefix(tail, "/")
@@ -374,7 +374,35 @@ func joinURLPath(base, tail string) string {
 	if r == "" || r == "/" {
 		return "/"
 	}
-	return r
+	return cleanDotSegments(r)
+}
+
+// cleanDotSegments 移除 .. 段与 . 段(保留 // 与尾斜杠语义; .. 钳制在根, 不丢失前导斜杠)
+func cleanDotSegments(p string) string {
+	segments := strings.Split(p, "/")
+	var out []string
+	for _, seg := range segments {
+		switch seg {
+		case "..":
+			if len(out) > 1 || (len(out) == 1 && out[0] != "") {
+				out = out[:len(out)-1] // 回退一层(根空段保留)
+			}
+		case ".":
+			// 跳过
+		default:
+			out = append(out, seg)
+		}
+	}
+	res := strings.Join(out, "/")
+	if strings.HasPrefix(p, "/") {
+		if res == "" {
+			return "/"
+		}
+		if !strings.HasPrefix(res, "/") {
+			res = "/" + res
+		}
+	}
+	return res
 }
 
 // newReverseProxy Host/Origin 改写为后端 loopback (信任围栏放行); 路径替换由 Serve 负责

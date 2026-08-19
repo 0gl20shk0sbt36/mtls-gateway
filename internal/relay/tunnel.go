@@ -153,8 +153,10 @@ func (rt *tunnelRuntime) localHTTPHandler(localPath string) http.Handler {
 		builtAt = time.Now()
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		if !strings.HasPrefix(req.URL.Path, localPath) {
-			http.Error(w, "local path prefix mismatch: "+req.URL.Path, http.StatusNotFound)
+		// 前缀边界: /foo 不匹配 /foobar(与服务端 matchPath 一致)
+		p := req.URL.Path
+		if !(p == localPath || strings.HasPrefix(p, localPath+"/")) {
+			http.Error(w, "local path prefix mismatch: "+p, http.StatusNotFound)
 			return
 		}
 		mu.RLock()
@@ -189,15 +191,15 @@ func joinSlash(a, b string) string {
 	return cleanDotSegments(joined)
 }
 
-// cleanDotSegments 移除 .. 段与 . 段(保留 // 与尾斜杠语义)
+// cleanDotSegments 移除 .. 段与 . 段(保留 // 与尾斜杠语义; .. 钳制在根, 不丢失前导斜杠)
 func cleanDotSegments(p string) string {
 	segments := strings.Split(p, "/")
 	var out []string
 	for _, seg := range segments {
 		switch seg {
 		case "..":
-			if len(out) > 0 {
-				out = out[:len(out)-1]
+			if len(out) > 1 || (len(out) == 1 && out[0] != "") {
+				out = out[:len(out)-1] // 回退一层(根空段保留)
 			}
 		case ".":
 			// 跳过
@@ -205,7 +207,16 @@ func cleanDotSegments(p string) string {
 			out = append(out, seg)
 		}
 	}
-	return strings.Join(out, "/")
+	res := strings.Join(out, "/")
+	if strings.HasPrefix(p, "/") {
+		if res == "" {
+			return "/"
+		}
+		if !strings.HasPrefix(res, "/") {
+			res = "/" + res
+		}
+	}
+	return res
 }
 
 // acceptLoop accepts local connections and proxies each to the mTLS upstream.

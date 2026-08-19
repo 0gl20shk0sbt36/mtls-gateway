@@ -244,3 +244,18 @@ func TestNewRouterDeepCopy(t *testing.T) {
 		t.Fatalf("services polluted: %+v", got)
 	}
 }
+
+// 第十三批: substitute/joinURLPath 清除 dot-segment(服务端防穿透)
+func TestSubstituteCleanDotSegments(t *testing.T) {
+	cases := []struct{ p, in, out, want string }{
+		{"/admin/../admin/secret/x", "/admin", "", "/admin/secret/x"},
+		{"/admin/../../x", "/admin", "/app", "/x"},  // .. 弹掉 app 前缀再钳制根
+		{"/admin/a/../b", "/admin", "", "/b"},     // rest 内 .. 回退
+		{"/admin/", "/admin", "", "/"},            // 剥空后根
+	}
+	for _, c := range cases {
+		if got := substitute(c.p, c.in, c.out); got != c.want {
+			t.Errorf("substitute(%q,%q,%q) = %q, want %q", c.p, c.in, c.out, got, c.want)
+		}
+	}
+}

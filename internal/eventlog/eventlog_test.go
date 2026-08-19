@@ -1,6 +1,7 @@
 package eventlog
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -100,3 +101,25 @@ func TestStatusWriterHijackSafe(t *testing.T) {
 		t.Fatal("Hijack on non-hijacker should error, not panic")
 	}
 }
+
+// 第十三批: ReadFrom 回退分支(底层非 ReaderFrom → 经 Write 计字节)
+func TestStatusWriterReadFromFallback(t *testing.T) {
+	sw := NewStatusWriter(&noReaderFromWriter{})
+	n, err := sw.ReadFrom(strings.NewReader("fallback-data"))
+	if err != nil || n != 13 {
+		t.Fatalf("fallback ReadFrom: n=%d err=%v", n, err)
+	}
+	if sw.Bytes() != 13 {
+		t.Fatalf("bytes = %d, want 13", sw.Bytes())
+	}
+	if sw.Status() != 200 {
+		t.Fatalf("status = %d, want 200", sw.Status())
+	}
+}
+
+// noReaderFromWriter 仅实现 ResponseWriter(不含 ReaderFrom), 强制走回退分支
+type noReaderFromWriter struct{ buf []byte }
+
+func (w *noReaderFromWriter) Header() http.Header         { return http.Header{} }
+func (w *noReaderFromWriter) WriteHeader(int)             {}
+func (w *noReaderFromWriter) Write(b []byte) (int, error) { w.buf = append(w.buf, b...); return len(b), nil }

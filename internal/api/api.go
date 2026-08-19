@@ -223,7 +223,7 @@ type IssueResponse struct {
 	Name        string   `json:"name"` // 证书名(回显)
 	Serial      string   `json:"serial"`
 	CertPEM     string   `json:"cert_pem"`
-	KeyPEM      string   `json:"key_pem"` // 仅本机返回; 生产建议只给 p12
+	KeyPEM      string   `json:"key_pem,omitempty"` // 仅本机返回(远程通道置空); 生产建议只给 p12
 	P12Password string   `json:"p12_password,omitempty"`
 	Expires     string   `json:"expires"`
 	Fingerprint string   `json:"fingerprint"`
