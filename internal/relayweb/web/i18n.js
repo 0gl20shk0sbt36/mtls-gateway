@@ -99,6 +99,16 @@
       // 通用
       errPrefix: "错误: ",
       ok: "确定",
+      // 服务端错误本地化
+      errPwdNeeded: "私钥需要密码：{cert} —— 请在\"证书密码\"框输入密码后重新验证",
+      errNoCert: "没有可用证书：证书源为空或证书加载失败",
+      errExpired: "证书已过期，请联系管理员重新签发",
+      errSvcNotFound: "服务端不存在该服务：{s}",
+      errCertNotFound: "证书不存在：{s}",
+      errImmutable: "服务端配置为只读模式（immutable），无法修改",
+      errRevoked: "证书已被吊销",
+      errAdminDenied: "管理权限被拒绝：当前证书不是管理证书",
+      errDenied: "访问被拒绝（403）：证书角色无权访问",
       // 日志
       logCfg: "日志配置",
     },
@@ -193,6 +203,16 @@
       cfgRolesPh: "— roles —",
       errPrefix: "Error: ",
       ok: "OK",
+      // server error localization
+      errPwdNeeded: "Private key needs password: {cert} — enter the cert password and verify again",
+      errNoCert: "No usable certificate: cert source empty or load failed",
+      errExpired: "Certificate has expired — contact the admin for a reissue",
+      errSvcNotFound: "Service not found on server: {s}",
+      errCertNotFound: "Certificate not found: {s}",
+      errImmutable: "Server config is immutable (read-only), cannot modify",
+      errRevoked: "Certificate has been revoked",
+      errAdminDenied: "Admin access denied: this cert is not an admin cert",
+      errDenied: "Access denied (403): cert role has no access",
       logCfg: "Log config",
     },
   };
