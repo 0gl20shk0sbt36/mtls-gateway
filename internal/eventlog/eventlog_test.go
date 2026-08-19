@@ -1,0 +1,58 @@
+package eventlog
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestWriteAndRotate(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "evt.log")
+	// maxSize 1MB 但每次写 700KB → 两行即滚动
+	l, err := New(path, 1, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+
+	big := strings.Repeat("x", 700*1024)
+	for i := 0; i < 3; i++ {
+		l.Write(Event{Type: "access", Cert: "c1", Msg: big})
+	}
+	// 当前文件 + 至少 1 份历史
+	files := l.Files()
+	if len(files) < 2 {
+		t.Fatalf("want rotated files, got %d (%v)", len(files), files)
+	}
+	// 每份文件都 < 1MB+margin
+	for _, f := range files {
+		st, _ := os.Stat(f)
+		if st != nil && st.Size() > 1100*1024 {
+			t.Fatalf("file %s too big: %d", f, st.Size())
+		}
+	}
+}
+
+func TestDisabled(t *testing.T) {
+	l, err := New("", 10, 5)
+	if err != nil || l != nil {
+		t.Fatalf("empty path should disable: %v %v", l, err)
+	}
+}
+
+func TestJSONShape(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "evt.log")
+	l, _ := New(path, 10, 3)
+	defer l.Close()
+	l.Write(Event{Type: "access", Cert: "e2e-a", Serial: "12058", Channel: ":29991", Method: "GET", Path: "/api/x", Status: 200, BytesIn: 42})
+	data, _ := os.ReadFile(path)
+	s := string(data)
+	for _, want := range []string{`"type":"access"`, `"cert":"e2e-a"`, `"serial":"12058"`, `"channel":":29991"`, `"method":"GET"`, `"path":"/api/x"`, `"status":200`, `"bytes_in":42`} {
+		if !strings.Contains(s, want) {
+			t.Errorf("missing %s in %s", want, s)
+		}
+	}
+}

@@ -278,7 +278,7 @@ func TestRelay_BadUpstream(t *testing.T) {
 	if len(status) != 1 {
 		t.Fatalf("want 1 tunnel, got %d", len(status))
 	}
-	if status[0].ID != "s1@:1" {
+	if status[0].ID != "s1@:1@:"+fmt.Sprintf("%d", localPort) {
 		t.Fatalf("tunnel id mismatch: %s", status[0].ID)
 	}
 }

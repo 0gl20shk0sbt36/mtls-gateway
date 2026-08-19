@@ -31,8 +31,8 @@ type Tunnel struct {
 	Enabled bool   `json:"enabled"` // 是否启用
 }
 
-// ID 隧道唯一标识 (稳定)
-func (t Tunnel) ID() string { return t.Service + "@" + t.Channel }
+// ID 隧道唯一标识 (服务@通道@本地 — 同通道不同本地路由是不同隧道)
+func (t Tunnel) ID() string { return t.Service + "@" + t.Channel + "@" + t.Local }
 
 // LocalPort 本地监听端口 (":8080/foo" → "8080")
 func (t Tunnel) LocalPort() string { return portOfListen(t.Local) }

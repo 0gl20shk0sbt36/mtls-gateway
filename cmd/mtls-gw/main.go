@@ -13,12 +13,14 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 
 	"mtls-gateway/internal/api"
 	"mtls-gateway/internal/auth"
 	"mtls-gateway/internal/db"
+	"mtls-gateway/internal/eventlog"
 	"mtls-gateway/internal/proxy"
 )
 
@@ -60,6 +62,29 @@ func main() {
 	cm := NewConfigManager(*cfgPath, cfg, router)
 	log.Printf("config mode: %s", cm.Mode())
 
+	// 事件日志(系统) + 访问日志(大量, 单独文件); 各自滚动
+	evLog, err := eventlog.New(cfg.LogFile, cfg.LogMaxSizeMB, cfg.LogMaxFiles)
+	if err != nil {
+		log.Printf("event log: %v (禁用)", err)
+	}
+	defer func() {
+		if evLog != nil {
+			evLog.Close()
+		}
+	}()
+	accLog, err := eventlog.New(cfg.AccessLogFile, cfg.LogMaxSizeMB, cfg.LogMaxFiles)
+	if err != nil {
+		log.Printf("access log: %v (禁用)", err)
+	}
+	defer func() {
+		if accLog != nil {
+			accLog.Close()
+		}
+	}()
+	if evLog != nil {
+		evLog.Write(eventlog.Event{Type: "start", Msg: "mtls-gw 启动"})
+	}
+
 	bindHost := cfg.BindHost
 	if bindHost == "" {
 		bindHost = "0.0.0.0"
@@ -75,7 +100,7 @@ func main() {
 				log.Fatalf("listen %s: %v", addr, err)
 			}
 			log.Printf("mtls gateway listening on %s (mTLS)", addr)
-			srv := &http.Server{Handler: gatewayHandler(gateway, cm, port)}
+			srv := &http.Server{Handler: gatewayHandler(gateway, cm, port, accLog)}
 			if err := srv.Serve(tlsListener(ln, gateway.ServerTLSConfig())); err != nil {
 				log.Fatalf("gateway serve %s: %v", addr, err)
 			}
@@ -90,7 +115,7 @@ func main() {
 				log.Fatalf("info listen %s: %v", infoListen, err)
 			}
 			log.Printf("mtls /info listening on %s (registered cert only)", infoListen)
-			infoSrv := &http.Server{Handler: infoHandler(gateway, cm)}
+			infoSrv := &http.Server{Handler: infoHandler(gateway, cm, accLog)}
 			if err := infoSrv.Serve(tlsListener(ln, gateway.ServerTLSConfig())); err != nil {
 				log.Fatalf("info serve: %v", err)
 			}
@@ -124,7 +149,7 @@ func main() {
 				log.Fatalf("admin listen: %v", err)
 			}
 			log.Printf("admin api listening on %s (mTLS, admin cert required)", admListen)
-			admSrv := &http.Server{Handler: adminHandler(gateway, mgr, cm)}
+			admSrv := &http.Server{Handler: adminHandler(gateway, mgr, cm, evLog)}
 			if err := admSrv.Serve(tlsListener(ln, gateway.ServerTLSConfig())); err != nil {
 				log.Fatalf("admin serve: %v", err)
 			}
@@ -134,14 +159,56 @@ func main() {
 	select {}
 }
 
+// statusWriter 包装 ResponseWriter: 记录状态码与响应字节数(访问日志用)
+type statusWriter struct {
+	http.ResponseWriter
+	status int
+	bytes  int64
+}
+
+func (w *statusWriter) WriteHeader(c int) {
+	w.status = c
+	w.ResponseWriter.WriteHeader(c)
+}
+
+func (w *statusWriter) Write(b []byte) (int, error) {
+	n, err := w.ResponseWriter.Write(b)
+	w.bytes += int64(n)
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	return n, err
+}
+
+// accessEvent 组装访问事件(元数据, 不记数据内容)
+func accessEvent(rec *db.CertRecord, channel, method, path string, status int, in, out int64) eventlog.Event {
+	ev := eventlog.Event{
+		Type:    "access",
+		Cert:    rec.Name,
+		Serial:  rec.Serial,
+		Role:    strings.Join(rec.Purposes, ","),
+		Channel: channel,
+		Method:  method,
+		Path:    path,
+		Status:  status,
+		BytesIn: in,
+	}
+	_ = out
+	return ev
+}
+
 // gatewayHandler 网关主 handler: 认证 → 按路径选映射(最长匹配) → 按引用服务的 roles 授权 → 转发
-// 路由器每次从 ConfigManager 取(支持热重载)
-func gatewayHandler(gw *auth.Gateway, cm *ConfigManager, port string) http.Handler {
+// 路由器每次从 ConfigManager 取(支持热重载); 访问/拒绝事件写 accLog
+func gatewayHandler(gw *auth.Gateway, cm *ConfigManager, port string, acc *eventlog.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sw := &statusWriter{ResponseWriter: w}
 		rec, err := gw.Authorize(r)
 		if err != nil {
 			auth.AuthLog("", auth.RemoteIP(r), "", false)
-			http.Error(w, "forbidden: "+err.Error(), http.StatusForbidden)
+			if acc != nil {
+				acc.Write(eventlog.Event{Type: "deny", Channel: ":" + port, Method: r.Method, Path: r.URL.Path, Status: 403, Msg: err.Error()})
+			}
+			http.Error(sw, "forbidden: "+err.Error(), http.StatusForbidden)
 			return
 		}
 		remote := auth.RemoteIP(r)
@@ -149,30 +216,46 @@ func gatewayHandler(gw *auth.Gateway, cm *ConfigManager, port string) http.Handl
 		router := cm.Router()
 		rt := router.Match(port, r.URL.Path)
 		if rt == nil {
-			http.Error(w, "no route for "+r.URL.Path, http.StatusNotFound)
+			if acc != nil {
+				acc.Write(eventlog.Event{Type: "deny", Cert: rec.Name, Serial: rec.Serial, Role: strings.Join(rec.Purposes, ","), Channel: ":" + port, Method: r.Method, Path: r.URL.Path, Status: 404, Msg: "no route"})
+			}
+			http.Error(sw, "no route for "+r.URL.Path, http.StatusNotFound)
 			return
 		}
 		if !rt.Allows(rec.Purposes) {
 			auth.AuthLog(rt.Listen(), remote, rec.Serial, false)
-			http.Error(w, "no access to "+rt.Listen(), http.StatusForbidden)
+			if acc != nil {
+				acc.Write(eventlog.Event{Type: "deny", Cert: rec.Name, Serial: rec.Serial, Role: strings.Join(rec.Purposes, ","), Channel: rt.Listen(), Method: r.Method, Path: r.URL.Path, Status: 403, Msg: "no access"})
+			}
+			http.Error(sw, "no access to "+rt.Listen(), http.StatusForbidden)
 			return
 		}
 		auth.AuthLog(rt.Listen(), remote, rec.Serial, true)
 		proxy.SanitizeHeader(r)
-		router.Serve(rt, w, r)
+		router.Serve(rt, sw, r)
+		if acc != nil {
+			acc.Write(accessEvent(rec, rt.Listen(), r.Method, r.URL.Path, sw.status, r.ContentLength, sw.bytes))
+		}
 	})
 }
 
 // infoHandler /info: 无需 admin; 已登记证书即可; 返回该证书可访问的服务(按角色过滤)
-func infoHandler(gw *auth.Gateway, cm *ConfigManager) http.Handler {
+func infoHandler(gw *auth.Gateway, cm *ConfigManager, acc *eventlog.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sw := &statusWriter{ResponseWriter: w}
 		rec, err := gw.Authorize(r)
 		if err != nil {
-			http.Error(w, "forbidden", http.StatusForbidden)
+			if acc != nil {
+				acc.Write(eventlog.Event{Type: "deny", Channel: "/info", Method: r.Method, Path: r.URL.Path, Status: 403, Msg: err.Error()})
+			}
+			http.Error(sw, "forbidden", http.StatusForbidden)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"services": cm.Router().ServicesAllowed(rec.Purposes)})
+		json.NewEncoder(sw).Encode(map[string]any{"services": cm.Router().ServicesAllowed(rec.Purposes)})
+		if acc != nil {
+			acc.Write(accessEvent(rec, "/info", r.Method, r.URL.Path, sw.status, r.ContentLength, sw.bytes))
+		}
 	})
 }
 
@@ -189,8 +272,15 @@ func resolveListen(bindHost, spec string) string {
 
 // adminHandler 管理 TCP handler: 认证 + 只允许 admin_role
 // 提供: 证书签发/吊销 (mgr) + 通道/服务/角色 CRUD (cm, 尊重 config_mode)
-func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *ConfigManager) http.Handler {
+func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *ConfigManager, ev *eventlog.Logger) http.Handler {
 	mux := http.NewServeMux()
+
+	// 记配置变更事件
+	cfgChanged := func(msg string) {
+		if ev != nil {
+			ev.Write(eventlog.Event{Type: "config_change", Msg: msg})
+		}
+	}
 
 	// 配置总览(UI 用): 模式 + 通道 + 服务 + 角色
 	mux.HandleFunc("GET /admin/config", func(w http.ResponseWriter, r *http.Request) {
@@ -219,6 +309,7 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *ConfigManager) http.Ha
 			return
 		}
 		mgr.SetDeclaredRoles(cm.Roles())
+		cfgChanged("通道/服务/角色已变更")
 		writeJSON(w, map[string]any{"ok": true})
 	})
 
@@ -236,6 +327,7 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *ConfigManager) http.Ha
 			return
 		}
 		mgr.SetDeclaredRoles(cm.Roles())
+		cfgChanged("通道/服务/角色已变更")
 		writeJSON(w, map[string]any{"ok": true})
 	})
 	mux.HandleFunc("DELETE /admin/roles", func(w http.ResponseWriter, r *http.Request) {
@@ -244,6 +336,7 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *ConfigManager) http.Ha
 			return
 		}
 		mgr.SetDeclaredRoles(cm.Roles())
+		cfgChanged("通道/服务/角色已变更")
 		writeJSON(w, map[string]any{"ok": true})
 	})
 
@@ -261,6 +354,7 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *ConfigManager) http.Ha
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		cfgChanged("通道/服务/角色已变更")
 		writeJSON(w, map[string]any{"ok": true})
 	})
 	mux.HandleFunc("PUT /admin/mappings", func(w http.ResponseWriter, r *http.Request) {
@@ -273,6 +367,7 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *ConfigManager) http.Ha
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		cfgChanged("通道/服务/角色已变更")
 		writeJSON(w, map[string]any{"ok": true})
 	})
 	mux.HandleFunc("DELETE /admin/mappings", func(w http.ResponseWriter, r *http.Request) {
@@ -280,6 +375,7 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *ConfigManager) http.Ha
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		cfgChanged("通道/服务/角色已变更")
 		writeJSON(w, map[string]any{"ok": true})
 	})
 
@@ -297,6 +393,7 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *ConfigManager) http.Ha
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		cfgChanged("通道/服务/角色已变更")
 		writeJSON(w, map[string]any{"ok": true})
 	})
 	mux.HandleFunc("PUT /admin/services", func(w http.ResponseWriter, r *http.Request) {
@@ -309,6 +406,7 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *ConfigManager) http.Ha
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		cfgChanged("通道/服务/角色已变更")
 		writeJSON(w, map[string]any{"ok": true})
 	})
 	mux.HandleFunc("DELETE /admin/services", func(w http.ResponseWriter, r *http.Request) {
@@ -316,11 +414,23 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *ConfigManager) http.Ha
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		cfgChanged("通道/服务/角色已变更")
 		writeJSON(w, map[string]any{"ok": true})
 	})
 
-	// 证书管理 (mgr)
-	mux.Handle("/", mgr.HTTPHandler())
+	// 证书管理 (mgr) — 包装记录签发/吊销事件
+	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sw := &statusWriter{ResponseWriter: w}
+		mgr.HTTPHandler().ServeHTTP(sw, r)
+		if ev != nil && sw.status >= 200 && sw.status < 400 {
+			switch r.URL.Path {
+			case "/admin/certs/issue":
+				ev.Write(eventlog.Event{Type: "cert_issue", Msg: "签发证书"})
+			case "/admin/certs/revoke":
+				ev.Write(eventlog.Event{Type: "cert_revoke", Msg: "吊销证书"})
+			}
+		}
+	}))
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rec, err := gw.Authorize(r)
@@ -370,6 +480,10 @@ type Config struct {
 	DefaultDays   int                `toml:"default_days"`  // 普通证书默认天数
 	AdminDays     int                `toml:"admin_days"`    // 管理角色证书默认天数
 	RequireIPBind *bool              `toml:"require_ip_bind"`
+	LogFile       string             `toml:"log_file"`       // 事件日志(系统/配置/证书操作); 空=关
+	AccessLogFile string             `toml:"access_log_file"` // 访问日志(大量, 单独文件); 空=关
+	LogMaxSizeMB  int                `toml:"log_max_size"`  // 单文件上限 MB (默认 10)
+	LogMaxFiles   int                `toml:"log_max_files"` // 保留历史份数 (默认 5)
 	Roles         []string           `toml:"roles"`    // 角色声明列表(服务 roles / 签发 purposes 必须在此声明)
 	Mappings      []proxy.Mapping    `toml:"mappings"` // 通道: id + listen(:port[/path]) + target
 	Services      []proxy.ServiceCfg `toml:"services"` // 服务注册: name + channels + roles
@@ -404,6 +518,8 @@ func DefaultConfig() Config {
 		OU:            "device",
 		DefaultDays:   365,
 		AdminDays:     30,
+		LogMaxSizeMB:  10,
+		LogMaxFiles:   5,
 		Roles:         []string{},
 		Mappings:      []proxy.Mapping{},
 		Services:      []proxy.ServiceCfg{},
