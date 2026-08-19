@@ -17,10 +17,12 @@ import (
 
 // 管理操作请求/响应 (与服务端 internal/api 的 IssueRequest/IssueResponse 对齐)
 type IssueRequest struct {
-	Name     string   `json:"name"`
-	Purposes []string `json:"purposes"`
-	TSIP     string   `json:"ts_ip,omitempty"`
-	Password string   `json:"password,omitempty"` // 可选: p12 私钥密码
+	Name       string   `json:"name"`
+	Purposes   []string `json:"purposes"`
+	TSIP       string   `json:"ts_ip,omitempty"`
+	Days       int      `json:"days,omitempty"`
+	Password   string   `json:"password,omitempty"`
+	NoPassword bool     `json:"no_password,omitempty"` // true=无密码
 }
 
 type IssueResponse struct {
@@ -91,6 +93,24 @@ func (a *AdminClient) do(method, path string, in, out any) error {
 
 // Verify 探活 (检测 admin 证书是否被服务端接受; 403=非 admin)
 func (a *AdminClient) Verify() error { return a.do("GET", "/admin/health", nil, nil) }
+
+// List 拉取全部证书(吊销下拉用)
+func (a *AdminClient) List() (json.RawMessage, error) {
+	var raw json.RawMessage
+	err := a.do("GET", "/admin/certs", nil, &raw)
+	return raw, err
+}
+
+// ListMappings 拉取全部映射(签发时选用途)
+func (a *AdminClient) ListMappings() ([]ServiceInfo, error) {
+	var out struct {
+		Mappings []ServiceInfo `json:"mappings"`
+	}
+	if err := a.do("GET", "/admin/mappings", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Mappings, nil
+}
 
 // Issue 向服务端申请签发一张新证书 (由 admin 授权)
 func (a *AdminClient) Issue(req IssueRequest) (*IssueResponse, error) {

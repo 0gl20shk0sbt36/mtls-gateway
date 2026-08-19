@@ -189,6 +189,24 @@ func (m *Manager) AdminRevoke(certID, password, serial string) error {
 	return ac.Revoke(serial)
 }
 
+// AdminListCerts 拉取服务端全部证书(供吊销下拉)
+func (m *Manager) AdminListCerts(certID, password string) (json.RawMessage, error) {
+	ac, err := m.adminClientFor(certID, password)
+	if err != nil {
+		return nil, err
+	}
+	return ac.List()
+}
+
+// AdminMappings 拉取服务端全部映射(供签发时选用途)
+func (m *Manager) AdminMappings(certID, password string) ([]ServiceInfo, error) {
+	ac, err := m.adminClientFor(certID, password)
+	if err != nil {
+		return nil, err
+	}
+	return ac.ListMappings()
+}
+
 // BuildServiceTunnel 依据服务端规则生成一条隧道。
 // RemoteAddr = 服务端host:服务入口端口; 本地端口默认与服务端入口一致, 传 localPort>0 可覆盖。
 func (m *Manager) BuildServiceTunnel(svc ServiceInfo, localPort int, certID, serverName string) (Tunnel, error) {
@@ -299,6 +317,29 @@ func (m *Manager) Handler() http.Handler {
 			return
 		}
 		writeJSON(w, resp)
+	})
+	// POST /api/admin/certs — 服务端证书列表(吊销下拉)
+	mux.HandleFunc("POST /api/admin/certs", func(w http.ResponseWriter, r *http.Request) {
+		var b adminVerifyReq
+		json.NewDecoder(r.Body).Decode(&b)
+		raw, err := m.AdminListCerts(b.CertID, b.LoadPwd)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(raw)
+	})
+	// POST /api/admin/mappings — 全部映射(签发选用途)
+	mux.HandleFunc("POST /api/admin/mappings", func(w http.ResponseWriter, r *http.Request) {
+		var b adminVerifyReq
+		json.NewDecoder(r.Body).Decode(&b)
+		ms, err := m.AdminMappings(b.CertID, b.LoadPwd)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, map[string]any{"mappings": ms})
 	})
 	mux.HandleFunc("POST /api/admin/revoke", func(w http.ResponseWriter, r *http.Request) {
 		var b adminRevokeReq

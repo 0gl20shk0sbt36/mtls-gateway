@@ -122,7 +122,8 @@ type IssueRequest struct {
 	Purposes []string `json:"purposes"` // 可访问的用途列表: admin | dsh | vaultwarden | ...
 	TSIP     string   `json:"ts_ip"`    // 绑定 TS IP (写入 SAN)
 	Days     int      `json:"days"`     // 有效期天数 (默认 365)
-	Password string   `json:"password"` // p12 密码 (默认自动生成)
+	Password   string `json:"password"`     // p12 密码; 留空且未设 NoPassword 时自动生成
+	NoPassword bool   `json:"no_password"`  // true = 无密码(留空=真的没密码)
 }
 
 // normalizePurposes 规范化用途列表, 返回警告列表 (不终止)
@@ -196,7 +197,9 @@ func (m *Manager) IssueCert(req IssueRequest) (*IssueResponse, error) {
 			req.Days = m.tmpl.DefaultDays
 		}
 	}
-	if req.Password == "" {
+	if req.NoPassword {
+		req.Password = "" // 无密码 p12
+	} else if req.Password == "" {
 		req.Password = randPassword(16)
 	}
 	// 设备名合法性

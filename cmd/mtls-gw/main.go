@@ -138,7 +138,7 @@ func main() {
 				log.Fatalf("admin listen: %v", err)
 			}
 			log.Printf("admin api listening on %s (mTLS, admin cert required)", admListen)
-			admSrv := &http.Server{Handler: adminHandler(gateway, mgr)}
+			admSrv := &http.Server{Handler: adminHandler(gateway, mgr, router)}
 			if err := admSrv.Serve(tlsListener(ln, gateway.ServerTLSConfig())); err != nil {
 				log.Fatalf("admin serve: %v", err)
 			}
@@ -206,7 +206,7 @@ func resolveListen(bindHost, spec string) string {
 }
 
 // adminHandler 管理 TCP handler: 认证 + 只允许 admin 用途
-func adminHandler(gw *auth.Gateway, mgr *api.Manager) http.Handler {
+func adminHandler(gw *auth.Gateway, mgr *api.Manager, router *proxy.Router) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rec, err := gw.Authorize(r)
 		if err != nil {
@@ -218,6 +218,11 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager) http.Handler {
 			return
 		}
 		r.Header.Set("X-Auth-Purpose", auth.PurposeAdmin)
+		if r.URL.Path == "/admin/mappings" && r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"mappings": router.Routes()})
+			return
+		}
 		mgr.HTTPHandler().ServeHTTP(w, r)
 	})
 }

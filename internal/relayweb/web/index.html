@@ -74,6 +74,9 @@
   .sel .sel-list .opt{ padding:8px 10px; font-size:13px; color:var(--text); cursor:pointer; }
   .sel .sel-list .opt:hover{ background:rgba(255,255,255,0.06); }
   .sel .sel-list .opt.sel{ color:var(--accent); }
+  /* 多选(用途): 复选框样式 */
+  .sel .sel-list .opt.chk::before{ content:"☐"; margin-right:6px; color:var(--text4); }
+  .sel .sel-list .opt.chk.on::before{ content:"☑"; color:var(--accent); }
   .sel input[type=hidden]{ display:none; }
   /* ===== Buttons ===== */
   button{
@@ -181,15 +184,25 @@
       <p class="hint" id="adminStatus" style="margin:0 0 10px"></p>
       <div class="row"><input id="newName" placeholder="设备名 (如 dev-1)" style="flex:1"></div>
       <div class="row" style="margin-top:8px">
-        <input id="newPurposes" placeholder="用途, 逗号分隔 (如 dsh,vaultwarden; 或 admin)" style="flex:1.4">
+        <div class="sel" id="newPurposesSel" style="flex:1.4;min-width:200px">
+          <button type="button" class="sel-btn" id="newPurposesBtn"><span class="txt">— 选择用途 —</span><span class="arrow">▾</span></button>
+          <div class="sel-list" id="newPurposesList"></div>
+        </div>
         <input id="newTSIP" placeholder="TS IP (可选)" style="flex:1">
       </div>
       <div class="row" style="margin-top:8px">
-        <input id="newCertPwd" type="password" placeholder="p12 密码 (可选, 留空自动生成)" autocomplete="new-password" style="flex:1.4">
+        <div class="sel" id="pwdModeSel" style="width:130px">
+          <button type="button" class="sel-btn" id="pwdModeBtn"><span class="txt">自动生成</span><span class="arrow">▾</span></button>
+          <div class="sel-list" id="pwdModeList"></div>
+        </div>
+        <input id="newCertPwd" type="password" placeholder="自定义密码" autocomplete="new-password" style="flex:1.4" disabled>
         <button type="button" class="primary small" id="adminIssue">签发</button>
       </div>
       <div class="row" style="margin-top:10px">
-        <input id="revokeSerial" placeholder="要吊销的证书序列号" style="flex:1.4">
+        <div class="sel" id="revokeCertSel" style="flex:1.4;min-width:200px">
+          <button type="button" class="sel-btn" id="revokeCertBtn"><span class="txt">— 选择要吊销的证书 —</span><span class="arrow">▾</span></button>
+          <div class="sel-list" id="revokeCertList"></div>
+        </div>
         <button type="button" class="ghost small danger" id="adminRevoke">吊销</button>
       </div>
       <div class="hint" id="adminResult" style="margin-top:8px;white-space:pre-wrap"></div>

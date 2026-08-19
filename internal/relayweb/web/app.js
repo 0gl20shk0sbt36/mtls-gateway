@@ -49,6 +49,44 @@ function pickSel(listId, idx) {
 document.addEventListener("click", () =>
   document.querySelectorAll(".sel.open").forEach((x) => x.classList.remove("open")));
 
+// —— 多选下拉(用途) ——
+const SEL_MULTI = {};
+function initMultiSel(btnId, listId) {
+  SEL_MULTI[listId] = new Set();
+  const wrap = $(btnId).parentElement;
+  $(btnId).onclick = (e) => {
+    e.stopPropagation();
+    const was = wrap.classList.contains("open");
+    document.querySelectorAll(".sel.open").forEach((x) => x.classList.remove("open"));
+    if (!was) wrap.classList.add("open");
+  };
+  $(listId).onclick = (e) => {
+    e.stopPropagation();
+    const d = e.target.closest(".opt");
+    if (!d || d.dataset.val == null) return;
+    const s = SEL_MULTI[listId];
+    const v = d.dataset.val;
+    if (s.has(v)) { s.delete(v); d.classList.remove("on"); }
+    else { s.add(v); d.classList.add("on"); }
+    $(btnId).querySelector(".txt").textContent = s.size ? `已选 ${s.size} 项` : "— 选择用途 —";
+  };
+}
+function setMultiOpts(listId, items) {
+  SEL_MULTI[listId] = new Set();
+  const list = $(listId);
+  list.innerHTML = "";
+  (items || []).forEach((it) => {
+    const d = document.createElement("div");
+    d.className = "opt chk";
+    d.dataset.val = it.value;
+    d.textContent = it.label;
+    list.appendChild(d);
+  });
+  const txt = $(listId).parentElement.querySelector(".sel-btn .txt");
+  if (txt) txt.textContent = "— 选择用途 —";
+}
+function getMultiSel(listId) { return [...(SEL_MULTI[listId] || [])]; }
+
 function toast(msg, isErr) {
   const t = $("toast");
   t.textContent = (isErr ? "错误: " : "") + msg;
@@ -184,6 +222,15 @@ async function init() {
   $("adminVerify").onclick = verifyAdmin;
   $("adminIssue").onclick = adminIssue;
   $("adminRevoke").onclick = adminRevoke;
+  initMultiSel("newPurposesBtn", "newPurposesList");
+  initSel("pwdModeBtn", "pwdModeList", (it) => { $("newCertPwd").disabled = it.value !== "custom"; });
+  setSel("pwdModeList", [
+    { value: "none", label: "无密码" },
+    { value: "auto", label: "自动生成" },
+    { value: "custom", label: "自定义" },
+  ]);
+  pickSel("pwdModeList", 1); // 默认自动生成
+  initSel("revokeCertBtn", "revokeCertList");
   $("btnStart").onclick = async () => { try { await api("/api/start", jpost(null)); toast("已启动"); loadTunnels(); } catch (e) { toast(e.message, true); } };
   $("btnReload").onclick = async () => { try { await api("/api/reload", jpost(null)); toast("已 reload"); loadTunnels(); } catch (e) { toast(e.message, true); } };
   $("btnStop").onclick = async () => { try { await api("/api/stop", jpost(null)); toast("已停止"); loadTunnels(); } catch (e) { toast(e.message, true); } };
@@ -236,6 +283,7 @@ async function verifyAdmin() {
       $("adminStatus").textContent = "已解锁：admin 证书已验证，可签发/吊销。";
       $("adminCertHint").textContent = `已验证 ${cert}：admin 证书 → 证书管理可用。`;
       toast("验证成功 · 管理台已解锁");
+      loadAdminData();
     } else {
       $("adminSection").style.display = "none";
       $("tunnelSection").style.display = "";
@@ -245,24 +293,48 @@ async function verifyAdmin() {
     $("adminPwd").value = ""; // 验证成功即清空密码(失败保留)
   } catch (e) { toast("验证失败: " + e.message, true); }
 }
+async function loadAdminData() {
+  const cert = getSel("adminCertList");
+  if (!cert) return;
+  try {
+    const [m, cs] = await Promise.all([
+      api("/api/admin/mappings", jpost({ cert_id: cert, load_pwd: ADMIN_PWD })),
+      api("/api/admin/certs", jpost({ cert_id: cert, load_pwd: ADMIN_PWD })),
+    ]);
+    const purps = new Set(["admin"]);
+    (m.mappings || []).forEach((mp) => (mp.services || []).forEach((s) => purps.add(s)));
+    purps.delete("any");
+    setMultiOpts("newPurposesList", [...purps].map((p) => ({ value: p, label: p })));
+    const arr = Array.isArray(cs) ? cs : (cs.certs || []);
+    setSel("revokeCertList", arr.map((c) => ({ value: c.serial || "", label: `${c.name || "(无名)"} · ${c.serial || ""}` })));
+  } catch (e) { /* 加载失败不阻塞签发/吊销主流程 */ }
+}
+
 async function adminIssue() {
   const cert = getSel("adminCertList");
   const name = $("newName").value.trim();
-  const purps = $("newPurposes").value.split(/[,，\s]+/).filter(Boolean);
-  if (!cert || !name || !purps.length) { toast("需选 admin 证书 + 填设备名 + 用途", true); return; }
+  const purps = getMultiSel("newPurposesList");
+  if (!cert || !name || !purps.length) { toast("需选 admin 证书 + 填设备名 + 至少一个用途", true); return; }
+  const pwdMode = getSel("pwdModeList") || "auto";
+  const body = { cert_id: cert, load_pwd: ADMIN_PWD, name, purposes: purps, ts_ip: $("newTSIP").value.trim() };
+  if (pwdMode === "none") body.no_password = true;
+  else if (pwdMode === "custom") body.password = $("newCertPwd").value;
   try {
-    const resp = await api("/api/admin/issue", jpost({ cert_id: cert, load_pwd: ADMIN_PWD, name, purposes: purps, ts_ip: $("newTSIP").value.trim(), password: $("newCertPwd").value }));
-    $("adminResult").textContent = `✔ 已签发：${resp.name}\n序列号: ${resp.serial}\np12 密码: ${resp.p12_password || "（无）"}`;
+    const resp = await api("/api/admin/issue", jpost(body));
+    $("adminResult").textContent = `✔ 已签发：${resp.name}\n序列号: ${resp.serial}\n${pwdMode === "none" ? "无密码" : "p12 密码: " + (resp.p12_password || "")}`;
     toast("签发成功");
+    loadAdminData();
   } catch (e) { toast("签发失败: " + e.message, true); }
 }
+
 async function adminRevoke() {
   const cert = getSel("adminCertList");
-  const serial = $("revokeSerial").value.trim();
-  if (!cert || !serial) { toast("需选 admin 证书 + 填序列号", true); return; }
+  const serial = getSel("revokeCertList");
+  if (!cert || !serial) { toast("需选 admin 证书 + 选择要吊销的证书", true); return; }
   try {
     await api("/api/admin/revoke", jpost({ cert_id: cert, load_pwd: ADMIN_PWD, serial }));
-    $("adminResult").textContent = `✔ 已吊销序列号: ${serial}`;
+    $("adminResult").textContent = `✔ 已吊销: ${serial}`;
     toast("已吊销");
+    loadAdminData();
   } catch (e) { toast("吊销失败: " + e.message, true); }
 }
