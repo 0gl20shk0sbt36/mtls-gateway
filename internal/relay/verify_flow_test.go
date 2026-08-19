@@ -92,14 +92,14 @@ func startVerifyGW(t *testing.T, dir string, services []map[string]any) (gwAddr,
 		w.Write([]byte(`{"ok":true}`))
 	})
 	mux.HandleFunc("/admin/config", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == "PUT" {
+		if r.Method == "POST" { // 真实服务端 SetConfig 走 POST
 			w.Write([]byte(`{"ok":true}`))
 			return
 		}
 		json.NewEncoder(w).Encode(map[string]any{"listen_host": "127.0.0.1", "tunnels": []any{}})
 	})
 	mux.HandleFunc("/admin/mappings", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode([]any{map[string]any{"id": "m1", "listen": ":9601", "target": "http://x"}})
+		json.NewEncoder(w).Encode(map[string]any{"mappings": []any{map[string]any{"id": "m1", "listen": ":9601", "target": "http://x"}}})
 	})
 	mux.HandleFunc("/admin/certs", func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode([]any{map[string]any{"serial": "1", "name": "dev", "status": "enabled"}})
@@ -269,5 +269,33 @@ func TestAdminClientConfigCRUD(t *testing.T) {
 	rawM, err := m.AdminMapping(clientPair, "", "GET", "", nil)
 	if err != nil || !strings.Contains(string(rawM), "m1") {
 		t.Fatalf("AdminMapping GET: %s err=%v", rawM, err)
+	}
+}
+
+// 第二十二批: AdminClient List(证书列表)+ ListMappings(映射, 真类型)+ Service
+func TestAdminClientListAndService(t *testing.T) {
+	dir := t.TempDir()
+	svcs := []map[string]any{{"name": "svc-a", "channels": []any{map[string]any{"listen": ":9601", "target": "http://x"}}}}
+	gwAddr, caPath, clientPair := startVerifyGW(t, dir, svcs)
+	src, _ := certsource.OpenFile(clientPair)
+	r := New("", src)
+	r.SetServerAddr(gwAddr)
+	r.SetServerCA(caPath)
+	cfgPath := filepath.Join(dir, "relay.json")
+	SaveConfig(cfgPath, RelayConfig{ServerAddr: gwAddr, ServerCAFile: caPath, AdminAddr: gwAddr})
+	m, err := NewManager(r, cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.SetNoPersist(true)
+	// List(证书列表原始 JSON)
+	raw, err := m.AdminListCerts(clientPair, "")
+	if err != nil || !strings.Contains(string(raw), `"dev"`) {
+		t.Fatalf("AdminListCerts: %s err=%v", raw, err)
+	}
+	// ListMappings(映射, 修正后类型: id/listen/target)
+	ms, err := m.AdminMappings(clientPair, "")
+	if err != nil || len(ms) != 1 || ms[0].ID != "m1" || ms[0].Listen != ":9601" {
+		t.Fatalf("AdminMappings: %+v err=%v", ms, err)
 	}
 }

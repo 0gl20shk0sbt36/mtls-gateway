@@ -563,7 +563,7 @@ func TestTunnelHTTPCertRotation(t *testing.T) {
 	}
 	io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
-	// 等 TTL 过期 → 下一请求触发重建(同 host, 仍拨通网关 → 非 502)
+	// 等 TTL 过期 → 下一请求触发重建(同 host, 仍拨通网关; stub 未注册 /p → 404, 而非 502)
 	time.Sleep(200 * time.Millisecond)
 	resp2, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/p/x", localPort))
 	if err != nil {
@@ -571,7 +571,7 @@ func TestTunnelHTTPCertRotation(t *testing.T) {
 	}
 	io.Copy(io.Discard, resp2.Body)
 	resp2.Body.Close()
-	if resp2.StatusCode == 502 {
-		t.Fatal("after TTL rotation, proxy should rebuild and reach gateway (not 502)")
+	if resp2.StatusCode != 404 {
+		t.Fatalf("after TTL rotation proxy should reach gateway (404 from stub), got %d", resp2.StatusCode)
 	}
 }

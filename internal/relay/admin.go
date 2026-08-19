@@ -103,14 +103,22 @@ func (a *AdminClient) List() (json.RawMessage, error) {
 }
 
 // ListMappings 拉取全部映射(admin 用; 供签发时选用途)
-func (a *AdminClient) ListMappings() ([]ServiceInfo, error) {
+// 服务端 GET /admin/mappings 返回 {"mappings":[{id,listen,target}]}
+func (a *AdminClient) ListMappings() ([]MappingInfo, error) {
 	var out struct {
-		Mappings []ServiceInfo `json:"mappings"`
+		Mappings []MappingInfo `json:"mappings"`
 	}
 	if err := a.do("GET", "/admin/mappings", nil, &out); err != nil {
 		return nil, err
 	}
 	return out.Mappings, nil
+}
+
+// MappingInfo 服务端映射条目(与 internal/proxy.Mapping JSON 键对齐)
+type MappingInfo struct {
+	ID     string `json:"id"`
+	Listen string `json:"listen"`
+	Target string `json:"target"`
 }
 
 // Cfg 拉取服务端配置总览 (mode + mappings + services)

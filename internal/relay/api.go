@@ -267,7 +267,7 @@ func (m *Manager) AdminListCerts(certID, password string) (json.RawMessage, erro
 }
 
 // AdminMappings 拉取服务端全部映射(供签发时选用途)
-func (m *Manager) AdminMappings(certID, password string) ([]ServiceInfo, error) {
+func (m *Manager) AdminMappings(certID, password string) ([]MappingInfo, error) {
 	ac, err := m.adminClientFor(certID, password)
 	if err != nil {
 		return nil, err
@@ -663,7 +663,7 @@ func writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8") // 先设头再 WriteHeader
 	w.WriteHeader(code)
-	writeJSON(w, map[string]string{"error": msg})
+	json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
 
 // decodeJSON 解码请求体; 失败写 400 并返回 false
