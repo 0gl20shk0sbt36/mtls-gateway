@@ -100,6 +100,15 @@ func (r *Relay) DiscoverWithCert(cert tls.Certificate) ([]ServiceInfo, error) {
 	return out.Services, nil
 }
 
+// DiscoverWithCertOf 用指定证书(从来源加载, 无密码)做发现 — 建隧道时按用户所选证书
+func (r *Relay) DiscoverWithCertOf(certID string) ([]ServiceInfo, error) {
+	cert, err := r.loadCert(certID)
+	if err != nil {
+		return nil, err
+	}
+	return r.DiscoverWithCert(cert)
+}
+
 // loadFirstCert 取来源里第一枚可用证书(用于发现/默认)
 func (r *Relay) loadFirstCert() (tls.Certificate, error) {
 	r.mu.Lock()

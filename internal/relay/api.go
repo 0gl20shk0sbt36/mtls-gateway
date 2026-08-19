@@ -119,6 +119,11 @@ func (m *Manager) ListCerts() ([]certsource.IdentityMeta, error) { return m.rela
 // Services 从服务端 /info 拉取可用服务 (供外壳选择)
 func (m *Manager) Services() ([]ServiceInfo, error) { return m.relay.Discover() }
 
+// ServicesForCert 用指定证书(无密码)做服务发现 — 建隧道时用所选证书, 避免误用证书源第一枚
+func (m *Manager) ServicesForCert(certID string) ([]ServiceInfo, error) {
+	return m.relay.DiscoverWithCertOf(certID)
+}
+
 // —— 服务端管理桥 (证书管理台用; 需 admin 证书) ——
 
 func (m *Manager) adminAddr() string {
@@ -460,7 +465,7 @@ func (m *Manager) Handler() http.Handler {
 			writeErr(w, fmt.Errorf("service and cert_id required"))
 			return
 		}
-		svcs, err := m.Services()
+		svcs, err := m.ServicesForCert(b.CertID)
 		if err != nil {
 			writeErr(w, err)
 			return
