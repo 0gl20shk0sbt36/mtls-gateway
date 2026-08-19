@@ -125,6 +125,8 @@ func main() {
 			srv := &http.Server{
 				Handler:           gatewayHandler(gateway, cm, port, accLog),
 				ReadHeaderTimeout: 10 * time.Second,
+				ReadTimeout:       30 * time.Second,
+				WriteTimeout:      60 * time.Second,
 				IdleTimeout:       60 * time.Second,
 			}
 			if err := srv.Serve(tlsListener(ln, gateway.ServerTLSConfig())); err != nil {
@@ -144,6 +146,8 @@ func main() {
 			infoSrv := &http.Server{
 				Handler:           infoHandler(gateway, cm, accLog),
 				ReadHeaderTimeout: 10 * time.Second,
+				ReadTimeout:       30 * time.Second,
+				WriteTimeout:      60 * time.Second,
 				IdleTimeout:       60 * time.Second,
 			}
 			if err := infoSrv.Serve(tlsListener(ln, gateway.ServerTLSConfig())); err != nil {
@@ -182,6 +186,8 @@ func main() {
 			admSrv := &http.Server{
 				Handler:           adminHandler(gateway, mgr, cm, evLog),
 				ReadHeaderTimeout: 10 * time.Second,
+				ReadTimeout:       30 * time.Second,
+				WriteTimeout:      60 * time.Second,
 				IdleTimeout:       60 * time.Second,
 			}
 			if err := admSrv.Serve(tlsListener(ln, gateway.ServerTLSConfig())); err != nil {

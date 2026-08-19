@@ -23,6 +23,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"mtls-gateway/internal/db"
@@ -65,6 +66,7 @@ type Manager struct {
 	KeyType   string       // 签发密钥类型: rsa | ecdsa
 	KeyBits   int          // rsa: 2048/3072/4096; ecdsa: 256/384/521
 	PwdLength int          // 自动生成 p12 密码长度
+	rolesMu   sync.RWMutex // 保护 roles(热更新与签发并发)
 	roles     map[string]bool // 声明角色集合 (签发 purposes 校验用)
 }
 
@@ -134,12 +136,21 @@ func NewManager(store *db.Store, caCertPath, caKeyPath, certDir, sockPath string
 	}, nil
 }
 
-// SetDeclaredRoles 更新声明角色集合 (服务端配置管理热更新时调用)
+// SetDeclaredRoles 更新声明角色集合 (服务端配置管理热更新时调用; 与签发并发安全)
 func (m *Manager) SetDeclaredRoles(declaredRoles []string) {
+	m.rolesMu.Lock()
+	defer m.rolesMu.Unlock()
 	m.roles = map[string]bool{}
 	for _, r := range declaredRoles {
 		m.roles[r] = true
 	}
+}
+
+// hasRole 检查角色是否声明(读锁)
+func (m *Manager) hasRole(p string) bool {
+	m.rolesMu.RLock()
+	defer m.rolesMu.RUnlock()
+	return m.roles[p]
 }
 
 // IssueRequest 签发请求
@@ -222,7 +233,7 @@ func (m *Manager) IssueCert(req IssueRequest) (*IssueResponse, error) {
 		if p == "any" {
 			return nil, fmt.Errorf("角色 %q 是内置保留字, 只可用于服务声明, 不能签发给证书", p)
 		}
-		if p != m.AdminRole && !m.roles[p] {
+		if p != m.AdminRole && !m.hasRole(p) {
 			return nil, fmt.Errorf("角色 %q 未在 roles 声明列表中声明", p)
 		}
 	}
@@ -365,6 +376,24 @@ func (m *Manager) ServeUnixSocket() error {
 	return http.Serve(ln, m.handler(true))
 }
 
+// apiErrStatus 按错误语义映射 HTTP 状态码(客户端错误 4xx, 其余 500)
+func apiErrStatus(err error) int {
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "required"), strings.Contains(msg, "必填"), strings.Contains(msg, "不能为空"),
+		strings.Contains(msg, "invalid"), strings.Contains(msg, "非法"), strings.Contains(msg, "格式"),
+		strings.Contains(msg, "保留字"):
+		return http.StatusBadRequest
+	case strings.Contains(msg, "already exists"), strings.Contains(msg, "已存在"):
+		return http.StatusConflict
+	case strings.Contains(msg, "未声明"), strings.Contains(msg, "not declared"), strings.Contains(msg, "not found"):
+		return http.StatusNotFound
+	case strings.Contains(msg, "forbidden"), strings.Contains(msg, "无权"), strings.Contains(msg, "拒绝"):
+		return http.StatusForbidden
+	}
+	return http.StatusInternalServerError
+}
+
 // handler 管理 API 路由; isLocal=true 时 Unix socket 通道(直接 admin)
 func (m *Manager) handler(isLocal bool) http.Handler {
 	mux := http.NewServeMux()
@@ -377,17 +406,18 @@ func (m *Manager) handler(isLocal bool) http.Handler {
 			}
 		}
 		var req IssueRequest
+		r.Body = http.MaxBytesReader(w, r.Body, 4<<20)
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
 			return
 		}
 		resp, err := m.IssueCert(req)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			http.Error(w, err.Error(), apiErrStatus(err))
 			return
 		}
 		json.NewEncoder(w).Encode(resp)
-	})
+		})
 	mux.HandleFunc("POST /admin/certs/revoke", func(w http.ResponseWriter, r *http.Request) {
 		if !isLocal && r.Header.Get("X-Auth-Purpose") != m.AdminRole {
 			http.Error(w, "admin required", http.StatusForbidden)
@@ -396,12 +426,13 @@ func (m *Manager) handler(isLocal bool) http.Handler {
 		var req struct {
 			Serial string `json:"serial"`
 		}
+		r.Body = http.MaxBytesReader(w, r.Body, 4<<20)
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
 		if err := m.store.Revoke(req.Serial); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			http.Error(w, err.Error(), apiErrStatus(err))
 			return
 		}
 		json.NewEncoder(w).Encode(map[string]bool{"ok": true})

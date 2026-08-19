@@ -397,3 +397,26 @@ func TestRelay_StopThenStart(t *testing.T) {
 	}
 	echoThrough(t, "round-three")
 }
+
+// R2: server_ca 配置但不可用 → 拒绝(不降级系统根, 防 MITM)
+func TestApplyServerCARejectsBad(t *testing.T) {
+	h := newHarness(t)
+	defer h.close()
+	src := h.buildSrc(t)
+	r := New("", src)
+	defer r.Close()
+	// 文件不存在
+	if err := r.SetServerCA("/nonexistent/ca.crt"); err == nil {
+		t.Fatal("bad server_ca path should be rejected")
+	}
+	// 非 PEM 垃圾
+	bad := filepath.Join(t.TempDir(), "bad.crt")
+	os.WriteFile(bad, []byte("not a pem"), 0o600)
+	if err := r.SetServerCA(bad); err == nil {
+		t.Fatal("garbage server_ca should be rejected")
+	}
+	// 合法 CA → 成功
+	if err := r.SetServerCA(h.caPath); err != nil {
+		t.Fatalf("valid server_ca should pass: %v", err)
+	}
+}

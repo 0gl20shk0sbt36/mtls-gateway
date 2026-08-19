@@ -52,19 +52,19 @@ func (m *ConfigManager) Router() *proxy.Router {
 func (m *ConfigManager) Mappings() []proxy.Mapping {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.cfg.Mappings
+	return append([]proxy.Mapping(nil), m.cfg.Mappings...) // 深拷贝, 防外部改动/竞态
 }
 
 func (m *ConfigManager) Services() []proxy.ServiceCfg {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.cfg.Services
+	return append([]proxy.ServiceCfg(nil), m.cfg.Services...)
 }
 
 func (m *ConfigManager) Roles() []string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.cfg.Roles
+	return append([]string(nil), m.cfg.Roles...)
 }
 
 func (m *ConfigManager) checkWritable() error {

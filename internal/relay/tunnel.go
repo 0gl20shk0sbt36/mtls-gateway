@@ -28,6 +28,7 @@ type tunnelRuntime struct {
 	r        *Relay
 	key      string // service@channel@local
 	service  string
+	idle     time.Duration // TCP 透传空闲超时
 	route    TunnelRoute
 	certID   string
 	listener net.Listener
@@ -216,8 +217,8 @@ func (rt *tunnelRuntime) handleConn(local net.Conn) {
 	}
 	defer upstream.Close()
 
-	// 空闲超时: 120s 无数据传输则关闭(按需建连; 活跃连接不受限)
-	idle := 120 * time.Second
+	// 空闲超时: rt.idle 无数据传输则关闭(按需建连; 活跃连接不受限)
+	idle := rt.idle
 	var lastActive atomic.Int64
 	lastActive.Store(time.Now().UnixNano())
 	touch := func() { lastActive.Store(time.Now().UnixNano()) }

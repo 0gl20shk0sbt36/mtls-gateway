@@ -96,7 +96,7 @@ func main() {
 			log.Fatalf("admin listen %s: %v", *adminListen, err)
 		}
 		srv = &http.Server{
-			Handler:           relayweb.NewHandler(mgr),
+			Handler:           relayweb.NewHandler(mgr, *allowRemote),
 			ReadHeaderTimeout: 10 * time.Second,
 			IdleTimeout:       60 * time.Second,
 		}

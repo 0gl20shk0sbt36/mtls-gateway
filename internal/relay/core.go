@@ -38,6 +38,7 @@ type Relay struct {
 	tunnels   map[string]*tunnelRuntime // tunnel ID -> runtime
 	L         *i18n.L                   // 错误消息语言(zh/en, 默认 zh)
 	started   bool
+	idleTimeout time.Duration // TCP 透传空闲超时(0=默认 120s; 测试可注入)
 }
 
 // certCacheTTL 证书缓存有效期: 到期重载, 支持证书轮换/续期(≤TTL 生效)
@@ -60,13 +61,14 @@ func (r *Relay) SetLang(lang string) {
 func New(cfgPath string, src certsource.Source) *Relay {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Relay{
-		cfgPath:   cfgPath,
-		src:       src,
-		certCache: make(map[string]certCacheEntry),
-		ctx:       ctx,
-		cancel:    cancel,
-		tunnels:   make(map[string]*tunnelRuntime),
-		L:         i18n.New("zh"),
+		cfgPath:     cfgPath,
+		src:         src,
+		certCache:   make(map[string]certCacheEntry),
+		ctx:         ctx,
+		cancel:      cancel,
+		tunnels:     make(map[string]*tunnelRuntime),
+		L:           i18n.New("zh"),
+		idleTimeout: 120 * time.Second,
 	}
 }
 
@@ -198,7 +200,7 @@ func (r *Relay) Start(cfg RelayConfig) error {
 			continue
 		}
 		for _, spec := range tunnelRoutes(t) {
-			rt := &tunnelRuntime{r: r, key: spec.key, service: spec.service, route: spec.route, certID: spec.certID, conns: map[net.Conn]struct{}{}}
+			rt := &tunnelRuntime{r: r, key: spec.key, service: spec.service, idle: r.idleTimeout, route: spec.route, certID: spec.certID, conns: map[net.Conn]struct{}{}}
 			if err := r.startTunnel(rt); err != nil {
 				// 回滚已启动的
 				for _, t2 := range runtimes {
@@ -242,7 +244,7 @@ func (r *Relay) Reload(cfg RelayConfig) error {
 			key := spec.key
 			next[key] = true
 			if _, ok := r.tunnels[key]; !ok {
-				rt := &tunnelRuntime{r: r, key: spec.key, service: spec.service, route: spec.route, certID: spec.certID, conns: map[net.Conn]struct{}{}}
+				rt := &tunnelRuntime{r: r, key: spec.key, service: spec.service, idle: r.idleTimeout, route: spec.route, certID: spec.certID, conns: map[net.Conn]struct{}{}}
 				if err := r.startTunnel(rt); err != nil {
 					return err
 				}

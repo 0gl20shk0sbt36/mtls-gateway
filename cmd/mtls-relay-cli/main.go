@@ -183,30 +183,30 @@ func tunnel(args []string) {
 	}
 }
 
+// tunnelAdd v4 模型: 按服务建隧道(服务端通道 → 本地路由)
 func tunnelAdd(args []string) {
 	fs := flag.NewFlagSet("tunnel add", flag.ExitOnError)
-	id := fs.String("id", "", "隧道 ID")
-	local := fs.Int("local", 0, "本地监听端口")
-	remote := fs.String("remote", "", "远端网关后端 host:port")
+	service := fs.String("service", "", "服务名 (服务端 /info 所列)")
 	cert := fs.String("cert", "", "证书 ID (certs 子命令所列)")
-	serverName := fs.String("server-name", "", "TLS SNI (可选)")
-	purpose := fs.String("purpose", "", "用途 (记录用, 可选)")
+	route := fs.String("route", "", "本地路由覆盖: 通道=本地 (如 ':29991=:39991'; 可逗号分隔多个)")
 	fs.Parse(args)
 
-	if *local == 0 || *remote == "" || *cert == "" {
-		fmt.Fprintln(os.Stderr, "必须提供 --local --remote --cert")
+	if *service == "" || *cert == "" {
+		fmt.Fprintln(os.Stderr, "必须提供 --service --cert")
 		os.Exit(1)
 	}
-	if *id == "" {
-		*id = fmt.Sprintf("t%d", *local)
+	locals := map[string]string{}
+	if *route != "" {
+		for _, pair := range strings.Split(*route, ",") {
+			kv := strings.SplitN(pair, "=", 2)
+			if len(kv) == 2 {
+				locals[kv[0]] = kv[1]
+			}
+		}
 	}
-	body := map[string]any{
-		"id": *id, "local_port": *local, "remote_addr": *remote,
-		"cert_id": *cert, "server_name": *serverName,
-		"purpose": *purpose, "enabled": true,
-	}
+	body := map[string]any{"service": *service, "cert_id": *cert, "locals": locals}
 	must(post("/api/tunnels", body))
-	fmt.Println("已保存隧道:", *id, "(执行 reload 生效; start 首次启动)")
+	fmt.Println("已保存服务隧道:", *service, "(执行 reload 生效; start 首次启动)")
 }
 
 func tunnelList() {
@@ -218,12 +218,13 @@ func tunnelList() {
 	var cfg struct {
 		ListenHost string `json:"listen_host"`
 		Tunnels    []struct {
-			ID         string `json:"id"`
-			LocalPort  int    `json:"local_port"`
-			RemoteAddr string `json:"remote_addr"`
-			Purpose    string `json:"purpose"`
-			CertID     string `json:"cert_id"`
-			Enabled    bool   `json:"enabled"`
+			Service string `json:"service"`
+			CertID  string `json:"cert_id"`
+			Enabled bool   `json:"enabled"`
+			Routes  []struct {
+				Channel string `json:"channel"`
+				Local   string `json:"local"`
+			} `json:"routes"`
 		} `json:"tunnels"`
 	}
 	if err := json.Unmarshal(cfgB, &cfg); err != nil {
@@ -234,9 +235,15 @@ func tunnelList() {
 		fmt.Println("(无隧道)")
 		return
 	}
-	fmt.Printf("%-8s %-8s %-24s %-12s %s\n", "ID", "LOCAL", "REMOTE", "PURPOSE", "CERT")
+	fmt.Printf("%-14s %-10s %-14s %-14s %s\n", "SERVICE", "ENABLED", "CHANNEL", "LOCAL", "CERT")
 	for _, t := range cfg.Tunnels {
-		fmt.Printf("%-8s %-8d %-24s %-12s %s\n", t.ID, t.LocalPort, t.RemoteAddr, t.Purpose, t.CertID)
+		if len(t.Routes) == 0 {
+			fmt.Printf("%-14s %-10v %-14s %-14s %s\n", t.Service, t.Enabled, "-", "-", t.CertID)
+			continue
+		}
+		for _, r := range t.Routes {
+			fmt.Printf("%-14s %-10v %-14s %-14s %s\n", t.Service, t.Enabled, r.Channel, r.Local, t.CertID)
+		}
 	}
 }
 
@@ -255,10 +262,10 @@ func status() {
 		fmt.Println("(中继未运行 / 无活动隧道)")
 		return
 	}
-	fmt.Printf("%-8s %-8s %-10s %-14s %-10s %s\n", "ID", "LOCAL", "ACTIVE", "BYTES_IN", "BYTES_OUT", "LAST_ERR")
+	fmt.Printf("%-14s %-14s %-8s %-10s %-12s %-12s %s\n", "SERVICE", "LOCAL", "ACTIVE", "RUNNING", "BYTES_IN", "BYTES_OUT", "LAST_ERR")
 	for _, s := range sts {
-		fmt.Printf("%-8s %-8v %-10v %-14v %-10v %v\n",
-			s["id"], s["local_port"], s["active_conns"], s["bytes_in"], s["bytes_out"], s["last_error"])
+		fmt.Printf("%-14s %-14v %-8v %-10v %-12v %-12v %v\n",
+			s["service"], s["local"], s["active_conns"], s["running"], s["bytes_in"], s["bytes_out"], s["last_error"])
 	}
 }
 

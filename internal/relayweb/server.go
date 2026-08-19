@@ -8,6 +8,7 @@ package relayweb
 import (
 	"embed"
 	"io/fs"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -19,7 +20,9 @@ import (
 var webFS embed.FS
 
 // NewHandler 组合管理 handler: /api/* → relay.Manager, 其余 → WebUI 静态页。
-func NewHandler(mgr *relay.Manager) http.Handler {
+// allowRemote: --allow-remote 显式放行非 loopback Host(跳过 Host 白名单, 保留 Origin 校验);
+// 默认 false = 管理面只服务本机(DNS rebinding 防护)。
+func NewHandler(mgr *relay.Manager, allowRemote bool) http.Handler {
 	sub, err := fs.Sub(webFS, "web")
 	if err != nil {
 		panic(err)
@@ -28,8 +31,8 @@ func NewHandler(mgr *relay.Manager) http.Handler {
 	apiHandler := mgr.Handler()
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// DNS rebinding / CSRF 防护: 浏览器跨源请求(Origin ≠ Host)拒绝
-		if !sameOrigin(r) {
+		// DNS rebinding / CSRF 防护: Host 非 loopback(默认)或浏览器跨源请求(Origin ≠ Host)拒绝
+		if !sameOrigin(r, allowRemote) {
 			http.Error(w, "cross-origin request rejected", http.StatusForbidden)
 			return
 		}
@@ -53,9 +56,23 @@ func NewHandler(mgr *relay.Manager) http.Handler {
 }
 
 // sameOrigin DNS rebinding / CSRF 防护:
-// 浏览器跨源请求会带 Origin 头; 若 Origin 的 host 与请求 Host 不一致则拒绝。
-// 无 Origin 的请求(CLI/curl/同源浏览器)放行。
-func sameOrigin(r *http.Request) bool {
+// ① Host 必须为 loopback(localhost/127.0.0.1/::1) — 管理面无鉴权, 只服务本机;
+//    否则 DNS rebinding 攻击者可让 Origin 与 Host 同值(都为 evil.com)绕过纯 Origin 校验。
+//    allowRemote=true(--allow-remote 显式选择)时跳过此检查。
+// ② 带 Origin 的请求(浏览器跨源)要求 Origin 的 host 与请求 Host 一致; 无 Origin(CLI/curl)放行。
+func sameOrigin(r *http.Request, allowRemote bool) bool {
+	if !allowRemote {
+		host := r.Host
+		if h, _, err := net.SplitHostPort(host); err == nil {
+			host = h
+		}
+		if host != "localhost" {
+			ip := net.ParseIP(host)
+			if ip == nil || !ip.IsLoopback() {
+				return false // Host 非 loopback → 拒绝(含 rebinding 的 evil.com)
+			}
+		}
+	}
 	if o := r.Header.Get("Origin"); o != "" {
 		ou, err := url.Parse(o)
 		if err != nil || ou.Host != r.Host {

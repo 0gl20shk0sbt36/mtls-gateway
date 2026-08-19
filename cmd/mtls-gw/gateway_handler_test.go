@@ -283,9 +283,14 @@ func TestGatewayHandler_UnregisteredCert(t *testing.T) {
 	if err != nil {
 		t.Fatalf("req: %v", err)
 	}
+	b, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	if resp.StatusCode != 403 {
 		t.Fatalf("unregistered should be 403, got %d", resp.StatusCode)
+	}
+	// R6: 脱敏 — 响应体只含 forbidden, 不泄露 serial/证书名等内部细节
+	if strings.TrimSpace(string(b)) != "forbidden" {
+		t.Fatalf("403 body should be sanitized 'forbidden', got: %q", b)
 	}
 }
 

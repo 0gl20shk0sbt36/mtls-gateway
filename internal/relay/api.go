@@ -641,7 +641,9 @@ func writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case strings.Contains(msg, "bad request"):
 		code = http.StatusBadRequest
-	case strings.Contains(msg, "is required"), strings.Contains(msg, "必填"), strings.Contains(msg, "不能为空"),
+	case strings.Contains(msg, "admin required"): // 403 语义优先于 400 的 "required"
+		code = http.StatusForbidden
+	case strings.Contains(msg, "required"), strings.Contains(msg, "必填"), strings.Contains(msg, "不能为空"),
 		strings.Contains(msg, "格式"), strings.Contains(msg, "invalid"), strings.Contains(msg, "非法"),
 		strings.Contains(msg, "已存在"), strings.Contains(msg, "禁止同名"):
 		code = http.StatusBadRequest
@@ -657,6 +659,7 @@ func writeErr(w http.ResponseWriter, r *http.Request, err error) {
 
 // decodeJSON 解码请求体; 失败写 400 并返回 false
 func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, 4<<20) // 4MB 上限
 	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
 		writeErr(w, r, fmt.Errorf("bad request: %v", err))
 		return false

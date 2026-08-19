@@ -11,8 +11,10 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"mtls-gateway/internal/certsource"
@@ -77,6 +79,16 @@ func startVerifyGW(t *testing.T, dir string, services []map[string]any) (gwAddr,
 		json.NewEncoder(w).Encode(map[string]any{"services": services})
 	})
 	mux.HandleFunc("/admin/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"ok":true}`))
+	})
+	mux.HandleFunc("/admin/certs/issue", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Name string `json:"name"`
+		}
+		json.NewDecoder(r.Body).Decode(&req)
+		json.NewEncoder(w).Encode(map[string]any{"name": req.Name, "serial": "test-serial-1", "p12_password": "pw"})
+	})
+	mux.HandleFunc("/admin/certs/revoke", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"ok":true}`))
 	})
 	srv := &http.Server{Handler: mux}
@@ -147,5 +159,44 @@ func TestManagerVerify_AdminProbeSilent(t *testing.T) {
 	}
 	if len(res.Services) == 0 {
 		t.Fatal("services should still be discovered")
+	}
+}
+
+// R7: admin 桥成功路径 — 经 Manager.Handler() 调服务端签发(HTTP 层)
+func TestManagerAdminBridgeIssueHTTP(t *testing.T) {
+	dir := t.TempDir()
+	svcs := []map[string]any{{"name": "svc-a", "channels": []any{map[string]any{"listen": ":9601", "target": "http://x"}}}}
+	gwAddr, caPath, clientPair := startVerifyGW(t, dir, svcs)
+	src, _ := certsource.OpenFile(clientPair)
+	r := New("", src)
+	r.SetServerAddr(gwAddr)
+	r.SetServerCA(caPath)
+	cfgPath := filepath.Join(dir, "relay.json")
+	SaveConfig(cfgPath, RelayConfig{ServerAddr: gwAddr, ServerCAFile: caPath, AdminAddr: gwAddr, Tunnels: []Tunnel{}})
+	m, _ := NewManager(r, cfgPath)
+	m.SetNoPersist(true)
+	h := m.Handler()
+
+	// 签发(经管理桥 → stub /admin/certs/issue)
+	body := `{"cert_id":"` + clientPair + `","name":"bridge-dev","purposes":["svc-a"],"no_password":true}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/admin/issue", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("admin issue via bridge should be 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]any
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+	if resp["serial"] != "test-serial-1" {
+		t.Fatalf("issue response: %v", resp)
+	}
+	// 吊销(经管理桥)
+	rec2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest("POST", "/api/admin/revoke", strings.NewReader(`{"cert_id":"`+clientPair+`","serial":"test-serial-1"}`))
+	req2.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(rec2, req2)
+	if rec2.Code != 200 {
+		t.Fatalf("admin revoke via bridge should be 200, got %d: %s", rec2.Code, rec2.Body.String())
 	}
 }

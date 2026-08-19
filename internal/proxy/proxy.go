@@ -9,6 +9,7 @@ package proxy
 
 import (
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -387,7 +388,9 @@ func newReverseProxy(target *url.URL) *httputil.ReverseProxy {
 			IdleConnTimeout:       90 * time.Second,
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			http.Error(w, "backend error: "+err.Error(), http.StatusBadGateway)
+			// 脱敏: 后端错误细节(内部 IP/端口/DNS)只写日志, 对外统一 502
+			log.Printf("proxy %s -> %s: %v", r.URL.Path, target.Host, err)
+			http.Error(w, "bad gateway", http.StatusBadGateway)
 		},
 	}
 }
