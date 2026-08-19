@@ -6,7 +6,6 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"path"
 	"net/http/httputil"
 	"net/url"
 	"strings"
