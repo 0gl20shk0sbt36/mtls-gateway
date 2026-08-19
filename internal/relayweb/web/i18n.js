@@ -45,7 +45,7 @@
       needCert: "请先选择证书",
       // 新增隧道
       addTunnel: "新增隧道",
-      addTunnelHint: "先在下方案例\"证书选择\"卡里<b>选证书并验证</b>，服务列表才会加载。选中服务后，其每个通道一行，填本地路由(默认=服务端通道原样, 含冒号; 可带路径)。",
+      addTunnelHint: "先在上方「证书选择」卡里选证书并<b>验证</b>，服务列表才会加载。选中服务后，其每个通道一行，填本地路由(默认=服务端通道原样, 含冒号; 可带路径)。",
       chooseService: "— 选择服务 —",
       refresh: "刷新",
       add: "添加",
@@ -141,7 +141,7 @@
       verifyFail: "Verify failed: {m}",
       needCert: "Select a certificate first",
       addTunnel: "Add Tunnel",
-      addTunnelHint: "First <b>select a certificate and verify</b> in the \"Certificate\" card below — the service list only loads after that. After picking a service, each channel gets a row; fill the local route (default = same as server channel, incl. colon; path allowed).",
+      addTunnelHint: "First pick a certificate and <b>verify</b> in the \"Certificate\" card above — the service list only loads after that. After picking a service, each channel gets a row; fill the local route (default = server channel, incl. colon; path allowed).",
       chooseService: "— Select service —",
       refresh: "Refresh",
       add: "Add",
