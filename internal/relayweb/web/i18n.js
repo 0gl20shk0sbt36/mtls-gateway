@@ -7,8 +7,9 @@
       // 运行控制
       runCtrl: "运行控制",
       start: "启动",
-      reload: "Reload",
+      reload: "重载",
       stop: "停止",
+      subLabel: "客户端 mTLS 中继",
       onlineN: "在线 · {n} 个通道",
       offline: "离线",
       // 隧道表
@@ -107,6 +108,7 @@
       start: "Start",
       reload: "Reload",
       stop: "Stop",
+      subLabel: "Client mTLS Relay",
       onlineN: "Online · {n} routes",
       offline: "Offline",
       tunnels: "Tunnels",
