@@ -92,6 +92,9 @@ func (m *Manager) AddTunnel(t Tunnel) error {
 
 // reloadTunnels 把当前配置同步到运行时(增删立即生效)
 func (m *Manager) reloadTunnels() {
+	if m.relay == nil {
+		return // 无 relay 后端(测试/纯配置模式)
+	}
 	if err := m.relay.Reload(m.Config()); err != nil {
 		log.Printf("reload tunnels: %v", err)
 	}
