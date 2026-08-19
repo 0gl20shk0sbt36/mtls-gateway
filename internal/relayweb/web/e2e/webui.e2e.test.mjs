@@ -47,7 +47,14 @@ const verifyWith = async (cert, pwd) => {
   await pickOpt("adminCertList", cert);
   if (pwd) await page.fill("#adminPwd", pwd);
   await page.click("#adminVerify");
-  await page.waitForTimeout(2500);
+  // 轮询验证结果(取代固定 sleep, 抗慢机器)
+  const hint = await page.evaluate(() => document.getElementById("adminCertHint").textContent);
+  for (let i = 0; i < 20; i++) {
+    const h = await page.evaluate(() => document.getElementById("adminCertHint").textContent);
+    if (h !== hint) break;
+    await page.waitForTimeout(250);
+  }
+  await page.waitForTimeout(500); // 等数据加载(服务列表/配置区)
 };
 
 const svcSelectState = async () => {
@@ -72,15 +79,20 @@ function httpGet(port, path) {
   });
 }
 
-function httpsGet(port, { withCert } = {}) {
+function httpsGet(port, { withCert, withBadCert } = {}) {
   return new Promise((resolve) => {
     const opts = {
-      host: "127.0.0.1", port, path: "/", method: "GET", rejectUnauthorized: false,
-      ca: fs.readFileSync(`${E2E_DIR}/ca.crt`),
+      host: "127.0.0.1", port, path: "/", method: "GET",
+      ca: fs.readFileSync(`${E2E_DIR}/ca.crt`), // 验证服务器证书(M4: 不再绕过)
     };
     if (withCert) {
       opts.cert = fs.readFileSync(`${E2E_DIR}/certs/e2e-a/cert.pem`);
       opts.key = fs.readFileSync(`${E2E_DIR}/certs/e2e-a/key.pem`);
+    }
+    if (withBadCert) {
+      // 错误 CA 签发的客户端证书 → 服务器应拒绝(unknown CA)
+      opts.cert = fs.readFileSync(`${E2E_DIR}/bad-client.pem`);
+      opts.key = fs.readFileSync(`${E2E_DIR}/bad-client.pem`);
     }
     const req = https.request(opts, (res) => {
       let b = "";
@@ -188,7 +200,7 @@ test("6. 服务下拉过滤: 已建隧道的服务消失", async () => {
   assert.ok(opts.some((t) => t.includes("any-svc")), `any-svc 应保留: ${opts}`);
 });
 
-test("7. ★转发真的转发: 隧道本地路由 → 网关 → echo 后端", async () => {
+test("7. ★转发真的转发: 隧道本地路由 → 网关 → echo 后端(整口 + /admin 路径通道)", async () => {
   let ok = false;
   for (let i = 0; i < 10; i++) {
     const r = await httpGet(LOCAL_PORT, "/");
@@ -199,13 +211,25 @@ test("7. ★转发真的转发: 隧道本地路由 → 网关 → echo 后端", 
   const r = await httpGet(LOCAL_PORT, "/");
   assert.equal(r.status, 200, `转发状态码: ${JSON.stringify(r)}`);
   assert.ok(r.body.includes("Directory listing") || r.body.includes("<title>"), `应返回 echo 后端内容: ${r.body.slice(0, 80)}`);
+  // 路径通道(:47991/admin → 网关 :46991/admin → 后端)
+  const rp = await httpGet(LOCAL_PORT, "/admin/");
+  assert.ok(rp.status === 200 || rp.status === 404, `路径通道应有后端响应(200/404 都证明链路通): ${JSON.stringify(rp).slice(0, 100)}`);
+  if (rp.status === 200) {
+    assert.ok(rp.body.includes("Directory listing"), `/admin/ 应返回后端目录列表: ${rp.body.slice(0, 60)}`);
+  }
 });
 
-test("8. ★mTLS 壳真的套上: 无证书被拒, 带证书通过(直连网关)", async () => {
+test("8. ★mTLS 壳真的套上: 无证书/坏证书被拒, 带证书通过(直连网关)", async () => {
+  // 无客户端证书 → TLS 握手失败
   const bare = await httpsGet(GW_PORT);
   assert.ok(bare.error || !bare.status, `无证书应被拒: ${JSON.stringify(bare)}`);
+  // 错误 CA 签发的客户端证书 → 服务器拒绝(unknown CA)
+  const bad = await httpsGet(GW_PORT, { withBadCert: true });
+  assert.ok(bad.error || !bad.status, `坏CA证书应被拒: ${JSON.stringify(bad)}`);
+  // 带 e2e-a 客户端证书(服务器证书也真验证)→ 200
   const withCert = await httpsGet(GW_PORT, { withCert: true });
   assert.equal(withCert.status, 200, `带证书应通过: ${JSON.stringify(withCert).slice(0, 120)}`);
+  // admin 管理端口同样无证书被拒
   const admBare = await httpsGet(46999);
   assert.ok(admBare.error || !admBare.status, `admin 端口无证书应被拒: ${JSON.stringify(admBare)}`);
 });
@@ -285,13 +309,29 @@ test("11. ★签发闭环: 签发 → 装入证书源 → 新证书验证通过 
   }
 });
 
-test("12. ★异常: 吊销后验证被拒(授权闭环)", async () => {
-  // e2e-ci-dev 已在测试 11 被吊销 → 验证应失败
+test("12. ★异常: 吊销 e2e-a → 验证被拒(授权闭环, 自足场景)", async () => {
+  // 先验证 e2e-a 可用(未被吊销)
+  await page.reload();
+  await page.waitForTimeout(600);
+  await verifyWith("e2e-a", "");
+  assert.equal(await page.evaluate(() => document.getElementById("tunnelSection").style.display), "", "e2e-a 应可验证");
+  // admin 吊销 e2e-a
+  await page.reload();
+  await page.waitForTimeout(600);
+  await verifyWith("admin", ADMIN_PWD);
+  await page.click("#revokeCertBtn");
+  await page.waitForTimeout(200);
+  await page.evaluate(() => { [...document.querySelectorAll("#revokeCertList .opt")].find((o) => o.textContent.includes("e2e-a")).click(); });
+  await page.waitForTimeout(200);
+  page.once("dialog", (d) => d.accept());
+  await page.click("#adminRevoke");
+  await page.waitForTimeout(1500);
+  // 吊销后 e2e-a 验证应失败
   await page.reload();
   await page.waitForTimeout(600);
   await page.click("#adminCertBtn");
   await page.waitForTimeout(200);
-  await pickOpt("adminCertList", "e2e-ci-dev");
+  await pickOpt("adminCertList", "e2e-a");
   await page.click("#adminVerify");
   await page.waitForTimeout(2500);
   const hint = await page.evaluate(() => document.getElementById("adminCertHint").textContent);

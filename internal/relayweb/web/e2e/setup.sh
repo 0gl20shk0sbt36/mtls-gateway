@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 # WebUI E2E 环境搭建: 生成 CA/证书/配置, 起 gw+echo+relay, 输出 WEBUI_URL
-# 用法: ./setup.sh [工作目录]   (默认 /tmp/mtls-e2e-ci)
+# 用法: ./setup.sh [工作目录]   (默认 /tmp/mtls-e2e-ci; 每次全新重建, 不保留旧环境)
 set -euo pipefail
 D="${1:-/tmp/mtls-e2e-ci}"
+# 清理旧环境(端口占用/残留文件), 保证可重复运行
+for port in 46987 46990 46991 46992 46993 46998 46999 47991; do
+  fuser -k "${port}/tcp" 2>/dev/null || true
+done
+rm -rf "$D"
 mkdir -p "$D/certs"
 cd "$D"
 
@@ -100,6 +105,15 @@ openssl rsa -in "$D/issued/admin/key.pem" -traditional -aes256 -passout pass:ci-
 mv -f "$D/issued/admin/key.enc.pem" "$D/issued/admin/key.pem"
 cp -f "$D/issued/admin/cert.pem" "$D/issued/admin/key.pem" "$D/certs/admin/"
 cp -f "$D/issued/e2e-a/cert.pem" "$D/issued/e2e-a/key.pem" "$D/certs/e2e-a/"
+
+# 坏 CA 客户端证书(M4: 错误 CA 签发的证书应被服务器拒绝)
+if [ ! -f bad-client.pem ]; then
+  openssl req -x509 -newkey rsa:2048 -nodes -keyout bad-ca.key -out bad-ca.crt -days 3650 -subj "/CN=e2e-ci-bad-ca" 2>/dev/null
+  openssl req -new -newkey rsa:2048 -nodes -keyout bad-client.key -out bad-client.csr -subj "/CN=bad-client" 2>/dev/null
+  openssl x509 -req -in bad-client.csr -CA bad-ca.crt -CAkey bad-ca.key -days 365 -out bad-client.crt 2>/dev/null
+  cat bad-client.crt bad-client.key > bad-client.pem
+  rm -f bad-client.csr
+fi
 
 # ---- 7. relay 配置 + 启动 ----
 cat > relay.json <<EOF
