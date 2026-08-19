@@ -203,6 +203,25 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *ConfigManager) http.Ha
 		})
 	})
 
+	// 整体替换保存 (批量编辑)
+	mux.HandleFunc("POST /admin/config", func(w http.ResponseWriter, r *http.Request) {
+		var b struct {
+			Mappings []proxy.Mapping    `json:"mappings"`
+			Services []proxy.ServiceCfg `json:"services"`
+			Roles    []string           `json:"roles"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := cm.ReplaceAll(b.Mappings, b.Services, b.Roles); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		mgr.SetDeclaredRoles(cm.Roles())
+		writeJSON(w, map[string]any{"ok": true})
+	})
+
 	// 角色声明列表 CRUD
 	mux.HandleFunc("POST /admin/roles", func(w http.ResponseWriter, r *http.Request) {
 		var b struct {

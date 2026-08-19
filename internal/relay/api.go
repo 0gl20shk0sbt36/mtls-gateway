@@ -198,6 +198,15 @@ func (m *Manager) AdminConfig(certID, password string) (json.RawMessage, error) 
 	return ac.Cfg()
 }
 
+// AdminSetConfig 整体替换服务端配置
+func (m *Manager) AdminSetConfig(certID, password string, body json.RawMessage) (json.RawMessage, error) {
+	ac, err := m.adminClientFor(certID, password)
+	if err != nil {
+		return nil, err
+	}
+	return ac.SetConfig(body)
+}
+
 // AdminMapping 通道 CRUD 透传 (method: POST/PUT/DELETE)
 func (m *Manager) AdminMapping(certID, password, method, id string, body json.RawMessage) (json.RawMessage, error) {
 	ac, err := m.adminClientFor(certID, password)
@@ -383,6 +392,22 @@ func (m *Manager) Handler() http.Handler {
 		var b adminVerifyReq
 		json.NewDecoder(r.Body).Decode(&b)
 		raw, err := m.AdminConfig(b.CertID, b.LoadPwd)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(raw)
+	})
+	// PUT /api/admin/config — 整体替换服务端配置(批量保存)
+	mux.HandleFunc("PUT /api/admin/config", func(w http.ResponseWriter, r *http.Request) {
+		var b struct {
+			CertID  string          `json:"cert_id"`
+			LoadPwd string          `json:"load_pwd"`
+			Body    json.RawMessage `json:"body"`
+		}
+		json.NewDecoder(r.Body).Decode(&b)
+		raw, err := m.AdminSetConfig(b.CertID, b.LoadPwd, b.Body)
 		if err != nil {
 			writeErr(w, err)
 			return

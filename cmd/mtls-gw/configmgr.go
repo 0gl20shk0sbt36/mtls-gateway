@@ -103,6 +103,22 @@ func copyFile(src, dst string) error {
 	return os.WriteFile(dst, data, 0o600)
 }
 
+// ReplaceAll 整体替换 mappings+services+roles (批量编辑保存; 校验失败回滚)
+func (m *ConfigManager) ReplaceAll(ms []proxy.Mapping, ss []proxy.ServiceCfg, roles []string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.checkWritable(); err != nil {
+		return err
+	}
+	oldM, oldS, oldR := m.cfg.Mappings, m.cfg.Services, m.cfg.Roles
+	m.cfg.Mappings, m.cfg.Services, m.cfg.Roles = ms, ss, roles
+	if err := m.rebuild(); err != nil {
+		m.cfg.Mappings, m.cfg.Services, m.cfg.Roles = oldM, oldS, oldR
+		return err
+	}
+	return m.persist()
+}
+
 // ---- 角色 (roles 声明列表) ----
 
 func (m *ConfigManager) AddRole(name string) error {

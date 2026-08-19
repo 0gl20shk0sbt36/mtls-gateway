@@ -75,8 +75,12 @@
   .sel .sel-list .opt:hover{ background:rgba(255,255,255,0.06); }
   .sel .sel-list .opt.sel{ color:var(--accent); }
   /* 多选(用途): 复选框样式 */
-  .sel .sel-list .opt.chk::before{ content:"☐"; margin-right:6px; color:var(--text4); }
-  .sel .sel-list .opt.chk.on::before{ content:"☑"; color:var(--accent); }
+  .sel .sel-list .opt.chk::before{ content:"☐"; margin-right:6px; color:var(--text4);}
+  .sel .sel-list .opt.chk.on::before{ content:"☑"; color:var(--accent);}
+  /* 角色 chips */
+  .chip{ display:inline-flex; align-items:center; gap:4px; background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:2px 8px; margin:2px 4px 2px 0; font-size:12px; }
+  .chip-x{ background:none; border:none; color:var(--text4); cursor:pointer; padding:0 2px; font-size:13px; line-height:1; }
+  .chip-x:hover{ color:#ff6b6b; }
   .sel input[type=hidden]{ display:none; }
   /* ===== Buttons ===== */
   button{
@@ -208,32 +212,15 @@
       <div class="hint" id="adminResult" style="margin-top:8px;white-space:pre-wrap"></div>
       <div style="margin-top:14px;border-top:1px solid var(--border);padding-top:10px">
         <h3 style="margin:0 0 6px">服务端配置 <span id="cfgMode" class="hint"></span></h3>
-        <p class="hint" style="margin:0 0 6px">mutable=改后落盘 / ephemeral=仅内存 / immutable=只读(灰显, 服务端拦截修改)。热重载即时生效。</p>
+        <p class="hint" style="margin:0 0 6px">mutable=改后落盘 / ephemeral=仅内存 / immutable=只读(灰显, 服务端拦截修改)。改动后点底部<b>保存</b>统一生效(热重载)。</p>
         <div id="cfgMappings"></div>
-        <div id="cfgServices" style="margin-top:8px"></div>
-        <div class="row" style="margin-top:10px">
-          <button type="button" class="primary small" id="cfgAddMapping">新增通道</button>
-          <button type="button" class="ghost small" id="cfgAddService">新增服务</button>
+        <div id="cfgServices" style="margin-top:10px"></div>
+        <div id="cfgRoles" style="margin-top:10px"></div>
+        <div class="row" style="margin-top:12px">
+          <button type="button" class="primary" id="cfgSave">保存</button>
+          <button type="button" class="ghost" id="cfgCancel">取消</button>
+          <span class="hint" id="cfgResult" style="margin-left:10px;align-self:center"></span>
         </div>
-        <div id="cfgAddMappingForm" style="display:none;margin-top:8px">
-          <div class="row">
-            <input id="nmapId" placeholder="id (助记符)" style="width:110px">
-            <input id="nmapListen" placeholder=":端口[/路径]" style="flex:1">
-            <input id="nmapTarget" placeholder="target (后端 URL)" style="flex:1.6">
-            <button type="button" class="primary small" id="nmapOk">确定</button>
-            <button type="button" class="ghost small" id="nmapCancel">取消</button>
-          </div>
-        </div>
-        <div id="cfgAddServiceForm" style="display:none;margin-top:8px">
-          <div class="row">
-            <input id="nsvcName" placeholder="服务名" style="width:110px">
-            <input id="nsvcCh" placeholder="通道(id, 逗号)" style="flex:1">
-            <input id="nsvcRoles" placeholder="roles(逗号; *=任意)" style="flex:1">
-            <button type="button" class="primary small" id="nsvcOk">确定</button>
-            <button type="button" class="ghost small" id="nsvcCancel">取消</button>
-          </div>
-        </div>
-        <div class="hint" id="cfgResult" style="margin-top:8px;white-space:pre-wrap"></div>
       </div>
     </div>
   </div>

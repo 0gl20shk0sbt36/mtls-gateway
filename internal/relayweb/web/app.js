@@ -51,7 +51,8 @@ document.addEventListener("click", () =>
 
 // —— 多选下拉(用途) ——
 const SEL_MULTI = {};
-function initMultiSel(btnId, listId) {
+const SEL_MULTI_LABEL = {};
+function initMultiSel(btnId, listId, onChange) {
   SEL_MULTI[listId] = new Set();
   const wrap = $(btnId).parentElement;
   $(btnId).onclick = (e) => {
@@ -68,22 +69,29 @@ function initMultiSel(btnId, listId) {
     const v = d.dataset.val;
     if (s.has(v)) { s.delete(v); d.classList.remove("on"); }
     else { s.add(v); d.classList.add("on"); }
-    $(btnId).querySelector(".txt").textContent = s.size ? `已选 ${s.size} 项` : "— 选择用途 —";
+    updateMultiLabel(listId);
+    if (onChange) onChange([...s]);
   };
 }
-function setMultiOpts(listId, items) {
-  SEL_MULTI[listId] = new Set();
+function setMultiOpts(listId, items, selected) {
+  SEL_MULTI[listId] = new Set(selected || []);
   const list = $(listId);
   list.innerHTML = "";
   (items || []).forEach((it) => {
     const d = document.createElement("div");
-    d.className = "opt chk";
+    d.className = "opt chk" + (SEL_MULTI[listId].has(it.value) ? " on" : "");
     d.dataset.val = it.value;
     d.textContent = it.label;
     list.appendChild(d);
   });
+  updateMultiLabel(listId);
+}
+function setMultiLabel(listId, fn) { SEL_MULTI_LABEL[listId] = fn; }
+function updateMultiLabel(listId) {
+  const vals = [...(SEL_MULTI[listId] || [])];
   const txt = $(listId).parentElement.querySelector(".sel-btn .txt");
-  if (txt) txt.textContent = "— 选择用途 —";
+  if (!txt) return;
+  txt.textContent = SEL_MULTI_LABEL[listId] ? SEL_MULTI_LABEL[listId](vals) : (vals.length ? `已选 ${vals.length} 项` : "— 选择 —");
 }
 function getMultiSel(listId) { return [...(SEL_MULTI[listId] || [])]; }
 
@@ -222,12 +230,8 @@ async function init() {
   $("adminVerify").onclick = verifyAdmin;
   $("adminIssue").onclick = adminIssue;
   $("adminRevoke").onclick = adminRevoke;
-  $("cfgAddMapping").onclick = cfgAddMapping;
-  $("cfgAddService").onclick = cfgAddService;
-  $("nmapOk").onclick = nmapOk;
-  $("nmapCancel").onclick = () => { $("cfgAddMappingForm").style.display = "none"; };
-  $("nsvcOk").onclick = nsvcOk;
-  $("nsvcCancel").onclick = () => { $("cfgAddServiceForm").style.display = "none"; };
+  $("cfgSave").onclick = cfgSave;
+  $("cfgCancel").onclick = cfgCancel;
   initMultiSel("newPurposesBtn", "newPurposesList");
   initSel("pwdModeBtn", "pwdModeList", (it) => { $("newCertPwd").disabled = it.value !== "custom"; });
   setSel("pwdModeList", [
@@ -311,10 +315,11 @@ async function loadAdminData() {
     ]);
     CFG = cfg;
     CFG_ADMIN_ROLE = cfg.admin_role || CFG_ADMIN_ROLE;
-    renderCfg(cfg);
-    // 用途选项: 所有服务 roles 并集 + admin_role + "*"
-    const purps = new Set([CFG_ADMIN_ROLE, "*"]);
-    (cfg.services || []).forEach((s) => (s.roles || []).forEach((r) => purps.add(r)));
+    DRAFT = JSON.parse(JSON.stringify(cfg));
+    renderCfg();
+    // 用途选项: 声明角色 + admin_role (any 只用于服务声明, 不签发给证书)
+    const purps = new Set([CFG_ADMIN_ROLE]);
+    (cfg.roles || []).forEach((r) => purps.add(r));
     setMultiOpts("newPurposesList", [...purps].map((p) => ({ value: p, label: p })));
     // 吊销下拉: 服务端证书列表
     const arr = Array.isArray(cs) ? cs : (cs.certs || []);
@@ -322,94 +327,108 @@ async function loadAdminData() {
   } catch (e) { /* 加载失败不阻塞 */ }
 }
 
-function renderCfg(cfg) {
-  const imm = cfg.mode === "immutable";
-  $("cfgMode").textContent = cfg.mode + (imm ? " 🔒" : "");
+let DRAFT = null;
+function renderCfg() {
+  const imm = CFG.mode === "immutable";
+  $("cfgMode").textContent = CFG.mode + (imm ? " 🔒" : "");
   const dis = imm ? " disabled" : "";
+  const m = DRAFT.mappings || [], s = DRAFT.services || [], rl = DRAFT.roles || [];
+  // 通道
   let h = '<div class="hint">通道 (mappings)</div>';
-  (cfg.mappings || []).forEach((m, i) => {
+  h += '<div class="row" style="margin-top:4px;color:var(--text4);font-size:12px"><span style="width:110px">id</span><span style="flex:1">listen (:端口[/路径])</span><span style="flex:1.6">target</span><span style="width:22px"></span></div>';
+  m.forEach((mm, i) => {
     h += `<div class="row" style="margin-top:6px">
-      <input class="cfg-m-id" value="${esc(m.id)}" placeholder="id" style="width:110px"${dis}>
-      <input class="cfg-m-listen" value="${esc(m.listen)}" placeholder=":port[/path]" style="flex:1"${dis}>
-      <input class="cfg-m-target" value="${esc(m.target)}" placeholder="target" style="flex:1.6"${dis}>
-      <button type="button" class="ghost small cfg-m-save" data-i="${i}"${dis}>存</button>
-      <button type="button" class="danger small cfg-m-del" data-i="${i}"${dis}>删</button>
+      <input value="${esc(mm.id)}" placeholder="id" style="width:110px"${dis} data-cfg="m-id" data-i="${i}">
+      <input value="${esc(mm.listen)}" placeholder=":端口[/路径]" style="flex:1"${dis} data-cfg="m-listen" data-i="${i}">
+      <input value="${esc(mm.target)}" placeholder="target" style="flex:1.6"${dis} data-cfg="m-target" data-i="${i}">
+      <button type="button" class="danger small" data-cfg="m-del" data-i="${i}"${dis}>×</button>
     </div>`;
   });
   $("cfgMappings").innerHTML = h;
-  let s = '<div class="hint" style="margin-top:8px">服务 (services)</div>';
-  (cfg.services || []).forEach((sv, i) => {
-    s += `<div class="row" style="margin-top:6px">
-      <input class="cfg-s-name" value="${esc(sv.name)}" placeholder="name" style="width:110px"${dis}>
-      <input class="cfg-s-ch" value="${esc((sv.channels || []).join(","))}" placeholder="channels(id,逗号)" style="flex:1"${dis}>
-      <input class="cfg-s-roles" value="${esc((sv.roles || []).join(","))}" placeholder="roles(逗号)" style="flex:1"${dis}>
-      <button type="button" class="ghost small cfg-s-save" data-i="${i}"${dis}>存</button>
-      <button type="button" class="danger small cfg-s-del" data-i="${i}"${dis}>删</button>
+  // 服务
+  let sv = '<div class="hint" style="margin-top:8px">服务 (services)</div>';
+  sv += '<div class="row" style="margin-top:4px;color:var(--text4);font-size:12px"><span style="width:110px">name</span><span style="flex:1">channels (多选)</span><span style="flex:1">roles (多选)</span><span style="width:22px"></span></div>';
+  s.forEach((x, i) => {
+    sv += `<div class="row" style="margin-top:6px">
+      <input value="${esc(x.name)}" placeholder="name" style="width:110px"${dis} data-cfg="s-name" data-i="${i}">
+      <div class="sel" style="flex:1">
+        <button type="button" class="sel-btn" id="svcChBtn${i}"${dis}><span class="txt"></span><span class="arrow">▾</span></button>
+        <div class="sel-list" id="svcChList${i}"></div>
+      </div>
+      <div class="sel" style="flex:1">
+        <button type="button" class="sel-btn" id="svcRolesBtn${i}"${dis}><span class="txt"></span><span class="arrow">▾</span></button>
+        <div class="sel-list" id="svcRolesList${i}"></div>
+      </div>
+      <button type="button" class="danger small" data-cfg="s-del" data-i="${i}"${dis}>×</button>
     </div>`;
   });
-  $("cfgServices").innerHTML = s;
+  $("cfgServices").innerHTML = sv;
+  // 角色
+  let r = '<div class="hint" style="margin-top:8px">角色 (roles 声明; 内置 any 免声明, 仅服务可用)</div>';
+  rl.forEach((name, i) => {
+    r += `<span class="chip">${esc(name)}<button type="button" class="chip-x" data-cfg="role-del" data-i="${i}"${dis}>×</button></span>`;
+  });
+  r += `<input id="cfgNewRole" placeholder="新角色" style="width:120px;margin-left:8px"${dis}>
+        <button type="button" class="ghost small" id="cfgAddRole"${dis}>＋ 角色</button>
+        <button type="button" class="ghost small" id="cfgAddMap"${dis}>＋ 通道</button>
+        <button type="button" class="ghost small" id="cfgAddSvc"${dis}>＋ 服务</button>`;
+  $("cfgRoles").innerHTML = r;
+  if (!imm) {
+    $("cfgAddRole").onclick = () => {
+      const v = $("cfgNewRole").value.trim();
+      if (v && !DRAFT.roles.includes(v)) DRAFT.roles.push(v);
+      $("cfgNewRole").value = "";
+      renderCfg();
+    };
+    $("cfgAddMap").onclick = () => { DRAFT.mappings.push({ id: "", listen: "", target: "" }); renderCfg(); };
+    $("cfgAddSvc").onclick = () => { DRAFT.services.push({ name: "", channels: [], roles: [] }); renderCfg(); };
+    // 服务行多选
+    s.forEach((x, i) => {
+      initMultiSel(`svcChBtn${i}`, `svcChList${i}`, (v) => { DRAFT.services[i].channels = v; });
+      setMultiLabel(`svcChList${i}`, (v) => v.join(",") || "— 通道 —");
+      setMultiOpts(`svcChList${i}`, m.map((mm) => ({ value: mm.id, label: mm.id })), x.channels || []);
+      initMultiSel(`svcRolesBtn${i}`, `svcRolesList${i}`, (v) => { DRAFT.services[i].roles = v; });
+      setMultiLabel(`svcRolesList${i}`, (v) => v.join(",") || "— 角色 —");
+      setMultiOpts(`svcRolesList${i}`, [...rl, "any"].map((rr) => ({ value: rr, label: rr })), x.roles || []);
+    });
+  }
+  // 输入 → DRAFT
+  document.querySelectorAll("input[data-cfg]").forEach((inp) => {
+    inp.addEventListener("input", () => {
+      const i = +inp.dataset.i;
+      const k = inp.dataset.cfg;
+      if (k.startsWith("m-")) DRAFT.mappings[i][k.slice(2)] = inp.value;
+      else if (k.startsWith("s-")) DRAFT.services[i][k.slice(2)] = inp.value;
+    });
+  });
+  // 行删除 → DRAFT
+  document.querySelectorAll("button[data-cfg]").forEach((b) => {
+    b.addEventListener("click", () => {
+      const i = +b.dataset.i;
+      if (b.dataset.cfg === "m-del") { DRAFT.mappings.splice(i, 1); renderCfg(); }
+      else if (b.dataset.cfg === "s-del") { DRAFT.services.splice(i, 1); renderCfg(); }
+      else if (b.dataset.cfg === "role-del") { DRAFT.roles.splice(i, 1); renderCfg(); }
+    });
+  });
 }
 
 function cfgSay(msg, err) { $("cfgResult").textContent = (err ? "✘ " : "✔ ") + msg; }
 
-async function cfgDo(apiPath, body) {
+async function cfgSave() {
   const cert = getSel("adminCertList");
+  if (!cert) return;
   try {
-    await api(apiPath, jpost(Object.assign({ cert_id: cert, load_pwd: ADMIN_PWD }, body)));
-    cfgSay("已应用(热重载生效)");
+    await api("/api/admin/config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cert_id: cert, load_pwd: ADMIN_PWD, body: { mappings: DRAFT.mappings, services: DRAFT.services, roles: DRAFT.roles } }),
+    });
+    cfgSay("已保存(热重载生效)");
     await loadAdminData();
-    return true;
-  } catch (e) {
-    cfgSay(e.message, true);
-    return false;
-  }
+  } catch (e) { cfgSay(e.message, true); }
 }
 
-document.addEventListener("click", (e) => {
-  const btn = e.target.closest("button[data-i]");
-  if (!btn || !CFG) return;
-  const i = +btn.dataset.i;
-  const row = btn.closest(".row");
-  const gv = (cls) => row.querySelector(cls).value.trim();
-  if (btn.classList.contains("cfg-m-save")) {
-    cfgDo("/api/admin/mapping", { method: "PUT", id: CFG.mappings[i].id, mapping: { id: gv(".cfg-m-id"), listen: gv(".cfg-m-listen"), target: gv(".cfg-m-target") } });
-  } else if (btn.classList.contains("cfg-m-del")) {
-    cfgDo("/api/admin/mapping", { method: "DELETE", id: CFG.mappings[i].id });
-  } else if (btn.classList.contains("cfg-s-save")) {
-    cfgDo("/api/admin/service", { method: "PUT", name: CFG.services[i].name, service: { name: gv(".cfg-s-name"), channels: gv(".cfg-s-ch").split(",").map(x => x.trim()).filter(Boolean), roles: gv(".cfg-s-roles").split(",").map(x => x.trim()).filter(Boolean) } });
-  } else if (btn.classList.contains("cfg-s-del")) {
-    cfgDo("/api/admin/service", { method: "DELETE", name: CFG.services[i].name });
-  }
-});
-
-function cfgAddMapping() {
-  if (!CFG || CFG.mode === "immutable") { cfgSay("immutable 模式不可修改", true); return; }
-  $("cfgAddServiceForm").style.display = "none";
-  $("cfgAddMappingForm").style.display = "";
-  $("nmapId").focus();
-}
-async function nmapOk() {
-  const id = $("nmapId").value.trim(), listen = $("nmapListen").value.trim(), target = $("nmapTarget").value.trim();
-  if (!id || !listen || !target) { cfgSay("id/listen/target 都要填", true); return; }
-  if (await cfgDo("/api/admin/mapping", { method: "POST", mapping: { id, listen, target } })) {
-    $("cfgAddMappingForm").style.display = "none";
-    $("nmapId").value = $("nmapListen").value = $("nmapTarget").value = "";
-  }
-}
-function cfgAddService() {
-  if (!CFG || CFG.mode === "immutable") { cfgSay("immutable 模式不可修改", true); return; }
-  $("cfgAddMappingForm").style.display = "none";
-  $("cfgAddServiceForm").style.display = "";
-  $("nsvcName").focus();
-}
-async function nsvcOk() {
-  const name = $("nsvcName").value.trim(), ch = $("nsvcCh").value.trim(), roles = $("nsvcRoles").value.trim();
-  if (!name || !ch || !roles) { cfgSay("name/channels/roles 都要填", true); return; }
-  if (await cfgDo("/api/admin/service", { method: "POST", service: { name, channels: ch.split(",").map(x => x.trim()).filter(Boolean), roles: roles.split(",").map(x => x.trim()).filter(Boolean) } })) {
-    $("cfgAddServiceForm").style.display = "none";
-    $("nsvcName").value = $("nsvcCh").value = $("nsvcRoles").value = "";
-  }
-}
+async function cfgCancel() { await loadAdminData(); }
 
 async function adminIssue() {
   const cert = getSel("adminCertList");

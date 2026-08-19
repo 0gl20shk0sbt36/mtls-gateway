@@ -120,6 +120,13 @@ func (a *AdminClient) Cfg() (json.RawMessage, error) {
 	return raw, err
 }
 
+// SetConfig 整体替换服务端配置 (mappings+services+roles)
+func (a *AdminClient) SetConfig(body json.RawMessage) (json.RawMessage, error) {
+	var raw json.RawMessage
+	err := a.do("POST", "/admin/config", body, &raw)
+	return raw, err
+}
+
 // Mapping 通道 CRUD (method: POST/PUT/DELETE)
 func (a *AdminClient) Mapping(method, id string, body json.RawMessage) (json.RawMessage, error) {
 	path := "/admin/mappings"
