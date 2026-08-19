@@ -271,7 +271,6 @@ async function init() {
   setSel("langSelList", I18N.langOptions().map((l) => ({ value: l.code, label: l.label })));
   pickSel("langSelList", I18N.langOptions().findIndex((l) => l.code === I18N.currentLang()));
   applyI18n();
-  $("refreshServices").onclick = verifyAdmin; // 刷新服务 = 重新验证
   initSel("newServiceBtn", "newServiceList", (it) => renderSvcChannels(it.raw));
   initSel("adminCertBtn", "adminCertList", () => {
     // 切换证书 → 复位: 隐藏已显示的区域, 需重新验证
