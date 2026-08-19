@@ -5,6 +5,7 @@ package eventlog
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -148,3 +149,42 @@ func (l *Logger) Files() []string {
 	sort.Strings(out)
 	return out
 }
+
+// StatusWriter 包装 http.ResponseWriter: 记录状态码与响应字节数(访问/界面事件日志用)
+type StatusWriter struct {
+	http.ResponseWriter
+	status int
+	bytes  int64
+}
+
+// NewStatusWriter 包装一个 ResponseWriter
+func NewStatusWriter(w http.ResponseWriter) *StatusWriter {
+	return &StatusWriter{ResponseWriter: w}
+}
+
+// WriteHeader 记录状态码并转发
+func (w *StatusWriter) WriteHeader(c int) {
+	w.status = c
+	w.ResponseWriter.WriteHeader(c)
+}
+
+// Write 记录响应字节数并转发
+func (w *StatusWriter) Write(b []byte) (int, error) {
+	n, err := w.ResponseWriter.Write(b)
+	w.bytes += int64(n)
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	return n, err
+}
+
+// Status 实际状态码(未写时 200)
+func (w *StatusWriter) Status() int {
+	if w.status == 0 {
+		return http.StatusOK
+	}
+	return w.status
+}
+
+// Bytes 响应字节数
+func (w *StatusWriter) Bytes() int64 { return w.bytes }

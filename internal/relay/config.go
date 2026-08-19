@@ -48,11 +48,14 @@ func (t Tunnel) ChannelPath() string { return pathOfListen(t.Channel) }
 
 // RelayConfig 持久化配置: 允许多条隧道, 证书可复用
 type RelayConfig struct {
-	ServerAddr   string   `json:"server_addr,omitempty"` // 服务端 /info 发现端点, 如 gw.example:9499
-	AdminAddr    string   `json:"admin_addr,omitempty"`  // 服务端 admin 端点, 如 gw.example:9444 (证书管理)
-	ListenHost   string   `json:"listen_host"`           // 本地监听地址, 默认 127.0.0.1
-	ServerCAFile string   `json:"server_ca,omitempty"`   // 网关 CA 文件路径 (验证网关服务器证书; 空=系统根)
-	Tunnels      []Tunnel `json:"tunnels"`
+	ServerAddr         string   `json:"server_addr,omitempty"` // 服务端 /info 发现端点, 如 gw.example:9499
+	AdminAddr          string   `json:"admin_addr,omitempty"`  // 服务端 admin 端点, 如 gw.example:9444 (证书管理)
+	ListenHost         string   `json:"listen_host"`           // 本地监听地址, 默认 127.0.0.1
+	ServerCAFile       string   `json:"server_ca,omitempty"`   // 网关 CA 文件路径 (验证网关服务器证书; 空=系统根)
+	WebUILogFile       string   `json:"webui_log_file,omitempty"`    // WebUI 界面事件日志(短时大量, 单独文件); 空=关
+	WebUILogMaxSizeMB  int      `json:"webui_log_max_size,omitempty"` // 单文件上限 MB (默认 10)
+	WebUILogMaxFiles   int      `json:"webui_log_max_files,omitempty"` // 保留份数 (默认 5)
+	Tunnels            []Tunnel `json:"tunnels"`
 }
 
 // DefaultListenHost 默认本地监听地址 (仅回环, 不暴露局域网)

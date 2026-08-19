@@ -3,11 +3,14 @@ package relay
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"mtls-gateway/internal/certsource"
+	"mtls-gateway/internal/eventlog"
 )
 
 // Manager 中继管理入口: 外壳(CLI/WebUI/GUI)唯一接口。
@@ -19,6 +22,8 @@ type Manager struct {
 	cfg            RelayConfig
 	noPersist      bool   // 只改内存、不落盘 (临时会话)
 	serverOverride string // --server 覆盖的发现端点
+	webUIOnce      sync.Once
+	webUI          *eventlog.Logger // WebUI 界面事件日志(客户端侧, 单独文件)
 }
 
 // NewManager 创建管理入口。加载已有配置(若无则用默认)。
@@ -270,6 +275,31 @@ func (m *Manager) BuildServiceTunnels(svc ServiceInfo, locals map[string]string,
 		return nil, fmt.Errorf("service %s has no channels", svc.Name)
 	}
 	return out, nil
+}
+
+// webUILogger 懒创建 WebUI 事件日志(从配置 webui_log_file; 空=禁用)
+func (m *Manager) webUILogger() *eventlog.Logger {
+	cfg := m.Config()
+	if cfg.WebUILogFile == "" {
+		return nil
+	}
+	m.webUIOnce.Do(func() {
+		maxSize := cfg.WebUILogMaxSizeMB
+		if maxSize <= 0 {
+			maxSize = 10
+		}
+		maxFiles := cfg.WebUILogMaxFiles
+		if maxFiles < 0 {
+			maxFiles = 5
+		}
+		l, err := eventlog.New(cfg.WebUILogFile, maxSize, maxFiles)
+		if err != nil {
+			log.Printf("webui log: %v (禁用)", err)
+			return
+		}
+		m.webUI = l
+	})
+	return m.webUI
 }
 
 // Handler 返回管理 HTTP handler (仅 bind loopback)
@@ -530,7 +560,24 @@ func (m *Manager) Handler() http.Handler {
 		writeJSON(w, map[string]bool{"ok": true})
 	})
 
-	return mux
+	// 包装: 记录每个 WebUI/API 操作事件(短时大量, 单独文件)
+	inner := mux
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sw := eventlog.NewStatusWriter(w)
+		start := time.Now()
+		inner.ServeHTTP(sw, r)
+		if lg := m.webUILogger(); lg != nil {
+			lg.Write(eventlog.Event{
+				Type:     "webui",
+				Method:   r.Method,
+				Path:     r.URL.Path,
+				Status:   sw.Status(),
+				BytesIn:  r.ContentLength,
+				BytesOut: sw.Bytes(),
+				Msg:      time.Since(start).Round(time.Millisecond).String(),
+			})
+		}
+	})
 }
 
 func (m *Manager) ConfigPath() string { return m.cfgPath }
