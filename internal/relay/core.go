@@ -316,9 +316,8 @@ func (r *Relay) ListCertMeta() ([]certsource.IdentityMeta, error) {
 
 // LoadCertWithPassword 加载证书; 若私钥被加密(需密码)则用 password 解锁。
 // 需要密码而 password 为空时, 报"needs password"错误, 由调用方(WebUI)弹出密码框再试。
+// 注意: 不持 r.mu 外层锁 — loadCert 内部自锁, 再锁会重入死锁(sync.Mutex 不可重入)。
 func (r *Relay) LoadCertWithPassword(certID, password string) (tls.Certificate, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
 	if with, ok := r.src.(certsource.LoaderWithPassword); ok {
 		return with.LoadWithPassword(certID, password)
 	}

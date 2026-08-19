@@ -393,7 +393,7 @@ func apiErrStatus(err error) int {
 		return http.StatusBadRequest
 	case strings.Contains(msg, "already exists"), strings.Contains(msg, "已存在"):
 		return http.StatusConflict
-	case strings.Contains(msg, "not found"):
+	case strings.Contains(msg, "not found"), strings.Contains(msg, "未找到"), strings.Contains(msg, "不存在"):
 		return http.StatusNotFound
 	case strings.Contains(msg, "forbidden"), strings.Contains(msg, "无权"), strings.Contains(msg, "拒绝"):
 		return http.StatusForbidden

@@ -223,3 +223,23 @@ func TestSubstituteEdges(t *testing.T) {
 		}
 	}
 }
+
+// 第七批: NewRouter 深拷贝 — mutate 输入切片不影响 router 内部
+func TestNewRouterDeepCopy(t *testing.T) {
+	ms := []Mapping{{ID: "m1", Listen: ":9100", Target: "http://a"}}
+	ss := []ServiceCfg{{Name: "s1", Channels: []string{"m1"}, Roles: []string{"any"}}}
+	r, err := NewRouter(ms, ss, []string{"svc-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 就地改写输入切片(模拟 configmgr Delete/Update 行为)
+	ms[0].Listen = ":9999"
+	ss[0].Roles[0] = "hacked"
+	// router 内部不受影响
+	if got := r.Routes(); len(got) != 1 || got[0].ID != "m1" {
+		t.Fatalf("routes polluted: %+v", got)
+	}
+	if got := r.ServicesAllowed([]string{"any"}); len(got) != 1 || got[0].Name != "s1" {
+		t.Fatalf("services polluted: %+v", got)
+	}
+}

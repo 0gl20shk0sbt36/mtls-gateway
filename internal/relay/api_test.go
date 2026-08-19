@@ -105,7 +105,7 @@ func TestManagerConcurrentTunnelCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m.SetNoPersist(true) // 纯内存, 测 cfg 层并发
+	// 默认 noPersist=false: 并发 CRUD 走 SaveConfig 分支(CreateTemp 唯一 tmp 防踩踏)
 	var wg sync.WaitGroup
 	for i := 0; i < 20; i++ {
 		wg.Add(1)
@@ -144,8 +144,11 @@ func TestSaveConfigAtomicRoundTrip(t *testing.T) {
 	if st.Mode().Perm() != 0o600 {
 		t.Fatalf("config perm = %v, want 0600", st.Mode().Perm())
 	}
-	// 无 .tmp 残留
-	if _, err := os.Stat(path + ".tmp"); !os.IsNotExist(err) {
-		t.Fatal("stale .tmp should not exist")
+	// 无 tmp-* 残留(CreateTemp 前缀)
+	entries, _ := os.ReadDir(filepath.Dir(path))
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), filepath.Base(path)+".tmp-") {
+			t.Fatalf("stale tmp file: %s", e.Name())
+		}
 	}
 }

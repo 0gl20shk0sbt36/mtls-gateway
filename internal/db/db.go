@@ -112,6 +112,7 @@ func (s *Store) List() []CertRecord {
 	defer s.mu.RUnlock()
 	out := make([]CertRecord, 0, len(s.table))
 	for _, r := range s.table {
+		r.Purposes = append([]string(nil), r.Purposes...) // 深拷贝: 防调用方就地改写污染授权表
 		out = append(out, r)
 	}
 	return out

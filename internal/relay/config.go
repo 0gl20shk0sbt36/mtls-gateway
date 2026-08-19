@@ -108,13 +108,16 @@ func SaveConfig(path string, cfg RelayConfig) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("mkdir config dir: %w", err)
 	}
-	// 原子替换: 唯一临时文件 + rename(防并发写同一 tmp 踩踏; 避免崩溃留半截 JSON)
-	tmp := fmt.Sprintf("%s.tmp.%d", path, os.Getpid())
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+	// 原子替换: CreateTemp 真唯一临时文件 + rename(防并发写同一 tmp 踩踏; 避免崩溃留半截 JSON)
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create temp config: %w", err)
+	}
+	defer os.Remove(tmp.Name()) // rename 失败/异常时清理残留
+	if err := os.WriteFile(tmp.Name(), data, 0o600); err != nil {
 		return fmt.Errorf("write config %s: %w", path, err)
 	}
-	os.Chmod(tmp, 0o600) // 已存在的 tmp 不重设权限, 显式收紧
-	if err := os.Rename(tmp, path); err != nil {
+	if err := os.Rename(tmp.Name(), path); err != nil {
 		return fmt.Errorf("replace config %s: %w", path, err)
 	}
 	return nil

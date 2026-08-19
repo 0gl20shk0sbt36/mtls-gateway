@@ -658,7 +658,8 @@ func writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	case strings.Contains(msg, "forbidden"), strings.Contains(msg, "无权"), strings.Contains(msg, "拒绝"):
 		code = http.StatusForbidden
 	}
-	w.WriteHeader(code) // 保持 JSON 响应体(前端 api() 依赖)
+	w.Header().Set("Content-Type", "application/json; charset=utf-8") // 先设头再 WriteHeader
+	w.WriteHeader(code)
 	writeJSON(w, map[string]string{"error": msg})
 }
 

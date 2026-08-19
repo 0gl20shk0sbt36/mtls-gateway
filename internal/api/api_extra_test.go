@@ -37,3 +37,14 @@ func TestIssueCertDaysCap(t *testing.T) {
 		t.Fatalf("oversized days should be rejected: %v", err)
 	}
 }
+
+// 第七批: Days 边界(3650 通过 / 3651 拒绝)
+func TestIssueCertDaysBoundary(t *testing.T) {
+	m := testManager(t, CertTemplate{})
+	if _, err := m.IssueCert(IssueRequest{Name: "days-ok", Purposes: []string{"svc-a"}, Days: 3650}); err != nil {
+		t.Fatalf("3650 should pass: %v", err)
+	}
+	if _, err := m.IssueCert(IssueRequest{Name: "days-no", Purposes: []string{"svc-a"}, Days: 3651}); err == nil {
+		t.Fatal("3651 should be rejected")
+	}
+}
