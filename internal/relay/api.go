@@ -79,10 +79,18 @@ func (m *Manager) AddTunnel(t Tunnel) error {
 			return err
 		}
 	}
+	m.reloadTunnels()
 	return nil
 }
 
-// DelTunnel 删除隧道并持久化 (noPersist 时仅内存)
+// reloadTunnels 把当前配置同步到运行时(增删立即生效)
+func (m *Manager) reloadTunnels() {
+	if err := m.relay.Reload(m.Config()); err != nil {
+		log.Printf("reload tunnels: %v", err)
+	}
+}
+
+// DelTunnel 删除隧道(整个服务)并持久化 (noPersist 时仅内存); 立即停掉运行时
 func (m *Manager) DelTunnel(id string) (bool, error) {
 	m.mu.Lock()
 	ok := m.cfg.DelTunnel(id)
@@ -97,6 +105,7 @@ func (m *Manager) DelTunnel(id string) (bool, error) {
 			return true, err
 		}
 	}
+	m.reloadTunnels()
 	return true, nil
 }
 
@@ -251,10 +260,10 @@ func (m *Manager) AdminMappings(certID, password string) ([]ServiceInfo, error) 
 	return ac.ListMappings()
 }
 
-// BuildServiceTunnels 依据服务端服务定义生成该服务所有通道的隧道。
+// BuildServiceTunnels 依据服务端服务定义生成一条服务级隧道(含全部通道的本地路由)。
 // locals: 通道 listen → 本地路由 (缺省 = 通道 listen 原样, 含冒号)
-func (m *Manager) BuildServiceTunnels(svc ServiceInfo, locals map[string]string, certID string) ([]Tunnel, error) {
-	var out []Tunnel
+func (m *Manager) BuildServiceTunnels(svc ServiceInfo, locals map[string]string, certID string) (Tunnel, error) {
+	t := Tunnel{Service: svc.Name, CertID: certID, Enabled: true}
 	for _, ch := range svc.Channels {
 		local := ""
 		if locals != nil {
@@ -263,18 +272,12 @@ func (m *Manager) BuildServiceTunnels(svc ServiceInfo, locals map[string]string,
 		if local == "" {
 			local = ch.Listen // 默认本地路由 = 服务端通道内容一致 (含冒号与路径)
 		}
-		out = append(out, Tunnel{
-			Service: svc.Name,
-			Channel: ch.Listen,
-			Local:   local,
-			CertID:  certID,
-			Enabled: true,
-		})
+		t.Routes = append(t.Routes, TunnelRoute{Channel: ch.Listen, Local: local})
 	}
-	if len(out) == 0 {
-		return nil, fmt.Errorf("service %s has no channels", svc.Name)
+	if len(t.Routes) == 0 {
+		return Tunnel{}, fmt.Errorf("service %s has no channels", svc.Name)
 	}
-	return out, nil
+	return t, nil
 }
 
 // webUILogger 懒创建 WebUI 事件日志(从配置 webui_log_file; 空=禁用)
@@ -511,19 +514,17 @@ func (m *Manager) Handler() http.Handler {
 			writeErr(w, fmt.Errorf("service not found on server: %s", b.Service))
 			return
 		}
-		tunnels, err := m.BuildServiceTunnels(*svc, b.Locals, b.CertID)
+		t, err := m.BuildServiceTunnels(*svc, b.Locals, b.CertID)
 		if err != nil {
 			writeErr(w, err)
 			return
 		}
-		for _, t := range tunnels {
-			if err := m.AddTunnel(t); err != nil {
-				writeErr(w, err)
-				return
-			}
+		if err := m.AddTunnel(t); err != nil {
+			writeErr(w, err)
+			return
 		}
-		writeJSON(w, map[string]any{"ok": true, "count": len(tunnels)})
-	})
+		writeJSON(w, map[string]any{"ok": true, "service": t.Service, "count": len(t.Routes)})
+		})
 
 	// DELETE /api/tunnels/{id}
 	mux.HandleFunc("DELETE /api/tunnels/", func(w http.ResponseWriter, r *http.Request) {

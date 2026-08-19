@@ -22,29 +22,44 @@ type CertSel struct {
 	Arg    string `json:"arg"`    // 非 system 来源时的目录/文件路径 (system 时忽略)
 }
 
-// Tunnel 一条隧道 = 服务 + 服务端通道 + 本地路由 (v4)
-type Tunnel struct {
-	Service string `json:"service"` // 服务名 (一个服务可多条通道)
+// TunnelRoute 服务的一条通道 + 本地路由
+type TunnelRoute struct {
 	Channel string `json:"channel"` // 服务端入口 :port[/path]
 	Local   string `json:"local"`   // 本地路由 :port[/path] (默认同 channel; 带路径=HTTP反代模式)
-	CertID  string `json:"cert_id"` // 绑定的证书身份
-	Enabled bool   `json:"enabled"` // 是否启用
 }
 
-// ID 隧道唯一标识 (服务@通道@本地 — 同通道不同本地路由是不同隧道)
-func (t Tunnel) ID() string { return t.Service + "@" + t.Channel + "@" + t.Local }
+// Tunnel 一条服务级隧道记录 = 一个服务的全部通道(增删都以整个服务为单位)
+type Tunnel struct {
+	Service string        `json:"service"` // 服务名 (唯一)
+	CertID  string        `json:"cert_id"` // 绑定的证书身份
+	Routes  []TunnelRoute `json:"routes"`  // 该服务的所有通道 + 本地路由
+	Enabled bool          `json:"enabled"` // 是否启用
+}
 
-// LocalPort 本地监听端口 (":8080/foo" → "8080")
-func (t Tunnel) LocalPort() string { return portOfListen(t.Local) }
+// ID 隧道唯一标识 = 服务名
+func (t Tunnel) ID() string { return t.Service }
 
-// LocalPath 本地路径前缀 (":8080/foo" → "/foo"; 空=TCP 透传模式)
-func (t Tunnel) LocalPath() string { return pathOfListen(t.Local) }
+// FindRoute 按服务端入口找路由
+func (t Tunnel) FindRoute(channel string) *TunnelRoute {
+	for i := range t.Routes {
+		if t.Routes[i].Channel == channel {
+			return &t.Routes[i]
+		}
+	}
+	return nil
+}
 
-// ChannelPort 服务端入口端口 (":9445/admin" → "9445")
-func (t Tunnel) ChannelPort() string { return portOfListen(t.Channel) }
+// LocalPort 路由本地监听端口 (":8080/foo" → "8080")
+func (r TunnelRoute) LocalPort() string { return portOfListen(r.Local) }
 
-// ChannelPath 服务端入口路径前缀
-func (t Tunnel) ChannelPath() string { return pathOfListen(t.Channel) }
+// LocalPath 路由本地路径前缀 (":8080/foo" → "/foo"; 空=TCP 透传模式)
+func (r TunnelRoute) LocalPath() string { return pathOfListen(r.Local) }
+
+// ChannelPort 路由服务端入口端口 (":9445/admin" → "9445")
+func (r TunnelRoute) ChannelPort() string { return portOfListen(r.Channel) }
+
+// ChannelPath 路由服务端入口路径前缀
+func (r TunnelRoute) ChannelPath() string { return pathOfListen(r.Channel) }
 
 // RelayConfig 持久化配置: 允许多条隧道, 证书可复用
 type RelayConfig struct {

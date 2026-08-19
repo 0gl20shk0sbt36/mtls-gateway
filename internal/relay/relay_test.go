@@ -181,7 +181,7 @@ func TestRelay_Echo(t *testing.T) {
 	defer r.Close()
 
 	cfg := RelayConfig{ListenHost: "127.0.0.1", ServerAddr: h.gwAddr, ServerCAFile: h.caPath, Tunnels: []Tunnel{
-		{Service: "s1", Channel: ":" + gwPortOf(h.gwAddr), Local: ":" + fmt.Sprintf("%d", localPort), CertID: h.clientPairPath, Enabled: true},
+		{Service: "s1", Routes: []TunnelRoute{{Channel: ":" + gwPortOf(h.gwAddr), Local: ":" + fmt.Sprintf("%d", localPort)}}, CertID: h.clientPairPath, Enabled: true},
 	}}
 	if err := r.Start(cfg); err != nil {
 		t.Fatal(err)
@@ -222,8 +222,8 @@ func TestRelay_CertReuse(t *testing.T) {
 	r := New("", src)
 	defer r.Close()
 	cfg := RelayConfig{ListenHost: "127.0.0.1", ServerAddr: h.gwAddr, ServerCAFile: h.caPath, Tunnels: []Tunnel{
-		{Service: "s1", Channel: ":" + gwPortOf(h.gwAddr), Local: ":" + fmt.Sprintf("%d", p1), CertID: h.clientPairPath, Enabled: true},
-		{Service: "s1", Channel: ":" + gwPortOf(h.gwAddr), Local: ":" + fmt.Sprintf("%d", p2), CertID: h.clientPairPath, Enabled: true},
+		{Service: "s1", Routes: []TunnelRoute{{Channel: ":" + gwPortOf(h.gwAddr), Local: ":" + fmt.Sprintf("%d", p1)}}, CertID: h.clientPairPath, Enabled: true},
+		{Service: "s2", Routes: []TunnelRoute{{Channel: ":" + gwPortOf(h.gwAddr), Local: ":" + fmt.Sprintf("%d", p2)}}, CertID: h.clientPairPath, Enabled: true},
 	}}
 	if err := r.Start(cfg); err != nil {
 		t.Fatal(err)
@@ -259,7 +259,7 @@ func TestRelay_BadUpstream(t *testing.T) {
 	r := New("", src)
 	defer r.Close()
 	cfg := RelayConfig{ListenHost: "127.0.0.1", ServerAddr: "127.0.0.1:1", ServerCAFile: h.caPath, Tunnels: []Tunnel{
-		{Service: "s1", Channel: ":1", Local: ":" + fmt.Sprintf("%d", localPort), CertID: h.clientPairPath, Enabled: true},
+		{Service: "s1", Routes: []TunnelRoute{{Channel: ":1", Local: ":" + fmt.Sprintf("%d", localPort)}}, CertID: h.clientPairPath, Enabled: true},
 	}}
 	if err := r.Start(cfg); err != nil {
 		t.Fatal(err)
@@ -294,7 +294,7 @@ func TestRelay_Reload(t *testing.T) {
 	r := New("", src)
 	defer r.Close()
 	cfg := RelayConfig{ListenHost: "127.0.0.1", ServerAddr: h.gwAddr, ServerCAFile: h.caPath, Tunnels: []Tunnel{
-		{Service: "s1", Channel: ":" + gwPortOf(h.gwAddr), Local: ":" + fmt.Sprintf("%d", p1), CertID: h.clientPairPath, Enabled: true},
+		{Service: "s1", Routes: []TunnelRoute{{Channel: ":" + gwPortOf(h.gwAddr), Local: ":" + fmt.Sprintf("%d", p1)}}, CertID: h.clientPairPath, Enabled: true},
 	}}
 	if err := r.Start(cfg); err != nil {
 		t.Fatal(err)
@@ -302,7 +302,7 @@ func TestRelay_Reload(t *testing.T) {
 
 	// reload: 加 t2, 停 t1
 	cfg2 := RelayConfig{ListenHost: "127.0.0.1", ServerAddr: h.gwAddr, ServerCAFile: h.caPath, Tunnels: []Tunnel{
-		{Service: "s1", Channel: ":" + gwPortOf(h.gwAddr), Local: ":" + fmt.Sprintf("%d", p2), CertID: h.clientPairPath, Enabled: true},
+		{Service: "s1", Routes: []TunnelRoute{{Channel: ":" + gwPortOf(h.gwAddr), Local: ":" + fmt.Sprintf("%d", p2)}}, CertID: h.clientPairPath, Enabled: true},
 	}}
 	if err := r.Reload(cfg2); err != nil {
 		t.Fatal(err)
@@ -355,7 +355,7 @@ func TestRelay_StopThenStart(t *testing.T) {
 	r := New("", src)
 	defer r.Close()
 	cfg := RelayConfig{ListenHost: "127.0.0.1", ServerAddr: h.gwAddr, ServerCAFile: h.caPath, Tunnels: []Tunnel{
-		{Service: "s1", Channel: ":" + gwPortOf(h.gwAddr), Local: ":" + fmt.Sprintf("%d", localPort), CertID: h.clientPairPath, Enabled: true},
+		{Service: "s1", Routes: []TunnelRoute{{Channel: ":" + gwPortOf(h.gwAddr), Local: ":" + fmt.Sprintf("%d", localPort)}}, CertID: h.clientPairPath, Enabled: true},
 	}}
 
 	// 第 1 轮: 启动 → 转发 → 停止

@@ -14,7 +14,7 @@ import (
 	"sync/atomic"
 )
 
-// tunnelMetrics 单隧道运行指标
+// tunnelMetrics 单路由运行指标
 type tunnelMetrics struct {
 	activeConns int64
 	bytesIn     int64 // 本地→上游
@@ -23,10 +23,13 @@ type tunnelMetrics struct {
 	lastErr     atomic.Value // string
 }
 
-// tunnelRuntime 一条隧道的运行期状态
+// tunnelRuntime 一条展开路由(服务的一通道)的运行期状态
 type tunnelRuntime struct {
 	r        *Relay
-	tunnel   Tunnel
+	key      string // service@channel@local
+	service  string
+	route    TunnelRoute
+	certID   string
 	listener net.Listener
 	srv      *http.Server // 本地路径模式时的 HTTP 服务
 	ctx      context.Context
@@ -36,47 +39,57 @@ type tunnelRuntime struct {
 	conns    map[net.Conn]struct{}
 }
 
-// startTunnel 启动本地监听:
+// tunnelRoutes 把服务级隧道展开为路由级规格
+func tunnelRoutes(t Tunnel) []tunnelRuntime {
+	var out []tunnelRuntime
+	for _, rt := range t.Routes {
+		out = append(out, tunnelRuntime{
+			key:     t.Service + "@" + rt.Channel + "@" + rt.Local,
+			service: t.Service,
+			route:   rt,
+			certID:  t.CertID,
+		})
+	}
+	return out
+}
+
+// startTunnel 启动一条展开路由:
 //   - 本地路由带路径 → HTTP 反代模式(剥本地前缀, 补通道前缀, mTLS 转发服务端通道)
 //   - 无路径 → TCP 透传模式(管道到服务端通道端口)
-func (r *Relay) startTunnel(t Tunnel) (*tunnelRuntime, error) {
+func (r *Relay) startTunnel(rt *tunnelRuntime) error {
 	host := r.cfgListenHost()
-	addr := net.JoinHostPort(host, t.LocalPort())
+	addr := net.JoinHostPort(host, rt.route.LocalPort())
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	ctx, cancel := context.WithCancel(r.runCtx)
-	rt := &tunnelRuntime{
-		r:        r,
-		tunnel:   t,
-		listener: ln,
-		ctx:      ctx,
-		cancel:   cancel,
-		conns:    make(map[net.Conn]struct{}),
-	}
-	if p := t.LocalPath(); p != "" {
+	rt.listener = ln
+	rt.ctx = ctx
+	rt.cancel = cancel
+	rt.conns = make(map[net.Conn]struct{})
+	if p := rt.route.LocalPath(); p != "" {
 		rt.srv = &http.Server{Handler: rt.localHTTPHandler(p)}
 		go func() {
 			if err := rt.srv.Serve(ln); err != nil && err != http.ErrServerClosed {
-				log.Printf("tunnel[%s] http serve: %v", t.ID(), err)
+				log.Printf("tunnel[%s] http serve: %v", rt.key, err)
 			}
 		}()
 	} else {
 		go rt.acceptLoop()
 	}
-	return rt, nil
+	return nil
 }
 
 // localHTTPHandler 本地路径模式: 剥本地前缀 → 补通道前缀 → mTLS 转发服务端通道
 func (rt *tunnelRuntime) localHTTPHandler(localPath string) http.Handler {
-	upstream, err := url.Parse("https://" + net.JoinHostPort(rt.r.serverHost(), rt.tunnel.ChannelPort()) + rt.tunnel.ChannelPath())
+	upstream, err := url.Parse("https://" + net.JoinHostPort(rt.r.serverHost(), rt.route.ChannelPort()) + rt.route.ChannelPath())
 	if err != nil {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "bad upstream: "+err.Error(), http.StatusInternalServerError)
 		})
 	}
-	tlsCfg, err := rt.r.dialTLSConfig(rt.tunnel.CertID)
+	tlsCfg, err := rt.r.dialTLSConfig(rt.certID)
 	if err != nil {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "load cert: "+err.Error(), http.StatusInternalServerError)
@@ -127,7 +140,7 @@ func (rt *tunnelRuntime) acceptLoop() {
 			case <-rt.ctx.Done():
 				return // 关闭
 			default:
-				log.Printf("tunnel[%s] accept: %v", rt.tunnel.ID(), err)
+				log.Printf("tunnel[%s] accept: %v", rt.key, err)
 				continue
 			}
 		}
@@ -150,10 +163,10 @@ func (rt *tunnelRuntime) handleConn(local net.Conn) {
 		atomic.AddInt64(&rt.metrics.activeConns, -1)
 	}()
 
-	upstream, err := rt.r.relayDial(rt.ctx, rt.tunnel)
+	upstream, err := rt.r.relayDial(rt.ctx, rt.key, rt.certID, rt.route)
 	if err != nil {
 		rt.metrics.lastErr.Store(err.Error())
-		log.Printf("tunnel[%s] dial upstream: %v", rt.tunnel.ID(), err)
+		log.Printf("tunnel[%s] dial upstream: %v", rt.key, err)
 		return
 	}
 	defer upstream.Close()
@@ -190,11 +203,11 @@ func (rt *tunnelRuntime) stop() {
 // snapshot returns a status snapshot for this tunnel.
 func (rt *tunnelRuntime) snapshot() TunnelStatus {
 	s := TunnelStatus{
-		ID:          rt.tunnel.ID(),
-		Service:     rt.tunnel.Service,
-		Channel:     rt.tunnel.Channel,
-		Local:       rt.tunnel.Local,
-		CertID:      rt.tunnel.CertID,
+		ID:          rt.key,
+		Service:     rt.service,
+		Channel:     rt.route.Channel,
+		Local:       rt.route.Local,
+		CertID:      rt.certID,
 		Running:     true,
 		ActiveConns: atomic.LoadInt64(&rt.metrics.activeConns),
 		ConnsTotal:  atomic.LoadInt64(&rt.metrics.connsTotal),

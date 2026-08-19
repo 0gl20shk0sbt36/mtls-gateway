@@ -144,10 +144,10 @@
   <div class="card">
     <h2>隧道</h2>
     <table>
-      <thead><tr><th>服务</th><th>本地监听</th><th>服务端入口</th><th>状态</th><th>连接</th><th>流入</th><th>流出</th><th>操作</th></tr></thead>
+      <thead><tr><th>服务</th><th>服务端入口</th><th>本地路由</th><th>状态</th><th>连接</th><th>流入</th><th>流出</th><th>操作</th></tr></thead>
       <tbody id="tunnelBody"><tr><td colspan="8" class="hint">（无）</td></tr></tbody>
     </table>
-    <div class="hint" style="margin-top:8px">本地监听 = 你的程序要连的地址（127.0.0.1:端口）；服务端入口 = 中继拨号到的服务端网关地址。连接/流入/流出为实时指标。</div>
+    <div class="hint" style="margin-top:8px">服务端入口 = 中继拨号到的服务端网关通道；本地路由 = 你的程序要连的地址(:端口[/路径]，绑 127.0.0.1)。连接/流入/流出为实时指标。</div>
   </div>
 
   <div class="card">
@@ -166,6 +166,7 @@
   <div id="tunnelSection" style="display:none">
     <div class="card">
       <h2>新增隧道</h2>
+      <div class="hint" style="margin:6px 0 10px">先在下方案例"证书选择"卡里<b>选证书并验证</b>，服务列表才会加载。选中服务后，其每个通道一行，填本地路由(默认=服务端通道原样, 含冒号; 可带路径)。</div>
       <div class="row">
         <div class="sel" id="newServiceSel" style="flex:1;min-width:220px">
           <button type="button" class="sel-btn" id="newServiceBtn"><span class="txt">— 选择服务 —</span><span class="arrow">▾</span></button>
@@ -173,12 +174,11 @@
         </div>
         <button type="button" class="ghost small" id="refreshServices">刷新</button>
       </div>
+      <div id="svcChannelRows" style="margin-top:10px"></div>
       <div class="row" style="margin-top:10px">
-        <input id="newLocal" type="number" placeholder="本地端口（默认同服务端）" style="width:200px">
-        <input id="newSNI" placeholder="TLS SNI（可选）" style="width:150px">
         <button type="button" class="primary" id="addTunnel">添加</button>
+        <span class="hint" id="serviceHint" style="margin-left:10px;align-self:center"></span>
       </div>
-      <div class="hint" id="serviceHint"></div>
     </div>
   </div>
 

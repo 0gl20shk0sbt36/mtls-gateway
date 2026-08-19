@@ -144,30 +144,42 @@ async function loadTunnels() {
     for (const s of sts) byId[s.id] = s;
     const body = $("tunnelBody");
     body.innerHTML = "";
-    const tunnels = cfg.tunnels || [];
+    const tunnels = (cfg.tunnels || []).slice().sort((a, b) => (a.service || "").localeCompare(b.service || ""));
     if (!tunnels.length) {
       body.innerHTML = '<tr><td colspan="8" class="hint">(无隧道)</td></tr>';
       return;
     }
     for (const t of tunnels) {
-      const s = byId[t.id] || {};
+      // 聚合该服务所有路由的状态
+      let running = false, conns = 0, bin = 0, bout = 0;
+      (t.routes || []).forEach((rt) => {
+        const k = t.service + "@" + rt.channel + "@" + rt.local;
+        const s = byId[k] || {};
+        if (s.running) running = true;
+        conns += s.active_conns || 0;
+        bin += s.bytes_in || 0;
+        bout += s.bytes_out || 0;
+      });
+      const chans = (t.routes || []).map((rt) => rt.channel).join(" · ");
+      const locals = (t.routes || []).map((rt) => rt.local).join(" · ");
       const tr = document.createElement("tr");
       tr.innerHTML = `
-        <td class="mono">${esc(t.id)}</td>
-        <td>127.0.0.1:${t.local_port}</td>
-        <td class="mono">${esc(t.remote_addr)}</td>
-        <td>${t.enabled ? "●" : "○"}</td>
-        <td>${s.active_conns ?? 0}</td>
-        <td>${fmtBytes(s.bytes_in)}</td>
-        <td>${fmtBytes(s.bytes_out)}</td>
-        <td><button class="danger" data-del="${esc(t.id)}">删</button></td>`;
+        <td class="mono">${esc(t.service)}</td>
+        <td class="mono" style="font-size:12px">${esc(chans)}</td>
+        <td class="mono" style="font-size:12px">${esc(locals)}</td>
+        <td>${running ? "●" : "○"}</td>
+        <td>${conns}</td>
+        <td>${fmtBytes(bin)}</td>
+        <td>${fmtBytes(bout)}</td>
+        <td><button class="danger" data-del="${esc(t.service)}">删除服务</button></td>`;
       body.appendChild(tr);
     }
     for (const btn of body.querySelectorAll("[data-del]")) {
       btn.onclick = async () => {
+        if (!confirm(`删除整个服务 "${btn.dataset.del}" 的所有通道隧道?`)) return;
         try {
           await api("/api/tunnels/" + encodeURIComponent(btn.dataset.del), { method: "DELETE" });
-          toast("已删除隧道");
+          toast("已删除服务隧道");
           loadTunnels();
         } catch (e) { toast(e.message, true); }
       };
@@ -194,29 +206,24 @@ function esc(s) {
 
 let SERVICES = [];
 
-async function loadServices() {
-  try {
-    const list = await api("/api/services");
-    SERVICES = Array.isArray(list) ? list : [];
-    setSel("newServiceList", SERVICES.map((s) => {
-      const svcTxt = (s.services || []).join(" · ") || "-";
-      return { value: s.listen, label: `${s.listen}  ${svcTxt}`, raw: s };
-    }));
-    $("serviceHint").textContent = SERVICES.length
-      ? `已发现 ${SERVICES.length} 个入口：如 ${SERVICES[0].listen}。选中后本地端口默认填同值(可改)，选证书→添加。`
-      : "未发现服务 —— 请确认服务端已配 mappings + /info 可达";
-  } catch (e) {
-    $("serviceHint").textContent = "加载服务失败: " + e.message;
-  }
+// 渲染选中服务的通道行: 每通道一行 [通道(只读) | 本地路由输入(默认=通道)]
+function renderSvcChannels(svc) {
+  const box = $("svcChannelRows");
+  if (!svc || !svc.channels || !svc.channels.length) { box.innerHTML = ""; return; }
+  let h = '<div class="hint">服务端入口 → 本地路由 (默认同入口, 含冒号; 可改端口/路径)</div>';
+  svc.channels.forEach((ch) => {
+    h += `<div class="row" style="margin-top:6px">
+      <span class="mono" style="width:160px;align-self:center">${esc(ch.listen)}</span>
+      <span style="align-self:center;color:var(--text4)">→</span>
+      <input class="svc-local" data-ch="${esc(ch.listen)}" value="${esc(ch.listen)}" placeholder=":端口[/路径]" style="flex:1;font-family:monospace">
+    </div>`;
+  });
+  box.innerHTML = h;
 }
 
 async function init() {
   $("refreshServices").onclick = verifyAdmin; // 刷新服务 = 重新验证
-  initSel("newServiceBtn", "newServiceList", (it) => {
-    const l = (it.raw || {}).listen || "";
-    const p = l.replace(/^:/, "").split("/")[0];
-    if (p) $("newLocal").value = p;
-  });
+  initSel("newServiceBtn", "newServiceList", (it) => renderSvcChannels(it.raw));
   initSel("adminCertBtn", "adminCertList", () => {
     // 切换证书 → 复位: 隐藏已显示的区域, 需重新验证
     $("tunnelSection").style.display = "none";
@@ -246,22 +253,20 @@ async function init() {
   $("btnStop").onclick = async () => { try { await api("/api/stop", jpost(null)); toast("已停止"); loadTunnels(); } catch (e) { toast(e.message, true); } };
   $("addTunnel").onclick = async () => {
     const service = getSel("newServiceList");
-    const local = parseInt($("newLocal").value, 10);
     const cert = getSel("adminCertList");
     if (!service) { toast("请先选择服务（需先选证书并验证）", true); return; }
-    if (!local || isNaN(local)) { toast("请填写本地端口(选中服务会自动带出)", true); return; }
     if (!cert) { toast("请先选择证书", true); return; }
-    const body = {
-      service,
-      local_port: local,
-      server_name: $("newSNI").value.trim(),
-      cert_id: cert,
-      enabled: true,
-    };
+    const body = { service, cert_id: cert, locals: {} };
+    let bad = false;
+    document.querySelectorAll("#svcChannelRows .svc-local").forEach((inp) => {
+      const v = inp.value.trim();
+      if (!v) { toast("本地路由不能为空: " + inp.dataset.ch, true); bad = true; return; }
+      body.locals[inp.dataset.ch] = v;
+    });
+    if (bad) return;
     try {
-      await api("/api/tunnels", jpost(body));
-      toast("已添加隧道, reload/start 生效");
-      $("newLocal").value = "";
+      const r = await api("/api/tunnels", jpost(body));
+      toast(`已添加服务 ${r.service}(${r.count} 个通道)`);
       loadTunnels();
     } catch (e) { toast(e.message, true); }
   };
@@ -277,14 +282,11 @@ async function verifyAdmin() {
   ADMIN_PWD = $("adminPwd").value || "";
   try {
     const res = await api("/api/verify", jpost({ cert_id: cert, load_pwd: ADMIN_PWD }));
-    // 服务列表(用该证书的 /info)
+    // 服务列表(用该证书的 /info, v4: 服务+通道)
     SERVICES = res.services || [];
-    setSel("newServiceList", SERVICES.map((s) => {
-      const svcTxt = (s.services || []).join(" · ") || "-";
-      return { value: s.listen, label: `${s.listen}  ${svcTxt}`, raw: s };
-    }));
+    setSel("newServiceList", SERVICES.map((s) => ({ value: s.name, label: s.name, raw: s })));
     $("serviceHint").textContent = SERVICES.length
-      ? `已发现 ${SERVICES.length} 个入口：如 ${SERVICES[0].listen}。选中后本地端口默认填同值(可改)。`
+      ? `已发现 ${SERVICES.length} 个服务；选中后为每个通道填本地路由(默认同服务端入口)。`
       : "该证书无可用服务（或非业务证书，仅 admin 用途）。";
     // 普通证书 → 新增隧道; admin 证书 → 证书管理
     if (res.admin) {

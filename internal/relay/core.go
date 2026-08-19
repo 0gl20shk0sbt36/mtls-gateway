@@ -92,15 +92,14 @@ func (r *Relay) loadCert(certID string) (tls.Certificate, error) {
 	return c, nil
 }
 
-// relayDial 建立一条到给定隧道上游的 mTLS 连接。
-// 绑定在 tunnelRuntime 上由 tunnel.go 调用。
-func (r *Relay) relayDial(ctx context.Context, t Tunnel) (net.Conn, error) {
-	cert, err := r.loadCert(t.CertID)
+// relayDial 建立一条到给定路由上游的 mTLS 连接。
+func (r *Relay) relayDial(ctx context.Context, _ string, certID string, route TunnelRoute) (net.Conn, error) {
+	cert, err := r.loadCert(certID)
 	if err != nil {
 		return nil, err
 	}
 	d := &Dialer{
-		ServerAddr: net.JoinHostPort(r.serverHost(), t.ChannelPort()),
+		ServerAddr: net.JoinHostPort(r.serverHost(), route.ChannelPort()),
 		ServerName: r.serverHost(),
 		ClientCert: &cert,
 		RootCAs:    r.rootCAs,
@@ -136,24 +135,26 @@ func (r *Relay) Start(cfg RelayConfig) error {
 		if !t.Enabled {
 			continue
 		}
-		rt, err := r.startTunnel(t)
-		if err != nil {
-			// 回滚已启动的
-			for _, t2 := range runtimes {
-				t2.stop()
+		for _, spec := range tunnelRoutes(t) {
+			rt := spec // 拷贝
+			if err := r.startTunnel(&rt); err != nil {
+				// 回滚已启动的
+				for _, t2 := range runtimes {
+					t2.stop()
+				}
+				r.tunnels = map[string]*tunnelRuntime{}
+				if r.runCancel != nil {
+					r.runCancel()
+					r.runCancel = nil
+				}
+				return err
 			}
-			r.tunnels = map[string]*tunnelRuntime{}
-			if r.runCancel != nil {
-				r.runCancel()
-				r.runCancel = nil
-			}
-			return err
+			runtimes = append(runtimes, &rt)
+			r.tunnels[rt.key] = &rt
 		}
-		runtimes = append(runtimes, rt)
-		r.tunnels[t.ID()] = rt
 	}
 	r.started = true
-	log.Printf("relay: started %d tunnel(s)", len(runtimes))
+	log.Printf("relay: started %d tunnel route(s)", len(runtimes))
 	return nil
 }
 
@@ -173,13 +174,16 @@ func (r *Relay) Reload(cfg RelayConfig) error {
 		if !t.Enabled {
 			continue
 		}
-		next[t.ID()] = true
-		if _, ok := r.tunnels[t.ID()]; !ok {
-			rt, err := r.startTunnel(t)
-			if err != nil {
-				return err
+		for _, spec := range tunnelRoutes(t) {
+			key := spec.key
+			next[key] = true
+			if _, ok := r.tunnels[key]; !ok {
+				rt := spec // 拷贝
+				if err := r.startTunnel(&rt); err != nil {
+					return err
+				}
+				r.tunnels[key] = &rt
 			}
-			r.tunnels[t.ID()] = rt
 		}
 	}
 	// 停止已从配置移除的隧道
