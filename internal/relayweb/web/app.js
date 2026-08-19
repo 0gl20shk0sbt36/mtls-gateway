@@ -219,17 +219,18 @@ async function verifyAdmin() {
     $("serviceHint").textContent = SERVICES.length
       ? `已发现 ${SERVICES.length} 个入口：如 ${SERVICES[0].listen}。选中后本地端口默认填同值(可改)。`
       : "该证书无可用服务（或非业务证书，仅 admin 用途）。";
-    // admin 解锁
+    // 普通证书 → 新增隧道; admin 证书 → 证书管理
     if (res.admin) {
-      $("adminLocked").style.display = "none";
-      $("adminUnlocked").style.display = "";
+      $("tunnelSection").style.display = "none";
+      $("adminSection").style.display = "";
       $("adminStatus").textContent = "已解锁：admin 证书已验证，可签发/吊销。";
-      toast("验证成功 · 管理台已解锁");
+      $("adminCertHint").textContent = `已验证 ${cert}：admin 证书 → 证书管理可用。`;
+      toast("验证成功 · 证书管理已解锁");
     } else {
-      $("adminLocked").style.display = "";
-      $("adminUnlocked").style.display = "none";
-      $("adminCertHint").textContent = "证书已生效（可建隧道），但非 admin 用途 —— 管理操作不可用（服务端会拒绝）。";
-      toast("验证成功（非管理员证书）");
+      $("adminSection").style.display = "none";
+      $("tunnelSection").style.display = "";
+      $("adminCertHint").textContent = `已验证 ${cert}：普通证书 → 可新增隧道（证书管理不可用）。`;
+      toast("验证成功（普通证书）");
     }
   } catch (e) { toast("验证失败: " + e.message, true); }
 }

@@ -126,24 +126,6 @@
 
 <main>
   <div class="card">
-    <h2>新增隧道</h2>
-    <div class="hint" style="margin:6px 0 10px">先在下方案例"证书管理"卡里<b>选证书并验证</b>，服务列表才会加载（无证书拿不到 /info）。</div>
-    <div class="row">
-      <div class="sel" id="newServiceSel" style="flex:1;min-width:220px">
-        <button type="button" class="sel-btn" id="newServiceBtn"><span class="txt">— 选择服务 —</span><span class="arrow">▾</span></button>
-        <div class="sel-list" id="newServiceList"></div>
-      </div>
-      <button type="button" class="ghost small" id="refreshServices">刷新</button>
-    </div>
-    <div class="row" style="margin-top:10px">
-      <input id="newLocal" type="number" placeholder="本地端口（默认同服务端）" style="width:200px">
-      <input id="newSNI" placeholder="TLS SNI（可选）" style="width:150px">
-      <button type="button" class="primary" id="addTunnel">添加</button>
-    </div>
-    <div class="hint" id="serviceHint"></div>
-  </div>
-
-  <div class="card">
     <h2>运行控制</h2>
     <div class="row">
       <button type="button" class="primary" id="btnStart">启动</button>
@@ -160,20 +142,42 @@
     </table>
     <div class="hint" style="margin-top:8px">本地监听 = 你的程序要连的地址（127.0.0.1:端口）；服务端入口 = 中继拨号到的服务端网关地址。连接/流入/流出为实时指标。</div>
   </div>
-  <div class="card" style="margin-top:16px">
-    <h2 class="card-title">🔒 证书管理</h2>
-    <div id="adminLocked">
-      <p class="hint" id="adminCertHint" style="margin:6px 0 10px">管理台需先用<b>管理员证书</b>验证解锁（该按钮一直可用，但无 admin 证书无法解锁，服务端也会拒绝非 admin）。</p>
-      <div class="row">
-        <div class="sel" id="adminCertSel" style="flex:1;min-width:220px">
-          <button type="button" class="sel-btn" id="adminCertBtn"><span class="txt">— 选择 admin 证书 —</span><span class="arrow">▾</span></button>
-          <div class="sel-list" id="adminCertList"></div>
-        </div>
-        <input id="adminPwd" type="password" placeholder="证书密码(如有)" style="width:150px">
-        <button type="button" class="primary small" id="adminVerify">验证并解锁</button>
+
+  <div class="card">
+    <h2>证书选择</h2>
+    <p class="hint" id="adminCertHint" style="margin:6px 0 10px">选一枚证书并<b>验证</b>：普通证书 → 显示"新增隧道"；admin 证书 → 显示"证书管理"。未选证书前两者都不可用。</p>
+    <div class="row">
+      <div class="sel" id="adminCertSel" style="flex:1;min-width:220px">
+        <button type="button" class="sel-btn" id="adminCertBtn"><span class="txt">— 选择证书 —</span><span class="arrow">▾</span></button>
+        <div class="sel-list" id="adminCertList"></div>
       </div>
+      <input id="adminPwd" type="password" placeholder="证书密码(如有)" style="width:150px">
+      <button type="button" class="primary small" id="adminVerify">验证</button>
     </div>
-    <div id="adminUnlocked" style="display:none;margin-top:12px">
+  </div>
+
+  <div id="tunnelSection" style="display:none">
+    <div class="card">
+      <h2>新增隧道</h2>
+      <div class="row">
+        <div class="sel" id="newServiceSel" style="flex:1;min-width:220px">
+          <button type="button" class="sel-btn" id="newServiceBtn"><span class="txt">— 选择服务 —</span><span class="arrow">▾</span></button>
+          <div class="sel-list" id="newServiceList"></div>
+        </div>
+        <button type="button" class="ghost small" id="refreshServices">刷新</button>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <input id="newLocal" type="number" placeholder="本地端口（默认同服务端）" style="width:200px">
+        <input id="newSNI" placeholder="TLS SNI（可选）" style="width:150px">
+        <button type="button" class="primary" id="addTunnel">添加</button>
+      </div>
+      <div class="hint" id="serviceHint"></div>
+    </div>
+  </div>
+
+  <div id="adminSection" style="display:none">
+    <div class="card">
+      <h2>证书管理</h2>
       <p class="hint" id="adminStatus" style="margin:0 0 10px"></p>
       <div class="row"><input id="newName" placeholder="设备名 (如 dev-1)" style="flex:1"></div>
       <div class="row" style="margin-top:8px">
