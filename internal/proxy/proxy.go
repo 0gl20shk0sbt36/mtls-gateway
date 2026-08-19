@@ -9,12 +9,14 @@ package proxy
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Mapping 一条映射(通道)配置 (TOML [[mappings]] 直接对应)
@@ -356,6 +358,7 @@ func joinURLPath(base, tail string) string {
 }
 
 // newReverseProxy Host/Origin 改写为后端 loopback (信任围栏放行); 路径替换由 Serve 负责
+// 带超时 + 502 ErrorHandler(后端宕机/慢时不静默)
 func newReverseProxy(target *url.URL) *httputil.ReverseProxy {
 	return &httputil.ReverseProxy{
 		Director: func(req *http.Request) {
@@ -364,6 +367,15 @@ func newReverseProxy(target *url.URL) *httputil.ReverseProxy {
 			req.Host = target.Host
 			req.Header.Set("Origin", "https://"+target.Host)
 			req.Header.Del("X-Forwarded-Host")
+		},
+		Transport: &http.Transport{
+			DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+			ResponseHeaderTimeout: 30 * time.Second,
+			MaxIdleConns:          100,
+			IdleConnTimeout:       90 * time.Second,
+		},
+		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			http.Error(w, "backend error: "+err.Error(), http.StatusBadGateway)
 		},
 	}
 }
