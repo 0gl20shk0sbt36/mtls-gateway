@@ -663,7 +663,7 @@ func localizeKnown(lang string, err error) error {
 
 // errCertName 从错误消息提取证书名("decrypt key admin"/"cert admin not found"/"private key needs password: admin")
 func errCertName(s string) string {
-	for _, pat := range []string{`decrypt key (\S+)`, `private key needs password: (\S+)`, `cert (\S+) not found`} {
+	for _, pat := range []string{`decrypt key ([^:\s]+)`, `private key needs password: (\S+)`, `cert (\S+) not found`} {
 		if m := regexp.MustCompile(pat).FindStringSubmatch(s); len(m) == 2 {
 			return m[1]
 		}
