@@ -204,3 +204,22 @@ func get(u string) string {
 	n, _ := resp.Body.Read(b)
 	return string(b[:n])
 }
+
+// L6: substitute/joinURLPath 边界(尾斜杠/双斜杠/空)
+func TestSubstituteEdges(t *testing.T) {
+	cases := []struct{ p, in, out, want string }{
+		{"/admin/x", "/admin", "", "/x"},        // 剥入口前缀, 无出口 → /
+		{"/admin/x", "/admin", "/", "/x"},       // 出口 / → /x
+		{"/admin/", "/admin", "/admin2", "/admin2/"}, // 尾斜杠
+		{"/x", "", "/base", "/base/x"},          // 无入口前缀
+		{"/x", "", "", "/x"},                    // 无入口无出口
+		{"/a//b", "", "/base", "/base/a//b"},    // 内部双斜杠保留
+		{"/admin", "/admin", "/o", "/o/"},      // 完全匹配 → 出口(nginx 语义带尾斜杠)
+		{"/admin/", "/admin/", "/o", "/o/"},    // 带尾斜杠入口
+	}
+	for _, c := range cases {
+		if got := substitute(c.p, c.in, c.out); got != c.want {
+			t.Errorf("substitute(%q,%q,%q) = %q, want %q", c.p, c.in, c.out, got, c.want)
+		}
+	}
+}

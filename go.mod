@@ -5,6 +5,7 @@ go 1.26.6
 require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/tg123/certstore v0.1.3
+	golang.org/x/net v0.57.0
 	modernc.org/sqlite v1.56.0
 	software.sslmate.com/src/go-pkcs12 v0.7.3
 )
