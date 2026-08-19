@@ -136,8 +136,8 @@ func (r *Relay) Start(cfg RelayConfig) error {
 			continue
 		}
 		for _, spec := range tunnelRoutes(t) {
-			rt := spec // 拷贝
-			if err := r.startTunnel(&rt); err != nil {
+			rt := &tunnelRuntime{r: r, key: spec.key, service: spec.service, route: spec.route, certID: spec.certID, conns: map[net.Conn]struct{}{}}
+			if err := r.startTunnel(rt); err != nil {
 				// 回滚已启动的
 				for _, t2 := range runtimes {
 					t2.stop()
@@ -149,8 +149,8 @@ func (r *Relay) Start(cfg RelayConfig) error {
 				}
 				return err
 			}
-			runtimes = append(runtimes, &rt)
-			r.tunnels[rt.key] = &rt
+			runtimes = append(runtimes, rt)
+			r.tunnels[rt.key] = rt
 		}
 	}
 	r.started = true
@@ -178,11 +178,11 @@ func (r *Relay) Reload(cfg RelayConfig) error {
 			key := spec.key
 			next[key] = true
 			if _, ok := r.tunnels[key]; !ok {
-				rt := spec // 拷贝
-				if err := r.startTunnel(&rt); err != nil {
+				rt := &tunnelRuntime{r: r, key: spec.key, service: spec.service, route: spec.route, certID: spec.certID, conns: map[net.Conn]struct{}{}}
+				if err := r.startTunnel(rt); err != nil {
 					return err
 				}
-				r.tunnels[key] = &rt
+				r.tunnels[key] = rt
 			}
 		}
 	}

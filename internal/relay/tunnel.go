@@ -39,11 +39,19 @@ type tunnelRuntime struct {
 	conns    map[net.Conn]struct{}
 }
 
+// routeSpec 服务级隧道展开出的路由规格(轻量, 无锁)
+type routeSpec struct {
+	key     string // service@channel@local
+	service string
+	route   TunnelRoute
+	certID  string
+}
+
 // tunnelRoutes 把服务级隧道展开为路由级规格
-func tunnelRoutes(t Tunnel) []tunnelRuntime {
-	var out []tunnelRuntime
+func tunnelRoutes(t Tunnel) []routeSpec {
+	var out []routeSpec
 	for _, rt := range t.Routes {
-		out = append(out, tunnelRuntime{
+		out = append(out, routeSpec{
 			key:     t.Service + "@" + rt.Channel + "@" + rt.Local,
 			service: t.Service,
 			route:   rt,
