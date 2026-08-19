@@ -158,6 +158,9 @@ func (m *Manager) ServicesForCert(certID, lang string) ([]ServiceInfo, error) {
 func (m *Manager) adminAddr() string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.serverOverride != "" {
+		return m.serverOverride // --server 覆盖(优先于配置)
+	}
 	return m.cfg.AdminAddr
 }
 
@@ -636,9 +639,10 @@ func writeJSON(w http.ResponseWriter, v any) {
 }
 
 // writeErr 输出错误响应; 已知错误按请求语言(X-Lang)翻译, 其余原样;
-// 按错误语义映射状态码(4xx 客户端错误, 5xx 服务端错误)
+// 状态码按【原始】错误判定(本地化译文措辞变化会导致 404/403 错标 500)
 func writeErr(w http.ResponseWriter, r *http.Request, err error) {
-	msg := err.Error()
+	raw := err.Error()
+	msg := raw
 	if r != nil {
 		if lang := r.Header.Get("X-Lang"); lang == "en" || lang == "zh" {
 			msg = localizeKnown(lang, err).Error()
@@ -646,19 +650,19 @@ func writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	}
 	code := http.StatusInternalServerError
 	switch {
-	case strings.Contains(msg, "bad request"):
+	case strings.Contains(raw, "bad request"):
 		code = http.StatusBadRequest
-	case strings.Contains(msg, "admin required"): // 403 语义优先于 400 的 "required"
+	case strings.Contains(raw, "admin required"): // 403 语义优先于 400 的 "required"
 		code = http.StatusForbidden
-	case strings.Contains(msg, "required"), strings.Contains(msg, "必填"), strings.Contains(msg, "不能为空"),
-		strings.Contains(msg, "格式"), strings.Contains(msg, "invalid"), strings.Contains(msg, "非法"),
-		strings.Contains(msg, "保留字"), strings.Contains(msg, "未在 roles 声明列表"), strings.Contains(msg, "not declared"):
+	case strings.Contains(raw, "required"), strings.Contains(raw, "必填"), strings.Contains(raw, "不能为空"),
+		strings.Contains(raw, "格式"), strings.Contains(raw, "invalid"), strings.Contains(raw, "非法"),
+		strings.Contains(raw, "保留字"), strings.Contains(raw, "未在 roles 声明列表"), strings.Contains(raw, "not declared"):
 		code = http.StatusBadRequest
-	case strings.Contains(msg, "已存在"), strings.Contains(msg, "already exists"):
+	case strings.Contains(raw, "已存在"), strings.Contains(raw, "already exists"):
 		code = http.StatusConflict
-	case strings.Contains(msg, "not found"), strings.Contains(msg, "未找到"), strings.Contains(msg, "不存在"):
+	case strings.Contains(raw, "not found"), strings.Contains(raw, "未找到"), strings.Contains(raw, "不存在"):
 		code = http.StatusNotFound
-	case strings.Contains(msg, "forbidden"), strings.Contains(msg, "无权"), strings.Contains(msg, "拒绝"):
+	case strings.Contains(raw, "forbidden"), strings.Contains(raw, "无权"), strings.Contains(raw, "拒绝"):
 		code = http.StatusForbidden
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8") // 先设头再 WriteHeader
@@ -675,6 +679,12 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 	}
 	return true
 }
+
+// 错误串提取正则(包级预编译)
+var (
+	reErrName   = regexp.MustCompile(`decrypt key ([^:\s]+)|certificate name (\S+) already exists|name (\S+) already exists|not found: (\S+)|expired: (\S+)|status=(\S+)|not registered: (\S+)`)
+	reErrRecord = regexp.MustCompile(`\((\d+) record`)
+)
 
 // localizeKnown 已知错误按语言兜底翻译(所有 API 错误出口)
 func localizeKnown(lang string, err error) error {
@@ -703,7 +713,7 @@ func localizeKnown(lang string, err error) error {
 		return l.E("errNameRequired")
 	case strings.Contains(s, "already exists"):
 		n := 0
-		if m := regexp.MustCompile(`\((\d+) record`).FindStringSubmatch(s); len(m) == 2 {
+		if m := reErrRecord.FindStringSubmatch(s); len(m) == 2 {
 			n, _ = strconv.Atoi(m[1])
 		}
 		return l.E("errNameExists", errCertName(s), n)
@@ -729,7 +739,10 @@ func localizeKnown(lang string, err error) error {
 
 // errCertName 从错误消息提取证书名("decrypt key admin"/"cert admin not found"/"private key needs password: admin")
 func errCertName(s string) string {
-	for _, pat := range []string{`decrypt key ([^:\s]+)`, `private key needs password: (\S+)`, `cert (\S+) not found`, `certificate name (\S+) already exists`} {
+	if m := reErrName.FindStringSubmatch(s); len(m) == 2 {
+		return m[1]
+	}
+	for _, pat := range []string{`private key needs password: (\S+)`, `cert (\S+) not found`} {
 		if m := regexp.MustCompile(pat).FindStringSubmatch(s); len(m) == 2 {
 			return m[1]
 		}

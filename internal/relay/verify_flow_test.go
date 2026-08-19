@@ -104,6 +104,9 @@ func startVerifyGW(t *testing.T, dir string, services []map[string]any) (gwAddr,
 	mux.HandleFunc("/admin/certs", func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode([]any{map[string]any{"serial": "1", "name": "dev", "status": "enabled"}})
 	})
+	mux.HandleFunc("/admin/services", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"services": []any{map[string]any{"name": "svc-a", "channels": []any{"m1"}, "roles": []any{"svc-a"}}}})
+	})
 	srv := &http.Server{Handler: mux}
 	go srv.Serve(ln)
 	t.Cleanup(func() { srv.Close(); ln.Close() })
@@ -297,5 +300,33 @@ func TestAdminClientListAndService(t *testing.T) {
 	ms, err := m.AdminMappings(clientPair, "")
 	if err != nil || len(ms) != 1 || ms[0].ID != "m1" || ms[0].Listen != ":9601" {
 		t.Fatalf("AdminMappings: %+v err=%v", ms, err)
+	}
+}
+
+// 第二十三批: AdminService 桥(服务 CRUD 透传)
+func TestAdminClientService(t *testing.T) {
+	dir := t.TempDir()
+	svcs := []map[string]any{{"name": "svc-a", "channels": []any{map[string]any{"listen": ":9601", "target": "http://x"}}}}
+	gwAddr, caPath, clientPair := startVerifyGW(t, dir, svcs)
+	src, _ := certsource.OpenFile(clientPair)
+	r := New("", src)
+	r.SetServerAddr(gwAddr)
+	r.SetServerCA(caPath)
+	cfgPath := filepath.Join(dir, "relay.json")
+	SaveConfig(cfgPath, RelayConfig{ServerAddr: gwAddr, ServerCAFile: caPath, AdminAddr: gwAddr})
+	m, err := NewManager(r, cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.SetNoPersist(true)
+	// Service(GET, 按名)
+	raw, err := m.AdminService(clientPair, "", "GET", "svc-a", nil)
+	if err != nil || !strings.Contains(string(raw), "svc-a") {
+		t.Fatalf("AdminService GET: %s err=%v", raw, err)
+	}
+	// Mapping(Target 字段断言)
+	ms, err := m.AdminMappings(clientPair, "")
+	if err != nil || ms[0].Target != "http://x" {
+		t.Fatalf("AdminMappings Target: %+v err=%v", ms, err)
 	}
 }

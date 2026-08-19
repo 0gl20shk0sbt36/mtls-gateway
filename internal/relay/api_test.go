@@ -181,3 +181,25 @@ func TestConfigRoutesDeepCopy(t *testing.T) {
 		t.Fatalf("Config Routes polluted: %v", c2.Tunnels[0].Routes)
 	}
 }
+
+// 第二十三批: writeErr 英文路径状态码正确(本地化后 404/403 不落 500)
+func TestWriteErrENStatusCodes(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want int
+	}{
+		{"cert ghost not found", 404},
+		{"certificate name x already exists", 409},
+		{"name and purposes required", 400},
+		{"forbidden", 403},
+	}
+	for _, c := range cases {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest("GET", "/", nil)
+		req.Header.Set("X-Lang", "en") // 英文: 译文措辞不影响状态码
+		writeErr(rec, req, errors.New(c.raw))
+		if rec.Code != c.want {
+			t.Errorf("writeErr en(%q) = %d, want %d (body: %s)", c.raw, rec.Code, c.want, rec.Body.String())
+		}
+	}
+}
