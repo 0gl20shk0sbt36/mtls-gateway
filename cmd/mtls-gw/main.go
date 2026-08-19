@@ -461,7 +461,8 @@ func tlsListener(ln net.Listener, tlsCfg *tls.Config) net.Listener {
 type Config struct {
 	BindHost      string             `toml:"bind_host"`       // 全局绑定地址 (默认 0.0.0.0)
 	DB            string             `toml:"db"`              // SQLite 数据库路径
-	ConfigMode    string             `toml:"config_mode"`     // mutable(改后落盘) | ephemeral(仅内存) | immutable(只读)
+	ConfigMode    string             `toml:"config_mode"` // mutable | ephemeral | immutable
+	Lang          string             `toml:"lang"`        // 错误消息语言: zh | en (默认 zh)
 	AdminRole     string             `toml:"admin_role"`      // 内置管理角色名 (默认 mtls-superadmin)
 	PwdLength     int                `toml:"pwd_length"`      // 自动生成 p12 密码长度
 	KeyType       string             `toml:"key_type"`        // 签发密钥: rsa | ecdsa

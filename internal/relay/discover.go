@@ -52,7 +52,7 @@ func discoverHTTPClient(addr string, cert *tls.Certificate, rootCAs *x509.CertPo
 func (r *Relay) Discover() ([]ServiceInfo, error) {
 	cert, err := r.loadFirstCert()
 	if err != nil {
-		return nil, fmt.Errorf("relay: no client cert for discovery: %w", err)
+		return nil, fmt.Errorf("%s: %v", r.L.S("errNoCert"), err)
 	}
 	return r.DiscoverWithCert(cert)
 }

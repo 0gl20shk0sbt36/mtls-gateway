@@ -11,6 +11,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 
+	"mtls-gateway/internal/i18n"
 	"mtls-gateway/internal/proxy"
 )
 
@@ -21,10 +22,11 @@ type ConfigManager struct {
 	mode   string // mutable | ephemeral | immutable
 	cfg    Config
 	router *proxy.Router
+	L      *i18n.L // 错误消息语言(zh/en, 默认 zh)
 }
 
 func NewConfigManager(path string, cfg Config, router *proxy.Router) *ConfigManager {
-	return &ConfigManager{path: path, mode: cfg.ConfigMode, cfg: cfg, router: router}
+	return &ConfigManager{path: path, mode: cfg.ConfigMode, cfg: cfg, router: router, L: i18n.New(cfg.Lang)}
 }
 
 func (m *ConfigManager) Mode() string {
@@ -65,7 +67,7 @@ func (m *ConfigManager) Roles() []string {
 
 func (m *ConfigManager) checkWritable() error {
 	if m.mode == "immutable" {
-		return fmt.Errorf("config is immutable (read-only): 修改被服务端拒绝")
+		return m.L.E("errImmutable")
 	}
 	return nil
 }

@@ -141,27 +141,14 @@ function toast(msg, isErr) {
   setTimeout(() => (t2.style.display = "none"), 3000);
 }
 
-// localizeServerError: 服务端英文错误 → 当前语言(跟随界面语言切换; 未匹配则原样)
-function localizeServerError(msg) {
-  if (!msg) return msg;
-  const m = String(msg);
-  if (/private key needs password/.test(m)) return t("errPwdNeeded", { cert: m.split(": ").pop() || "" });
-  if (/no client cert for discovery/.test(m)) return t("errNoCert");
-  if (/expired certificate/.test(m)) return t("errExpired");
-  if (/service not found on server/.test(m)) return t("errSvcNotFound", { s: m.split(": ").pop() || "" });
-  if (/certificate not found/.test(m)) return t("errCertNotFound", { s: m.split(": ").pop() || "" });
-  if (/config is immutable|read.?only/.test(m)) return t("errImmutable");
-  if (/revoked/.test(m)) return t("errRevoked");
-  if (/unauthorized|forbidden/i.test(m) && /admin/.test(m)) return t("errAdminDenied");
-  if (/forbidden/i.test(m)) return t("errDenied");
-  return msg;
-}
+// localizeServerError: 服务端错误由后端按 lang 返回(不再前端翻译); 此函数保留用于兜底
+function localizeServerError(msg) { return msg; }
 
 async function api(path, opts) {
   const resp = await fetch(path, opts);
   const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) throw new Error(localizeServerError(data.error || ("HTTP " + resp.status)));
-  if (data && data.error) throw new Error(localizeServerError(data.error));
+  if (!resp.ok) throw new Error(data.error || ("HTTP " + resp.status));
+  if (data && data.error) throw new Error(data.error);
   return data;
 }
 const jpost = (body) => ({

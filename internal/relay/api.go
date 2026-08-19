@@ -275,7 +275,7 @@ func (m *Manager) BuildServiceTunnels(svc ServiceInfo, locals map[string]string,
 		t.Routes = append(t.Routes, TunnelRoute{Channel: ch.Listen, Local: local})
 	}
 	if len(t.Routes) == 0 {
-		return Tunnel{}, fmt.Errorf("service %s has no channels", svc.Name)
+		return Tunnel{}, m.relay.L.E("errNoChannels", svc.Name)
 	}
 	return t, nil
 }
@@ -495,7 +495,7 @@ func (m *Manager) Handler() http.Handler {
 			return
 		}
 		if b.Service == "" || b.CertID == "" {
-			writeErr(w, fmt.Errorf("service and cert_id required"))
+			writeErr(w, m.relay.L.E("errNeedSvcCert"))
 			return
 		}
 		svcs, err := m.ServicesForCert(b.CertID)
@@ -511,7 +511,7 @@ func (m *Manager) Handler() http.Handler {
 			}
 		}
 		if svc == nil {
-			writeErr(w, fmt.Errorf("service not found on server: %s", b.Service))
+			writeErr(w, m.relay.L.E("errSvcNotFound", b.Service))
 			return
 		}
 		t, err := m.BuildServiceTunnels(*svc, b.Locals, b.CertID)
@@ -530,7 +530,7 @@ func (m *Manager) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/tunnels/", func(w http.ResponseWriter, r *http.Request) {
 		id := strings.TrimPrefix(r.URL.Path, "/api/tunnels/")
 		if id == "" {
-			writeErr(w, fmt.Errorf("missing tunnel id"))
+			writeErr(w, m.relay.L.E("errNeedTunnelID"))
 			return
 		}
 		ok, err := m.DelTunnel(id)

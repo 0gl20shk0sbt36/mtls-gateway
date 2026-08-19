@@ -70,6 +70,7 @@ type RelayConfig struct {
 	WebUILogFile       string   `json:"webui_log_file,omitempty"`    // WebUI 界面事件日志(短时大量, 单独文件); 空=关
 	WebUILogMaxSizeMB  int      `json:"webui_log_max_size,omitempty"` // 单文件上限 MB (默认 10)
 	WebUILogMaxFiles   int      `json:"webui_log_max_files,omitempty"` // 保留份数 (默认 5)
+	Lang               string   `json:"lang,omitempty"`               // 错误消息语言: zh | en (默认 zh)
 	Tunnels            []Tunnel `json:"tunnels"`
 }
 

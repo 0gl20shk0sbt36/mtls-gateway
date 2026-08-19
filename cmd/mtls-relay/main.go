@@ -49,6 +49,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("manager: %v", err)
 	}
+	// 错误消息语言(配置 lang; 默认 zh)
+	if cfg := mgr.Config(); cfg.Lang != "" {
+		r.SetLang(cfg.Lang)
+	}
 
 	// 临时会话开关 (--no-write / --server)
 	if *noWrite {

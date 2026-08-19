@@ -7,9 +7,11 @@ import (
 	"log"
 	"net"
 	"os"
+	"strings"
 	"sync"
 
 	"mtls-gateway/internal/certsource"
+	"mtls-gateway/internal/i18n"
 )
 
 // Relay 客户端中继核心: 单实例, 同时服务多条隧道(端口)。
@@ -31,7 +33,15 @@ type Relay struct {
 	runCtx    context.Context // 当前运行周期上下文 (Start 时重建)
 	runCancel context.CancelFunc
 	tunnels   map[string]*tunnelRuntime // tunnel ID -> runtime
+	L         *i18n.L                   // 错误消息语言(zh/en, 默认 zh)
 	started   bool
+}
+
+// SetLang 设置错误消息语言(zh/en)
+func (r *Relay) SetLang(lang string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.L = i18n.New(lang)
 }
 
 // New 创建 Relay。cfg 可为空配置(后续通过管理 API 补隧道)。
@@ -45,7 +55,22 @@ func New(cfgPath string, src certsource.Source) *Relay {
 		ctx:       ctx,
 		cancel:    cancel,
 		tunnels:   make(map[string]*tunnelRuntime),
+		L:         i18n.New("zh"),
 	}
+}
+
+// localizeLoadErr 证书加载错误本地化(私钥需密码/证书不存在)
+func (r *Relay) localizeLoadErr(certID string, err error) error {
+	s := err.Error()
+	switch {
+	case strings.Contains(s, "private key needs password"), strings.Contains(s, "failed to parse private key"):
+		return r.L.E("errPwdNeeded", certID)
+	case strings.Contains(s, "not found"):
+		return r.L.E("errCertNotFound", certID)
+	case strings.Contains(s, "expired"):
+		return r.L.E("errExpired")
+	}
+	return err
 }
 
 // cfgListenHost 返回当前本地监听地址
@@ -86,7 +111,7 @@ func (r *Relay) loadCert(certID string) (tls.Certificate, error) {
 	}
 	c, err := r.src.Load(certID)
 	if err != nil {
-		return tls.Certificate{}, err
+		return tls.Certificate{}, r.localizeLoadErr(certID, err)
 	}
 	r.certCache[certID] = c
 	return c, nil
