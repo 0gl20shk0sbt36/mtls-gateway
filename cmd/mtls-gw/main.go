@@ -5,9 +5,11 @@
 package main
 
 import (
+	"bytes"
 	"crypto/tls"
 	"encoding/json"
 	"flag"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -436,16 +438,31 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *ConfigManager, ev *eve
 		writeJSON(w, map[string]any{"ok": true})
 	})
 
-	// 证书管理 (mgr) — 包装记录签发/吊销事件
+	// 证书管理 (mgr) — 包装记录签发/吊销事件(吊销带 serial)
 	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sw := &statusWriter{ResponseWriter: w}
+		msg := ""
+		if r.URL.Path == "/admin/certs/revoke" {
+			if b, err := io.ReadAll(r.Body); err == nil {
+				r.Body = io.NopCloser(bytes.NewReader(b)) // 恢复 body 供下游解析
+				var rb struct {
+					Serial string `json:"serial"`
+				}
+				if json.Unmarshal(b, &rb) == nil && rb.Serial != "" {
+					msg = "吊销证书 serial=" + rb.Serial
+				}
+			}
+		}
 		mgr.HTTPHandler().ServeHTTP(sw, r)
 		if ev != nil && sw.status >= 200 && sw.status < 400 {
 			switch r.URL.Path {
 			case "/admin/certs/issue":
 				ev.Write(eventlog.Event{Type: "cert_issue", Msg: "签发证书"})
 			case "/admin/certs/revoke":
-				ev.Write(eventlog.Event{Type: "cert_revoke", Msg: "吊销证书"})
+				if msg == "" {
+					msg = "吊销证书"
+				}
+				ev.Write(eventlog.Event{Type: "cert_revoke", Msg: msg})
 			}
 		}
 	}))

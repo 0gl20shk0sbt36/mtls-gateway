@@ -396,9 +396,12 @@ async function loadAdminData() {
     const purps = new Set([CFG_ADMIN_ROLE]);
     (cfg.roles || []).forEach((r) => purps.add(r));
     setMultiOpts("newPurposesList", [...purps].map((p) => ({ value: p, label: p })));
-    // 吊销下拉: 服务端证书列表
+    // 吊销下拉: 服务端证书列表(名称 · 签发→到期 · 状态, 区分同名证书)
     const arr = Array.isArray(cs) ? cs : (cs.certs || []);
-    setSel("revokeCertList", arr.map((c) => ({ value: c.serial || "", label: `${c.name || "(无名)"} · ${c.serial || ""}` })));
+    setSel("revokeCertList", arr.map((c) => ({
+      value: c.serial || "",
+      label: `${c.name || "(无名)"} · ${(c.issued_at || "").slice(0, 10)}→${(c.expires_at || "").slice(0, 10)} · ${c.status || "?"}`,
+    })));
   } catch (e) { console.error("loadAdminData:", e); /* 加载失败不阻塞 */ }
 }
 
@@ -646,6 +649,9 @@ async function adminRevoke() {
   const cert = getSel("adminCertList");
   const serial = getSel("revokeCertList");
   if (!cert || !serial) { toast(t("revokeNeed"), true); return; }
+  // 确认弹窗: 显示该证书完整信息(区分同名)
+  const item = (SEL["revokeCertList"] || {}).list?.find((x) => x.value === serial);
+  if (!confirm(`${t("revokeConfirm")}\n${item ? item.label : serial}`)) return;
   try {
     await api("/api/admin/revoke", jpost({ cert_id: cert, load_pwd: ADMIN_PWD, serial }));
     $("adminResult").textContent = t("revoked", { s: serial });
