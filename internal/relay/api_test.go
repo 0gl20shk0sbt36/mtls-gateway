@@ -324,3 +324,14 @@ func TestErrCertNameWindowsPath(t *testing.T) {
 		t.Fatalf("admin denied not localized: %q", msg)
 	}
 }
+
+// 第二十七批: HTTP 2xx 不吞状态码(回落关键字分支)
+func TestWriteErrHTTP2xxFallsBack(t *testing.T) {
+	// 错误文本含 "HTTP 200" 但实际是 not found → 应走关键字回退 → 404(而非 500)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	writeErr(rec, req, errors.New("something HTTP 200 but cert ghost not found"))
+	if rec.Code != 404 {
+		t.Fatalf("HTTP 2xx should fall back to keyword (404), got %d", rec.Code)
+	}
+}

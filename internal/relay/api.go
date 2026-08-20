@@ -657,9 +657,9 @@ func writeErr(w http.ResponseWriter, r *http.Request, err error) {
 		}
 	}
 	code := http.StatusInternalServerError
-	// ① 优先解析管理桥错误里的真实状态码: "admin POST /x: HTTP 400: ..."
+	// ① 优先解析管理桥错误里的真实状态码: "admin POST /x: HTTP 400: ..."(正则仅匹配 4xx/5xx)
 	if m := reHTTPStatus.FindStringSubmatch(raw); len(m) == 2 {
-		if c, e := strconv.Atoi(m[1]); e == nil && c >= 400 && c < 600 {
+		if c, e := strconv.Atoi(m[1]); e == nil {
 			code = c
 		}
 	} else {
@@ -708,7 +708,7 @@ var (
 	reErrNameExist2 = regexp.MustCompile(`name (\S+) already exists`)
 	reErrNameParse  = regexp.MustCompile(`parse (?:pem )?keypair (\S+):`)
 	reErrRecord     = regexp.MustCompile(`\((\d+) record`)
-	reHTTPStatus    = regexp.MustCompile(`HTTP (\d{3})`)
+	reHTTPStatus    = regexp.MustCompile(`HTTP ([45]\d{2})`)
 )
 
 // localizeKnown 已知错误按语言兜底翻译(所有 API 错误出口)
