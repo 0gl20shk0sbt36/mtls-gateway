@@ -270,7 +270,11 @@ func (m *Manager) IssueCert(req IssueRequest) (*IssueResponse, error) {
 		if n <= 0 {
 			n = 16
 		}
-		req.Password = randPassword(n)
+		pw, err := randPassword(n)
+		if err != nil {
+			return nil, err
+		}
+		req.Password = pw
 	}
 	// 设备名合法性
 	if !validName(req.Name) {
@@ -567,7 +571,7 @@ func (m *Manager) newClientKey() (crypto.PrivateKey, any, error) {
 	}
 }
 
-func randPassword(n int) string {
+func randPassword(n int) (string, error) {
 	const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	// 无模偏差: crypto/rand.Int 均匀采样
 	max := big.NewInt(int64(len(chars)))
@@ -575,9 +579,9 @@ func randPassword(n int) string {
 	for i := range b {
 		idx, err := rand.Int(rand.Reader, max)
 		if err != nil {
-			log.Fatalf("randPassword: 熵源不可用: %v", err) // 熵源失败属灾难性, 拒绝继续
+			return "", fmt.Errorf("randPassword: entropy unavailable: %w", err) // 返回错误由调用方 500, 不杀进程
 		}
 		b[i] = chars[idx.Int64()]
 	}
-	return string(b)
+	return string(b), nil
 }

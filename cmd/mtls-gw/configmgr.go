@@ -82,6 +82,14 @@ func (m *ConfigManager) checkWritable() error {
 
 // rebuild 用当前 cfg 重建路由器(热重载); 失败回滚
 func (m *ConfigManager) rebuild() error {
+	// admin_role 禁入业务服务 roles: 启动校验之外, 热更新路径(AddService/UpdateService/ReplaceAll)同样拦截
+	for _, s := range m.cfg.Services {
+		for _, r := range s.Roles {
+			if r == m.cfg.AdminRole {
+				return fmt.Errorf("service %s roles 里不允许出现内置管理角色 %q", s.Name, m.cfg.AdminRole)
+			}
+		}
+	}
 	old := m.router
 	r, err := proxy.NewRouter(m.cfg.Mappings, m.cfg.Services, m.cfg.Roles)
 	if err != nil {
@@ -164,7 +172,7 @@ func (m *ConfigManager) ReplaceAll(ms []proxy.Mapping, ss []proxy.ServiceCfg, ro
 		return err
 	}
 	if err := m.persist(); err != nil {
-		log.Printf("config persisted in memory but disk write failed: %v (restart will lose changes)", err)
+		return fmt.Errorf("persist config: %w", err)
 	}
 	return nil
 }
@@ -179,6 +187,9 @@ func (m *ConfigManager) AddRole(name string) error {
 	}
 	if name == "any" {
 		return fmt.Errorf("any 是内置保留字, 禁止声明")
+	}
+	if name == m.cfg.AdminRole {
+		return fmt.Errorf("内置管理角色 %q 禁止声明为普通角色", name)
 	}
 	if !proxy.ValidRoleName(name) {
 		return fmt.Errorf("bad role name %q (只允许字母/数字/下划线/连字符)", name)
@@ -195,7 +206,7 @@ func (m *ConfigManager) AddRole(name string) error {
 		return err
 	}
 	if err := m.persist(); err != nil {
-		log.Printf("config persisted in memory but disk write failed: %v (restart will lose changes)", err)
+		return fmt.Errorf("persist config: %w", err)
 	}
 	return nil
 }
@@ -233,7 +244,7 @@ func (m *ConfigManager) DeleteRole(name string) error {
 		return err
 	}
 	if err := m.persist(); err != nil {
-		log.Printf("config persisted in memory but disk write failed: %v (restart will lose changes)", err)
+		return fmt.Errorf("persist config: %w", err)
 	}
 	return nil
 }
@@ -252,7 +263,7 @@ func (m *ConfigManager) AddMapping(mm proxy.Mapping) error {
 		return err
 	}
 	if err := m.persist(); err != nil {
-		log.Printf("config persisted in memory but disk write failed: %v (restart will lose changes)", err)
+		return fmt.Errorf("persist config: %w", err)
 	}
 	return nil
 }
@@ -280,7 +291,7 @@ func (m *ConfigManager) UpdateMapping(id string, mm proxy.Mapping) error {
 		return err
 	}
 	if err := m.persist(); err != nil {
-		log.Printf("config persisted in memory but disk write failed: %v (restart will lose changes)", err)
+		return fmt.Errorf("persist config: %w", err)
 	}
 	return nil
 }
@@ -307,7 +318,7 @@ func (m *ConfigManager) DeleteMapping(id string) error {
 		return err
 	}
 	if err := m.persist(); err != nil {
-		log.Printf("config persisted in memory but disk write failed: %v (restart will lose changes)", err)
+		return fmt.Errorf("persist config: %w", err)
 	}
 	return nil
 }
@@ -326,7 +337,7 @@ func (m *ConfigManager) AddService(s proxy.ServiceCfg) error {
 		return err
 	}
 	if err := m.persist(); err != nil {
-		log.Printf("config persisted in memory but disk write failed: %v (restart will lose changes)", err)
+		return fmt.Errorf("persist config: %w", err)
 	}
 	return nil
 }
@@ -354,7 +365,7 @@ func (m *ConfigManager) UpdateService(name string, s proxy.ServiceCfg) error {
 		return err
 	}
 	if err := m.persist(); err != nil {
-		log.Printf("config persisted in memory but disk write failed: %v (restart will lose changes)", err)
+		return fmt.Errorf("persist config: %w", err)
 	}
 	return nil
 }
@@ -381,7 +392,7 @@ func (m *ConfigManager) DeleteService(name string) error {
 		return err
 	}
 	if err := m.persist(); err != nil {
-		log.Printf("config persisted in memory but disk write failed: %v (restart will lose changes)", err)
+		return fmt.Errorf("persist config: %w", err)
 	}
 	return nil
 }

@@ -706,6 +706,9 @@ func loadConfig(path string) Config {
 	if cfg.AdminRole == "" {
 		cfg.AdminRole = auth.DefaultAdminRole
 	}
+	if cfg.AdminRole == "any" {
+		log.Fatalf("admin_role 不能是保留字 \"any\"(会导致任意 any 证书获得管理权限)")
+	}
 	switch cfg.ConfigMode {
 	case "", "mutable", "ephemeral", "immutable":
 		if cfg.ConfigMode == "" {
