@@ -136,7 +136,7 @@ func issue(args []string) {
 	fs := flag.NewFlagSet("issue", flag.ExitOnError)
 	purpose := fs.String("purpose", "", "用途: admin|dsh|... 可逗号分隔多值 (如 dsh,vaultwarden)")
 	tsIP := fs.String("ts-ip", "", "绑定 TS IP (写入证书 SAN)")
-	days := fs.Int("days", 365, "有效期天数")
+	days := fs.Int("days", 0, "有效期天数(0=服务端默认: admin→AdminDays, 其他→DefaultDays)")
 	password := fs.String("password", "", "p12 密码 (默认自动生成)")
 	fs.Parse(flagArgs)
 

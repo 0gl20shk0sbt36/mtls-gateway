@@ -400,11 +400,12 @@ func (m *Manager) ServeUnixSocket() error {
 	return http.Serve(ln, m.handler(true))
 }
 
-// apiErrStatus 按错误语义映射 HTTP 状态码(客户端错误 4xx, 其余 500)
-func apiErrStatus(err error) int {
+// ErrStatus 按错误语义映射 HTTP 状态码(客户端错误 4xx, 其余 500)
+// 导出供 cmd/mtls-gw 的 gwErr 复用, 避免两处映射漂移。
+func ErrStatus(err error) int {
 	msg := err.Error()
 	switch {
-	case strings.Contains(msg, "admin required"): // 403 语义优先于 400 的 "required"
+	case strings.Contains(msg, "admin required"), strings.Contains(msg, "admin cert required"): // 403 语义优先于 400 的 "required"
 		return http.StatusForbidden
 	case strings.Contains(msg, "required"), strings.Contains(msg, "必填"), strings.Contains(msg, "不能为空"),
 		strings.Contains(msg, "invalid"), strings.Contains(msg, "非法"), strings.Contains(msg, "格式"),
@@ -420,6 +421,9 @@ func apiErrStatus(err error) int {
 	}
 	return http.StatusInternalServerError
 }
+
+// apiErrStatus 已合并入 ErrStatus(保留别名兼容内部旧调用点)
+func apiErrStatus(err error) int { return ErrStatus(err) }
 
 // handler 管理 API 路由; isLocal=true 时 Unix socket 通道(直接 admin)
 func (m *Manager) handler(isLocal bool) http.Handler {

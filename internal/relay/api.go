@@ -647,7 +647,7 @@ func writeJSON(w http.ResponseWriter, v any) {
 }
 
 // writeErr 输出错误响应; 已知错误按请求语言(X-Lang)翻译, 其余原样;
-// 状态码按【原始】错误判定(本地化译文措辞变化会导致 404/403 错标 500)
+// 状态码判定顺序: ① 管理桥错误内嵌的 "HTTP NNN"(权威) → ② 原始错误关键字(本地化译文措辞变化会错标)
 func writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	raw := err.Error()
 	msg := raw
@@ -657,21 +657,32 @@ func writeErr(w http.ResponseWriter, r *http.Request, err error) {
 		}
 	}
 	code := http.StatusInternalServerError
-	switch {
-	case strings.Contains(raw, "bad request"):
-		code = http.StatusBadRequest
-	case strings.Contains(raw, "admin required"): // 403 语义优先于 400 的 "required"
-		code = http.StatusForbidden
-	case strings.Contains(raw, "required"), strings.Contains(raw, "必填"), strings.Contains(raw, "不能为空"),
-		strings.Contains(raw, "格式"), strings.Contains(raw, "invalid"), strings.Contains(raw, "非法"),
-		strings.Contains(raw, "保留字"), strings.Contains(raw, "未在 roles 声明列表"), strings.Contains(raw, "not declared"):
-		code = http.StatusBadRequest
-	case strings.Contains(raw, "已存在"), strings.Contains(raw, "already exists"):
-		code = http.StatusConflict
-	case strings.Contains(raw, "not found"), strings.Contains(raw, "未找到"), strings.Contains(raw, "不存在"):
-		code = http.StatusNotFound
-	case strings.Contains(raw, "forbidden"), strings.Contains(raw, "无权"), strings.Contains(raw, "拒绝"):
-		code = http.StatusForbidden
+	// ① 优先解析管理桥错误里的真实状态码: "admin POST /x: HTTP 400: ..."
+	if m := reHTTPStatus.FindStringSubmatch(raw); len(m) == 2 {
+		if c, e := strconv.Atoi(m[1]); e == nil && c >= 400 && c < 600 {
+			code = c
+		}
+	} else {
+		// ② 关键字回退
+		switch {
+		case strings.Contains(raw, "bad request"):
+			code = http.StatusBadRequest
+		case strings.Contains(raw, "admin required"), strings.Contains(raw, "admin cert required"): // 403 优先于 400 的 "required"
+			code = http.StatusForbidden
+		case strings.Contains(raw, "needs password"), strings.Contains(raw, "password incorrect"),
+			strings.Contains(raw, "私钥需要密码"), strings.Contains(raw, "密码错误"):
+			code = http.StatusBadRequest // 客户端输入问题, 非 500
+		case strings.Contains(raw, "required"), strings.Contains(raw, "必填"), strings.Contains(raw, "不能为空"),
+			strings.Contains(raw, "格式"), strings.Contains(raw, "invalid"), strings.Contains(raw, "非法"),
+			strings.Contains(raw, "保留字"), strings.Contains(raw, "未在 roles 声明列表"), strings.Contains(raw, "not declared"):
+			code = http.StatusBadRequest
+		case strings.Contains(raw, "已存在"), strings.Contains(raw, "already exists"):
+			code = http.StatusConflict
+		case strings.Contains(raw, "not found"), strings.Contains(raw, "未找到"), strings.Contains(raw, "不存在"):
+			code = http.StatusNotFound
+		case strings.Contains(raw, "forbidden"), strings.Contains(raw, "无权"), strings.Contains(raw, "拒绝"):
+			code = http.StatusForbidden
+		}
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8") // 先设头再 WriteHeader
 	w.WriteHeader(code)
@@ -690,13 +701,14 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 
 // 错误串提取正则(包级预编译; 每正则单捕获组, len(m)==2 判定)
 var (
-	reErrName       = regexp.MustCompile(`decrypt key ([^:\s]+)`)
+	reErrName       = regexp.MustCompile(`decrypt key (\S+)`)
 	reErrNamePwd    = regexp.MustCompile(`private key needs password: (\S+)`)
 	reErrNameCert   = regexp.MustCompile(`cert (\S+) not found`)
 	reErrNameExist  = regexp.MustCompile(`certificate name (\S+) already exists`)
 	reErrNameExist2 = regexp.MustCompile(`name (\S+) already exists`)
 	reErrNameParse  = regexp.MustCompile(`parse (?:pem )?keypair (\S+):`)
 	reErrRecord     = regexp.MustCompile(`\((\d+) record`)
+	reHTTPStatus    = regexp.MustCompile(`HTTP (\d{3})`)
 )
 
 // localizeKnown 已知错误按语言兜底翻译(所有 API 错误出口)
@@ -742,6 +754,8 @@ func localizeKnown(lang string, err error) error {
 		return l.E("errNoChannels", tailName(s))
 	case strings.Contains(s, "immutable"):
 		return l.E("errImmutable")
+	case strings.Contains(s, "admin cert required"), strings.Contains(s, "admin required"):
+		return l.E("errAdminDenied")
 	case strings.Contains(s, "forbidden"):
 		return l.E("errDenied")
 	case strings.Contains(s, "not found"):
@@ -760,7 +774,8 @@ func localizeKnown(lang string, err error) error {
 func errCertName(s string) string {
 	for _, re := range []*regexp.Regexp{reErrName, reErrNamePwd, reErrNameCert, reErrNameExist, reErrNameExist2, reErrNameParse} {
 		if m := re.FindStringSubmatch(s); len(m) == 2 {
-			return m[1]
+			// reErrName 用 \S+ 会连尾部冒号一起捕获("admin:" / "C:\x.pem:"), 去掉之
+			return strings.TrimSuffix(m[1], ":")
 		}
 	}
 	return tailName(s)

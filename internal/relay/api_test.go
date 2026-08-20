@@ -289,3 +289,38 @@ func TestLocalizeNoExtraArgs(t *testing.T) {
 		t.Fatalf("errCertName(pem keypair) = %q, want admin", got)
 	}
 }
+
+// 第二十七批: writeErr 状态码增强(HTTP NNN 解析/admin cert required/密码错误)
+func TestWriteErrEnhancedCodes(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want int
+	}{
+		{"admin POST /admin/certs/issue: HTTP 400: duplicate listen: :9443", 400},
+		{"admin GET /admin/health: HTTP 403: admin cert required", 403},
+		{"admin PUT /admin/config: HTTP 400: immutable", 400},
+		{"private key needs password: admin", 400},
+		{"decrypt key admin: x509: decryption password incorrect", 400},
+		{"admin POST /x: HTTP 409: already exists", 409},
+		{"admin GET /x: HTTP 404: not found", 404},
+	}
+	for _, c := range cases {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest("GET", "/", nil)
+		writeErr(rec, req, errors.New(c.raw))
+		if rec.Code != c.want {
+			t.Errorf("writeErr(%q) = %d, want %d", c.raw, rec.Code, c.want)
+		}
+	}
+}
+
+// 第二十七批: Windows 盘符路径证书名不截断 + localizeKnown admin 拒绝
+func TestErrCertNameWindowsPath(t *testing.T) {
+	if got := errCertName(`decrypt key C:\Users\yyx\certs\admin.pem: x509: bad password`); got != `C:\Users\yyx\certs\admin.pem` {
+		t.Fatalf("windows path certname = %q", got)
+	}
+	msg := localizeKnown("zh", errors.New("admin cert required")).Error()
+	if !strings.Contains(msg, "管理") {
+		t.Fatalf("admin denied not localized: %q", msg)
+	}
+}

@@ -395,13 +395,14 @@ func gwErrLang(r *http.Request) *i18n.L {
 	return i18n.New("zh")
 }
 
-// gwErr 输出错误; 已知错误(immutable)按请求语言重翻, 其余原样
+// gwErr 输出错误; 已知错误按请求语言重翻, 其余原样; 状态码复用 api.ErrStatus(不再固定 400)
 func gwErr(w http.ResponseWriter, r *http.Request, err error) {
 	msg := err.Error()
-	if msg == i18n.New("zh").S("errImmutable") || msg == i18n.New("en").S("errImmutable") {
-		msg = gwErrLang(r).E("errImmutable").Error()
+	l := gwErrLang(r)
+	if localized := l.E("errImmutable").Error(); msg == i18n.New("zh").S("errImmutable") || msg == i18n.New("en").S("errImmutable") || msg == localized {
+		msg = localized
 	}
-	http.Error(w, msg, http.StatusBadRequest)
+	http.Error(w, msg, api.ErrStatus(err))
 }
 
 // 提供: 证书签发/吊销 (mgr) + 通道/服务/角色 CRUD (cm, 尊重 config_mode)
