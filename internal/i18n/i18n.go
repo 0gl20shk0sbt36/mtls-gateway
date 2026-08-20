@@ -22,8 +22,6 @@ const (
 var messages = map[string][2]string{
 	// 通用
 	"unknown_command": {"未知命令: %s", "unknown command: %s"},
-	"usage":           {"用法: %s", "usage: %s"},
-	"ok":              {"OK", "OK"},
 
 	// issue
 	"issue_success": {"=== 签发成功 ===", "=== issued successfully ==="},
@@ -33,13 +31,11 @@ var messages = map[string][2]string{
 	"cert_dir":      {"证书目录: %s", "cert directory: %s"},
 	"issue_failed":  {"签发失败: %v (核心进程在跑吗? sock=%s)", "issue failed: %v (is the daemon running? sock=%s)"},
 	"issue_error":   {"签发错误: %v", "issue error: %v"},
-	"issue_usage":   {"用法: mtls-gw-cli issue <name> --purpose <p> [--ts-ip <ip>] [--days N]", "usage: mtls-gw-cli issue <name> --purpose <p> [--ts-ip <ip>] [--days N]"},
 
 	// revoke
 	"revoked":       {"已吊销: %s", "revoked: %s"},
 	"revoke_failed": {"吊销失败: %v", "revoke failed: %v"},
 	"revoke_error":  {"吊销错误: HTTP %d", "revoke error: HTTP %d"},
-	"revoke_usage":  {"用法: mtls-gw-cli revoke <serial>", "usage: mtls-gw-cli revoke <serial>"},
 
 	// list
 	"no_certs":    {"(无证书)", "(no certs)"},

@@ -425,7 +425,7 @@ func StatusFromKeywords(msg string) int {
 		return http.StatusBadRequest
 	case strings.Contains(msg, "not found"), strings.Contains(msg, "未找到"), strings.Contains(msg, "不存在"):
 		return http.StatusNotFound
-	case strings.Contains(msg, "forbidden"), strings.Contains(msg, "无权"), strings.Contains(msg, "拒绝"):
+	case strings.Contains(msg, "forbidden"), strings.Contains(msg, "无权"), strings.Contains(msg, "拒绝访问"):
 		return http.StatusForbidden
 	}
 	return http.StatusInternalServerError
