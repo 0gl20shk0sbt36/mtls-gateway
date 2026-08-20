@@ -3,10 +3,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>mtls-relay 管理面板</title><link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<title>mtls-relay 管理面板</title>
 <style>
+  /* 自托管字体(latin 子集, 可变字体): 不依赖 Google Fonts, 保护隐私 + 离线可用 */
+  @font-face{font-family:'Inter';font-style:normal;font-weight:300 600;font-display:swap;src:url('/fonts/inter-latin.woff2') format('woff2');}
+  @font-face{font-family:'JetBrains Mono';font-style:normal;font-weight:400 500;font-display:swap;src:url('/fonts/jetbrains-mono-latin.woff2') format('woff2');}
   /* ===== Linear design tokens ===== */
   :root{
     --bg:#08090a; --panel:#0f1011; --surface:#191a1b; --surface2:#28282c;
