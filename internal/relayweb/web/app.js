@@ -13,13 +13,13 @@ let CERT_LIST = []; // 服务端全部证书(签发同名检查用)
 // applyI18n: 批量应用 data-i18n / data-i18n-html / data-i18n-ph (动态渲染的容器内容不在内)
 function applyI18n() {
   document.querySelectorAll("[data-i18n]").forEach((el) => {
-    el.textContent = t(el.dataset.i18n);
+    el.textContent = t(el.dataset.i18n).replaceAll("{adminRole}", CFG_ADMIN_ROLE);
   });
   document.querySelectorAll("[data-i18n-html]").forEach((el) => {
-    el.innerHTML = t(el.dataset.i18nHtml);
+    el.innerHTML = t(el.dataset.i18nHtml).replaceAll("{adminRole}", CFG_ADMIN_ROLE);
   });
   document.querySelectorAll("[data-i18n-ph]").forEach((el) => {
-    el.placeholder = t(el.dataset.i18nPh);
+    el.placeholder = t(el.dataset.i18nPh).replaceAll("{adminRole}", CFG_ADMIN_ROLE);
   });
   const btn = $("langSelBtn");
   if (btn) btn.querySelector(".txt").textContent = I18N.currentLangLabel();

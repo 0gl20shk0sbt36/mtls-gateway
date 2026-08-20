@@ -211,6 +211,8 @@ func parseListen(l string) (string, string, error) {
 		path = l[i:]
 		l = l[:i]
 	}
+	// 规范化尾斜杠: "/a/"→"/a"; 单独 "/" 视为整口(path=""); 否则 matchPath 的前缀匹配会因尾斜杠失效
+	path = strings.TrimSuffix(path, "/")
 	if l == "" {
 		return "", "", fmt.Errorf("missing port in %q", orig)
 	}
@@ -383,7 +385,7 @@ func newReverseProxy(target *url.URL) *httputil.ReverseProxy {
 			req.URL.Scheme = target.Scheme
 			req.URL.Host = target.Host
 			req.Host = target.Host
-			req.Header.Set("Origin", "https://"+target.Host)
+			req.Header.Set("Origin", target.Scheme+"://"+target.Host)
 			req.Header.Del("X-Forwarded-Host")
 		},
 		Transport: &http.Transport{
@@ -400,10 +402,16 @@ func newReverseProxy(target *url.URL) *httputil.ReverseProxy {
 	}
 }
 
-// SanitizeHeader 移除可能伪造的转发头(由网关自己生成)
+// SanitizeHeader 移除可能伪造的转发头(由网关自己生成)。
+// 补全 RFC 7239 Forwarded 及常见代理/URL 重写头, 防已认证客户端伪造直达后端的路径级访问控制。
 func SanitizeHeader(r *http.Request) {
 	r.Header.Del("X-Forwarded-For")
 	r.Header.Del("X-Real-Ip")
 	r.Header.Del("X-Forwarded-Proto")
 	r.Header.Del("X-Forwarded-Host")
+	r.Header.Del("X-Forwarded-Server")
+	r.Header.Del("Forwarded")
+	r.Header.Del("X-Original-URL")
+	r.Header.Del("X-Rewrite-URL")
+	r.Header.Del("Via")
 }

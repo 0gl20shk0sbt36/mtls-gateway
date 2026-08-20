@@ -1,6 +1,9 @@
 package proxy
 
-import "testing"
+import (
+	"net/http"
+	"testing"
+)
 
 // flash 审计: 数字型 mapping id 歧义 —— id 优先于索引, 防权限错配
 func TestResolveChannelIndexIDBeforeIndex(t *testing.T) {
@@ -17,5 +20,40 @@ func TestResolveChannelIndexIDBeforeIndex(t *testing.T) {
 	// 非数字且无匹配 id → -1
 	if got := resolveChannelIndex(routes, "ghost"); got != -1 {
 		t.Fatalf("ghost should resolve to -1, got %d", got)
+	}
+}
+
+// flash 审计: SanitizeHeader 补全转发头清理 + parseListen 尾斜杠规范化
+func TestSanitizeHeaderFull(t *testing.T) {
+	r := &http.Request{Header: http.Header{}}
+	for _, h := range []string{"X-Forwarded-For", "X-Real-Ip", "X-Forwarded-Proto", "X-Forwarded-Host",
+		"X-Forwarded-Server", "Forwarded", "X-Original-URL", "X-Rewrite-URL", "Via"} {
+		r.Header.Set(h, "evil")
+	}
+	SanitizeHeader(r)
+	for _, h := range []string{"X-Forwarded-For", "X-Real-Ip", "X-Forwarded-Proto", "X-Forwarded-Host",
+		"X-Forwarded-Server", "Forwarded", "X-Original-URL", "X-Rewrite-URL", "Via"} {
+		if got := r.Header.Get(h); got != "" {
+			t.Fatalf("header %s should be stripped, got %q", h, got)
+		}
+	}
+}
+
+func TestParseListenTrailingSlash(t *testing.T) {
+	// 尾斜杠规范化: "/a/"→"/a"; 单独 "/"→整口("")
+	cases := []struct{ in, port, path string }{
+		{":9443/a/", "9443", "/a"},
+		{":9443/", "9443", ""},
+		{":9443", "9443", ""},
+		{":9443/a/b/", "9443", "/a/b"},
+	}
+	for _, c := range cases {
+		p, pa, err := parseListen(c.in)
+		if err != nil {
+			t.Fatalf("parseListen(%q): %v", c.in, err)
+		}
+		if p != c.port || pa != c.path {
+			t.Fatalf("parseListen(%q) = (%q,%q), want (%q,%q)", c.in, p, pa, c.port, c.path)
+		}
 	}
 }
