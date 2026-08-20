@@ -94,18 +94,21 @@ func (m *Manager) AddTunnel(t Tunnel) error {
 			log.Printf("config saved in memory but disk write failed: %v (restart will lose changes)", err)
 		}
 	}
-	m.reloadTunnels()
+	if err := m.reloadTunnels(); err != nil {
+		return err // 隧道启动失败如实上报(不再谎报成功)
+	}
 	return nil
 }
 
-// reloadTunnels 把当前配置同步到运行时(增删立即生效)
-func (m *Manager) reloadTunnels() {
+// reloadTunnels 把当前配置同步到运行时(增删立即生效); 返回错误供调用方上报
+func (m *Manager) reloadTunnels() error {
 	if m.relay == nil {
-		return // 无 relay 后端(测试/纯配置模式)
+		return nil // 无 relay 后端(测试/纯配置模式)
 	}
 	if err := m.relay.Reload(m.Config()); err != nil {
-		log.Printf("reload tunnels: %v", err)
+		return err
 	}
+	return nil
 }
 
 // DelTunnel 删除隧道(整个服务)并持久化 (noPersist 时仅内存); 立即停掉运行时
@@ -124,7 +127,9 @@ func (m *Manager) DelTunnel(id string) (bool, error) {
 			log.Printf("config saved in memory but disk write failed: %v (restart will lose changes)", err)
 		}
 	}
-	m.reloadTunnels() // 落盘失败也同步运行时(内存权威, 与 AddTunnel 一致)
+	if err := m.reloadTunnels(); err != nil { // 落盘失败也同步运行时(内存权威, 与 AddTunnel 一致); 失败上报
+		return true, err
+	}
 	return true, nil
 }
 
@@ -291,7 +296,7 @@ func (m *Manager) AdminMappings(certID, password string) ([]MappingInfo, error) 
 // locals: 通道 listen → 本地路由 (缺省 = 通道 listen 原样, 含冒号)
 // lang: 错误语言(zh/en; 空=进程默认)
 func (m *Manager) BuildServiceTunnels(svc ServiceInfo, locals map[string]string, certID, lang string) (Tunnel, error) {
-	l := m.relay.L
+	l := m.relay.lang() // 锁内读(SetLang 并发写, 防 data race)
 	if lang == "en" || lang == "zh" {
 		l = i18n.New(lang)
 	}

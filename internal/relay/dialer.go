@@ -47,7 +47,10 @@ func (d *Dialer) Dial(ctx context.Context) (net.Conn, error) {
 		return nil, fmt.Errorf("dial %s: %w", d.ServerAddr, err)
 	}
 	client := tls.Client(raw, tlsCfg)
-	if err := client.HandshakeContext(ctx); err != nil {
+	// TLS 握手也加超时(复用 timeout): 防上游"能 accept 但永不回握手包"的僵尸端点永久挂起 goroutine
+	hsCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	if err := client.HandshakeContext(hsCtx); err != nil {
 		raw.Close()
 		return nil, fmt.Errorf("tls handshake to %s: %w", d.ServerAddr, err)
 	}
