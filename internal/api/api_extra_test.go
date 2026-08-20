@@ -57,3 +57,29 @@ func TestAPIErrStatusCN(t *testing.T) {
 		t.Fatalf("未找到 → %d, want 404", got)
 	}
 }
+
+// 第二十八批: ErrStatus 覆盖配置管理词汇(dup listen/immutable/bad role name)
+func TestErrStatusConfigVocab(t *testing.T) {
+	cases := []struct {
+		msg  string
+		want int
+	}{
+		{"duplicate listen: :9602", 409},
+		{"duplicate mapping id m1", 409},
+		{"duplicate service name svc-a", 409},
+		{"role x 已声明", 409},
+		{"role x 仍被服务 svc-a 引用", 409},
+		{"Server config is immutable (read-only)", 403},
+		{"服务端配置为只读模式（immutable）", 403},
+		{"bad role name 'a b'", 400},
+		{"missing listen", 400},
+		{"missing id", 400},
+		{"service svc-a has no channels", 400},
+		{"bad target", 400},
+	}
+	for _, c := range cases {
+		if got := ErrStatus(errors.New(c.msg)); got != c.want {
+			t.Errorf("ErrStatus(%q) = %d, want %d", c.msg, got, c.want)
+		}
+	}
+}

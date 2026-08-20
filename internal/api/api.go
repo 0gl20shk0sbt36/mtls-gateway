@@ -402,18 +402,24 @@ func (m *Manager) ServeUnixSocket() error {
 
 // ErrStatus 按错误语义映射 HTTP 状态码(客户端错误 4xx, 其余 500)
 // 导出供 cmd/mtls-gw 的 gwErr 复用, 避免两处映射漂移。
+// 关键字表须同时覆盖: 证书签发/吊销(internal/api) + 配置管理(configmgr/proxy)两类错误词汇。
 func ErrStatus(err error) int {
 	msg := err.Error()
 	switch {
 	case strings.Contains(msg, "admin required"), strings.Contains(msg, "admin cert required"): // 403 语义优先于 400 的 "required"
 		return http.StatusForbidden
+	case strings.Contains(msg, "immutable"), strings.Contains(msg, "只读"):
+		return http.StatusForbidden // 配置只读拒绝写入
+	case strings.Contains(msg, "already exists"), strings.Contains(msg, "已存在"), strings.Contains(msg, "已声明"),
+		strings.Contains(msg, "duplicate"), strings.Contains(msg, "重复"), strings.Contains(msg, "引用"):
+		return http.StatusConflict
 	case strings.Contains(msg, "required"), strings.Contains(msg, "必填"), strings.Contains(msg, "不能为空"),
 		strings.Contains(msg, "invalid"), strings.Contains(msg, "非法"), strings.Contains(msg, "格式"),
 		strings.Contains(msg, "保留字"), strings.Contains(msg, "未声明"), strings.Contains(msg, "未在 roles 声明列表"),
-		strings.Contains(msg, "not declared"):
+		strings.Contains(msg, "not declared"),
+		strings.Contains(msg, "missing"), strings.Contains(msg, "缺少"), strings.Contains(msg, "bad role name"),
+		strings.Contains(msg, "bad target"), strings.Contains(msg, "has no channels"):
 		return http.StatusBadRequest
-	case strings.Contains(msg, "already exists"), strings.Contains(msg, "已存在"):
-		return http.StatusConflict
 	case strings.Contains(msg, "not found"), strings.Contains(msg, "未找到"), strings.Contains(msg, "不存在"):
 		return http.StatusNotFound
 	case strings.Contains(msg, "forbidden"), strings.Contains(msg, "无权"), strings.Contains(msg, "拒绝"):
