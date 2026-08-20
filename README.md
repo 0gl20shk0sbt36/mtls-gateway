@@ -1,363 +1,227 @@
 # mtls-gw — 通用 mTLS 网关
 
-> English version: [README.en.md](README.en.md)
+基于 mTLS 客户端证书的**通用访问网关**: 设备级认证 + 按角色路由, 不绑定特定应用, 任何自建服务可复用。
 
-基于 mTLS 客户端证书的通用访问网关。为自建服务提供**设备级认证 + 按用途路由**的统一入口,
-不绑定任何特定应用——任何自建服务都可复用。
+## 架构一句话
+
+**证书 = 身份, SQLite = 权限**。每次请求过双重门槛: ① TLS 证书链验证(CA 签发) ② 数据库登记(serial 在册 + 未吊销 + 未过期)。**内存即权威**: 启动全量载入 SQLite → map, 请求验证只查内存零 IO, 变更同步写 DB。
 
 ```
-设备(持有设备证书)
-  → [mtls-gw] (mTLS 验证 + IP 预检 + 授权 + 路由)
-      ├─ 应用A → http://127.0.0.1:3080
-      ├─ 应用B → http://127.0.0.1:8081   (未来应用, 配置加一行即可)
-      └─ 管理端口 (admin_listen) → 管理 API (仅 admin 证书)
+客户端(带设备证书) ──mTLS──▶ mtls-gw ──▶ 后端服务
+                              │
+                              ├─ /info 端口: 服务发现(任一已登记证书)
+                              ├─ admin 端口: 证书签发/吊销/配置(仅 admin_role 证书)
+                              └─ 业务端口: 按 mappings 路由 + services 角色授权
 ```
 
 ---
 
 ## 1. 核心设计
 
-### 1.1 证书 = 身份, 数据库 = 权限 (职责分离)
+### 1.1 证书 = 身份, 数据库 = 权限(职责分离)
 
-| 层 | 承载 | 说明 |
-|----|------|------|
-| **证书** | 身份 | serial(序列号, 唯一主键) + SAN 绑定设备 IP |
-| **SQLite** | 权限 | serial → {name, purpose, status, expires} |
+- 证书里**不写用途/权限字段**; 权限全在 SQLite。吊销/改权限只改 DB, 不用重签证书。
+- 证书 SAN 绑定设备 IP(TS IP), 私钥复制到别的设备会因 IP 不匹配被拒(`require_ip_bind=true`)。
+- 一张证书可授予**多个角色**(`roles` 列表), 一个角色可访问多个服务。
 
-- 证书里**不写用途/权限字段**——"admin 判断"完全靠内部数据库,不靠证书 CN/字段
-- 用途是列表: `admin` / `app-a` / 未来任意用途
-- 吊销/改权限只改数据库,不用重签证书
+### 1.2 映射与授权模型(双表)
 
-### 1.2 验证流程 (每次请求)
+**mappings(通道)** = 唯一路由实体, 判重靠 `listen`:
 
-```
-1. TLS 握手 → 证书链验证 (ClientCAs = 受信 CA 池)
-   └─ 这只是最低门槛: 证书必须由受信 CA 签发, 但不代表有权限
-2. IP 预检: 证书 SAN IP == 来源 IP? 不等 → 立即拒绝 (不碰数据库)
-   └─ 防私钥复制: 证书拷到别的设备, 来源 IP 不匹配 → 拒绝
-3. 内存查表: serial → 记录 (纳秒级, 零 IO)
-   ├─ serial 不在数据库 → 拒绝 (即使 CA 签发, 未登记也进不来)
-   ├─ status=revoked → 拒绝
-   └─ 过期 → 拒绝
-4. 按 purpose 授权 → 路由到对应后端
+```toml
+[[mappings]]
+id = "dsh-main"                    # 助记符(服务用 id 引用)
+listen = ":9443"                   # 入口 :端口[/路径]
+target = "http://127.0.0.1:3080"   # 后端地址(URL 带路径=前缀替换, nginx proxy_pass 语义)
 ```
 
-> 安全模型是**双重门槛**: ①证书链验证(CA 签发) ②数据库登记(serial 在册)。
-> 单有其一不够——CA 签了但没登记, 或登记了但证书不是该 CA 签的, 都会被拒。
+**services(服务)** = 所有服务必须声明, 授权靠角色交集:
 
-### 1.3 内存即权威 (性能设计)
-
-- 启动时全量加载 SQLite → 内存 map (serial → record)
-- **请求验证只查内存** (纳秒级, 不碰磁盘)
-- 变更操作 (签发/吊销) 同步更新内存 + 写 SQLite
-- 数据量小 (几十条证书), 无缓存一致性问题
-
-### 1.4 管理双通道
-
-| 通道 | 用途 | 认证 |
-|------|------|------|
-| Unix socket | 本机 CLI | 文件权限 600 = 直接 admin |
-| TCP (mTLS) | 远程 Web 面板 (未来) | admin 用途证书 |
-
-### 1.5 免改后端的 Host/Origin 改写
-
-mtls-gw 反代时把 `Host` 和 `Origin` 改写为后端的 loopback 地址:
-
-```
-浏览器请求: Host: gw.example:9443, Origin: https://gw.example:9443
-mtls-gw 改写 → Host: 127.0.0.1:3080, Origin: https://127.0.0.1:3080
-后端信任围栏: 看到 loopback → 特权方法天然放行
+```toml
+[[services]]
+name = "dsh"
+channels = ["dsh-main"]            # 本服务的通道(mapping id)
+roles = ["dsh"]                    # 允许访问的角色; "any" = 任一已登记证书
 ```
 
-→ **完全不需要修改后端源码, 升级无忧**
+授权规则: 请求命中映射后, 证书 `roles` 与引用该映射的所有服务 `roles` 并集有交集(或含 `any`)才放行, 否则 403。
+
+### 1.3 路由与转发
+
+- 同端口多路径**最长前缀匹配**, 无路径 = 整口兜底。
+- 前缀替换: `listen` 的路径前缀剥掉, 换成 `target` 的路径前缀。
+- **Host/Origin 自动改写**为后端 loopback 地址, 免改后端信任围栏。
+- WebSocket 透传(Hijacker 透传)。
+- 匹配前规范化请求路径(清理 `..`/`.` dot-segment + 反斜杠, 防路径穿越)。
+
+### 1.4 验证流程(每次请求)
+
+1. mTLS 握手(TLS 1.2+, 客户端证书链验 CA)
+2. IP 预检(证书 SAN IP == 来源 IP, `require_ip_bind=true` 时)
+3. serial 查内存表(在册 + `enabled` + 未过期)
+4. 命中映射 + 角色授权判定
+5. 反向代理转发
+
+### 1.5 管理双通道
+
+| 通道 | 访问方式 | 权限 |
+|---|---|---|
+| Unix socket(本机 CLI) | 文件权限 600 | 直接 admin(仅 Linux) |
+| TCP admin API | mTLS 证书 | 仅 `admin_role` 证书 |
+
+CLI 与 Web 面板都是管理 API 的**对等壳**, Web 不直接调 CLI。
 
 ---
 
-## 2. 部署
+## 2. 快速开始
 
 ### 2.1 构建
 
 ```bash
-cd mtls-gateway
-go build -o mtls-gw ./cmd/mtls-gw
-go build -o mtls-gw-cli ./cmd/mtls-gw-cli
+go build ./cmd/mtls-gw ./cmd/mtls-gw-cli ./cmd/mtls-relay
 ```
 
-### 2.2 安装
+### 2.2 配置
 
 ```bash
-sudo cp mtls-gw /usr/local/bin/
-sudo cp mtls-gw-cli /usr/local/bin/
-sudo mkdir -p /var/lib/mtls-gw/certs
-sudo chown -R $(whoami):$(whoami) /var/lib/mtls-gw
-sudo mkdir -p /etc/mtls-gw
+cp config.example.toml /etc/mtls-gw/config.toml
+# 编辑: 填 CA/证书路径、mappings、services
 ```
 
-### 2.3 配置 `/etc/mtls-gw/config.json`
+完整字段见 [config.example.toml](./config.example.toml)。核心字段:
+
+| 字段 | 说明 |
+|---|---|
+| `bind_host` | 所有监听(业务/管理/发现)的绑定地址 |
+| `ca` / `ca_key` | CA 证书/私钥(签发用; 私钥 600) |
+| `server_cert` / `server_key` | 网关自身 TLS 证书 |
+| `admin_role` | 内置管理角色名(默认 `mtls-superadmin`; 别用常用名) |
+| `admin_listen` | 管理 API 端口(仅 admin_role 证书) |
+| `info_listen` | `/info` 服务发现端口(任一已登记证书) |
+| `config_mode` | `mutable`(落盘, 默认) / `ephemeral`(仅内存) / `immutable`(只读) |
+| `lang` | 错误消息语言 `zh` / `en`(默认 zh) |
+| `key_type` / `key_bits` | 签发密钥: rsa 2048/3072/4096 或 ecdsa 256/384/521 |
+| `default_days` / `admin_days` | 普通/管理证书默认有效期 |
+
+### 2.3 启动
+
+```bash
+/usr/local/bin/mtls-gw -config /etc/mtls-gw/config.toml
+```
+
+### 2.4 签发证书(本机 CLI, Unix socket)
+
+```bash
+mtls-gw-cli -sock /run/mtls-gw/mtls-gw.sock issue \
+  -name dev-laptop -purpose dsh -ts-ip 100.64.0.10
+mtls-gw-cli revoke -serial <serial>
+mtls-gw-cli list
+```
+
+> Windows 无 Unix socket, 签发走 TCP admin API(需 admin 证书)。
+
+---
+
+## 3. 客户端接入
+
+### 3.1 客户端中继(mtls-relay)
+
+客户端设备跑 relay daemon: `/info` 发现 → 按服务建本地隧道 → WebUI 管理。
+
+```bash
+mtls-relay -config ~/.mtls-relay/relay.json
+# 或 WebUI: 选证书 → 验证 → 加服务隧道
+```
+
+relay 配置(`relay.json`):
 
 ```json
 {
-  "listen": "0.0.0.0:9443",
-  "admin_listen": "0.0.0.0:9444",
-  "ca": "/etc/mtls-gw/ca.crt",
-  "ca_key": "/etc/mtls-gw/ca.key",
-  "server_cert": "/etc/mtls-gw/server.crt",
-  "server_key": "/etc/mtls-gw/server.key",
-  "cert_dir": "/var/lib/mtls-gw/certs",
-  "sock_path": "/run/mtls-gw/mtls-gw.sock",
-  "org": "my-org",
-  "ou": "device",
-  "default_days": 365,
-  "admin_days": 30,
-  "require_ip_bind": true,
-  "backends": {
-    "app-a": {
-      "target": "http://127.0.0.1:3080",
-      "listen": "0.0.0.0:9443"
-    }
-  }
+  "server_addr": "gw.example:9499",
+  "admin_addr": "gw.example:9444",
+  "server_ca": "/path/to/ca.crt",
+  "listen_host": "127.0.0.1",
+  "cert": {"source": "dir", "arg": "/path/to/certs"},
+  "tunnels": [
+    {"service": "dsh", "cert_id": "dev-laptop", "routes": [{"channel": ":9443", "local": ":9443"}]}
+  ]
 }
 ```
 
-- `admin_listen`: 管理 API 端口 (admin 证书)
-- `require_ip_bind`: 是否强制证书 SAN IP == 来源 IP (true/false)
-- `org` / `ou`: 签发证书的 O/OU 字段 (默认 "mtls-gw"/"device")
-- `default_days`: 普通用途默认有效期 (默认 365)
-- `admin_days`: admin 用途默认有效期 (默认 30)
-- `backends`: **用途 → {target, listen}** 映射。`target`=后端上游地址, `listen`=该用途的 mTLS 监听地址 (多端口一用途一端口), 加新应用就加一个用途块
+- `server_addr` = `/info` 发现端点; `admin_addr` = admin 端点(证书管理, 独立)
+- 隧道按**服务**建(一个服务含多个通道), 本地路由可覆盖端口/路径
+- 证书轮换/服务端地址变化自动重建隧道
 
-### 配置分工 (哪些放配置, 哪些用参数)
+### 3.2 WebUI
 
-| 内容 | 位置 | 理由 |
-|------|------|------|
-| 监听地址/CA 路径/服务器证书 | 配置文件 | 部署级, 一次定 |
-| 证书模板 (org/ou/默认天数) | 配置文件 | 全局统一 |
-| 设备名/用途/TS-IP | CLI 参数 | 每次签发不同 |
-| 有效期天数/密码 | CLI 参数 (可选) | 按需覆盖默认 |
+relay 自带 WebUI(`--listen-admin :28083`):
 
-### 2.4 systemd 服务 `/etc/systemd/system/mtls-gw.service`
+- **运行控制 + 隧道表**(按服务聚合, 状态/流量)
+- **证书选择**(选中后 `/info` 发现该证书可访问的服务)
+- **新增隧道**(按服务选 → 自动带出本地路由)
+- **证书管理台**(默认锁定: 选 admin 证书 → 密码解锁 → 经 admin_addr 签发/吊销)
 
-```ini
-[Unit]
-Description=mtls-gw — 通用 mTLS 网关
-After=network-online.target
-Wants=network-online.target
+### 3.3 浏览器 / 手机
 
-[Service]
-Type=simple
-User=<运行用户>
-WorkingDirectory=/home/<用户>
-RuntimeDirectory=mtls-gw
-RuntimeDirectoryMode=0750
-ExecStart=/usr/local/bin/mtls-gw -config /etc/mtls-gw/config.json -db /var/lib/mtls-gw/mtls-gw.db -sock /run/mtls-gw/mtls-gw.sock
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now mtls-gw
-```
+把 p12 证书(含私钥+密码)导入浏览器/手机即可, 无需额外软件。
 
 ---
 
-## 3. 使用 (CLI)
+## 4. 安全模型
 
-```bash
-# 签发证书 (本机 = 直接 admin, 走 Unix socket)
-mtls-gw-cli issue admin --purpose admin --ts-ip <管理机IP> --days 30
-mtls-gw-cli issue device-1 --purpose app-a --ts-ip <设备1IP> --days 365
-
-# 吊销证书
-mtls-gw-cli revoke <serial>
-
-# 列出所有证书
-mtls-gw-cli list
-
-# 健康检查
-mtls-gw-cli health
-
-# 自定义 socket (非默认路径时)
-mtls-gw-cli --sock /run/mtls-gw/mtls-gw.sock list
-```
-
-签发产出:
-- `/var/lib/mtls-gw/certs/<name>/cert.pem` — 证书
-- `/var/lib/mtls-gw/certs/<name>/key.pem` — 私钥
-- `/var/lib/mtls-gw/certs/<name>/device.p12` — 浏览器/手机导入用 (密码打印在 CLI 输出)
-
----
-
-## 4. 客户端接入
-
-### 4.1 浏览器 (Windows/macOS)
-
-导入 p12 (certmgr 或 `Import-PfxCertificate`) 后, 访问网关地址 → 弹出证书选择 → 选设备证书 → 进入。
-
-### 4.2 手机
-
-- Android: 设置 → 安全 → 安装证书 → 选 device.p12
-- iOS: 传输 p12 → 安装描述文件 → 信任
-
-### 4.3 命令行工具
-
-```bash
-curl --cert cert.pem --key key.pem https://<网关地址>:9443/
-```
-
-> 注: Windows schannel 在 TLS 1.3 + 客户端证书有兼容问题 (SEC_E_INTERNAL_ERROR),
-> 浏览器 (BoringSSL) 不受影响; 命令行建议用 TLS 1.2 或直接浏览器。
-
----
-
-## 5. 安全模型
-
-| 威胁 | 防御 |
-|------|------|
-| 私钥复制到别的设备 | IP 预检: 证书 SAN IP ≠ 来源 IP → 拒绝 |
-| 证书泄露/设备丢失 | 吊销单个证书 (数据库改状态, 立即生效) |
-| 证书过期 | 签发时设有效期 (admin 建议短周期) |
-| 设备证书攻击管理面 | 权限分离: 管理 API 仅在 admin_listen 端口, 仅 admin 用途 |
-| 未注册证书 | 内存表查不到 serial → 拒绝 |
-| DNS rebinding / CSRF (后端) | Host/Origin 改写为 loopback, 围栏天然通过 |
+- **双向 mTLS**: 客户端验网关 CA, 网关验客户端 CA 链
+- **证书 SAN 绑 IP**: 私钥复制到别的设备因 IP 不匹配被拒
+- **角色最小授权**: 证书角色与服务角色交集; admin_role 证书只能进管理 API, 不能访问业务
+- **管理面隔离**: 业务/管理/发现三个端口分离; 管理 API 独立于业务端口
+- **DNS rebinding 防护**: relay 管理 API 强制 loopback + Origin 校验
+- **server_ca 不可用拒绝启动**: 防降级系统根被 MITM 冒充网关
+- **同名证书禁止**: 签发前查重(含已吊销), 防同名混淆
+- **错误脱敏**: 认证失败只回 `forbidden`, 细节仅写事件日志
+- **超时/体积限制**: 全端口 ReadTimeout/WriteTimeout/IdleTimeout + 请求体 MaxBytesReader 4MB
 
 ### 已知限制
 
-- **IP 绑定网络**: SAN 绑定的是设备 IP, 设备必须走绑定网络 (如 tailnet) 才能通过 IP 预检
-- 若需要多网络访问, 可给证书 SAN 加多个 IP 或改用 TrustSource 抽象 (见下)
+- Windows 无 Unix socket, CLI 签发走 TCP admin API
+- 证书有效期按 `yyyy-mm-dd` 字符串比较(到期日当天仍有效)
+- 运行时新增证书需重载/重启网关才能被 `/info` 获取
 
 ---
 
-## 6. 未来扩展
-
-### 6.1 TrustSource 抽象 (规划)
-
-当前 IP 预检绑定特定网络 IP。计划抽象为可插拔的信任源:
-
-```
-TrustSource (接口) ── authorize(请求) → {设备标识} | 拒绝
-    ├─ IPBindSource     ← 当前: SAN IP 绑定
-    ├─ LanSource        ← 纯局域网 IP 白名单
-    └─ (未来) 其他网络...
-```
-
-### 6.2 Web 管理面板 (规划)
-
-CLI 和 Web 面板都是核心进程的壳, 都调核心 API (不是 Web 调 CLI):
-
-```
-核心进程 (mtls-gw daemon) ── 管理 API (受控操作 + 审计)
-    ├─ CLI (壳)
-    └─ Web 面板 (壳, 经 admin 证书)
-```
-
-### 6.3 对接更多应用
-
-`config.json` 的 `backends` 加一行即可:
-
-```json
-"backends": {
-  "app-a": { "target": "http://127.0.0.1:3080", "listen": "0.0.0.0:9443" },
-  "app-b": { "target": "http://127.0.0.1:8081", "listen": "0.0.0.0:9445" }
-}
-```
-
-对应签发证书 `--purpose app-b`。
-
----
-
-## 7. 开发踩坑记录
-
-1. **Go flag 遇非 flag 参数即停**: `--purpose admin` 在位置参数后不解析 → 需手动分类参数
-2. **/run 根目录无写权限**: 普通用户 bind Unix socket 失败 → 用 systemd `RuntimeDirectory`
-3. **管理面路径冲突**: 早期管理 API 在业务端口用 `/admin/` 前缀 (与后端 `/api/` RPC 冲突); 已重构为独立管理端口 `admin_listen` (如 9444), 彻底避开前缀冲突
-4. **Origin 头必须同步改写**: 只改 Host 不改 Origin → 浏览器请求 403
-5. **旧进程未重启**: 改 json tag 后 daemon 不重启, API 返回旧格式
-
----
-
-## 8. 单元测试
+## 5. 测试
 
 ```bash
-go test ./...          # 全部测试
-go test -v ./...       # 详细输出
-go test -cover ./...   # 覆盖率
+go test -race ./...          # Go 单测/集成(130+ 测试函数, -race 全绿)
+go vet ./...
+gofmt -l cmd internal        # 应为空(CI 强制)
+
+# 前端
+node --test internal/relayweb/web/test/*.test.js   # 单元测试 8 例
+# E2E(需先跑 setup.sh 生成环境)
+bash internal/relayweb/web/e2e/setup.sh /tmp/mtls-e2e
+node --test internal/relayweb/web/e2e/*.test.mjs   # 14 例
 ```
 
-共 26 个测试, `go test ./...` 全部通过。实测覆盖率:
-
-| 包 | 覆盖率 |
-|----|--------|
-| `internal/db` | 83.6% |
-| `internal/proxy` | 84.4% |
-| `internal/auth` | 67.9% |
-| `internal/api` | 59.6% |
-| `cmd/mtls-gw`, `cmd/mtls-gw-cli`, `internal/i18n` | 0% (命令入口 / 纯消息表, 低优) |
-
-> CLI 提示语言自动检测: `LC_ALL` > `LC_MESSAGES` > `LANG`, 默认中文; 消息表集中在 `internal/i18n`。
-
-测试要点:
-- 测试内自建临时 CA + 服务器证书, 不依赖部署环境
-- `TestAuthorizeIPMismatch` 验证私钥复制到别的设备会被拒 (IP 预检)
-- `TestHostRewrite` / `TestOriginRewrite` 验证反代头改写 (免改后端的关键)
+- 测试内**自建临时 CA + 服务器证书**, 不依赖部署环境。
+- CI(GitHub Actions): build + vet + gofmt + test + race, Go 1.25 + 1.26 双版本; 打 tag 自动多平台编译发 Release。
 
 ---
 
-## 9. 客户端中继 (mtls-relay)
+## 6. 项目结构
 
-`mtls-relay` 是**客户端侧的中继层(客户端网关)**, 为**不支持 mTLS 的本地程序**提供到 `mtls-gw` 受保护服务的透明转发:
+| 目录 | 职责 |
+|---|---|
+| `cmd/mtls-gw` | 服务端守护进程(config 解析 + 多端口 mTLS + 管理 API) |
+| `cmd/mtls-gw-cli` | 本机管理 CLI(Unix socket) |
+| `cmd/mtls-relay` | 客户端中继 daemon(/info 发现 → 隧道 + WebUI) |
+| `internal/db` | SQLite 持久化 + 内存权威表 |
+| `internal/auth` | 授权判定(IP 预检 + SAN + serial 查表 + 角色) |
+| `internal/proxy` | 反向代理(映射路由 + 前缀替换 + Host/Origin 改写) |
+| `internal/api` | 管理 API(签发/吊销/列表 + p12) |
+| `internal/relay` | 客户端核心(证书源/隧道/管理桥) |
+| `internal/relayweb` | 客户端 WebUI(go:embed) |
+| `internal/i18n` | 中/英错误消息表 |
+| `internal/pathutil` | 路径工具(dot-segment 清理) |
 
-```
-本地程序(不支持 mTLS) ──明文──► [mtls-relay 客户端 daemon] ──mTLS──► [mtls-gw 服务端] ──反代──► 后端服务
-                            (把明文送进 mTLS)              (把 mTLS 送进后端)
-```
+## 7. 审计历史
 
-- **单实例 daemon**, 同时监听并转发所有配置的端口(隧道), 不是每端口一个进程。
-- **端口 ↔ 证书是隧道粒度绑定**: 每隧道 = 本地端口 + 远端(网关后端) + 绑一个证书; **一个证书可复用绑定多个端口**(同一 `CertID` 复用于多条隧道)。
-- 结构与服务端 mtls-gw 对称: **核心 daemon + 本地管理 API + 对等壳(CLI/WebUI/GUI)**。
-
-### 9.1 构成
-
-| 命令/包 | 说明 |
-|---------|------|
-| `cmd/mtls-relay` | 客户端 daemon: 加载配置, 起核心 + 本地管理 API + WebUI |
-| `cmd/mtls-relay-cli` | CLI 外壳: certs / tunnel / reload / start / stop / status / config |
-| `internal/relay` | 核心层(跨平台): 多隧道转发生命周期, mTLS 上行, 管理 API |
-| `internal/certsource` | 证书来源抽象: Windows 系统证书库 / Linux 统一目录 / 文件(pem/p12) |
-| `internal/relayweb` | WebUI 外壳: 本地单页面板(go:embed, 无 Node 构建) |
-| `internal/gui` | GUI 外壳(仅 Windows, 规划/最后实施) |
-
-### 9.2 使用
-
-```bash
-# 构建
-go build -o mtls-relay ./cmd/mtls-relay
-go build -o mtls-relay-cli ./cmd/mtls-relay-cli
-
-# 启动 daemon (默认证书来源=系统: Windows 个人库 / Linux ~/.mtls-gw/certs)
-./mtls-relay -config ~/.mtls-relay/config.json -listen-admin 127.0.0.1:18081
-
-# 用 CLI 选证书 + 加隧道
-mtls-relay-cli certs
-mtls-relay-cli tunnel add --id dsh --local 18080 --remote gw.example:9443 --cert <ID>
-mtls-relay-cli reload          # 或 start(首次)
-mtls-relay-cli status
-
-# 文件来源(跨平台兜底)
-./mtls-relay -source file -source-arg /path/to/client.pem
-```
-
-- WebUI: 浏览器打开 `http://127.0.0.1:18081/`(仅本机回环)。
-- 证书来源可用 `--source system|dir|file`; `--filter-org` 只展示指定 org 签发的证书, `--show-all` 显示全部。
-- 本地默认仅监听 `127.0.0.1`, 不暴露局域网; 上行默认验证网关服务器证书(可用 `server_ca` 配置网关 CA, 否则用系统根)。
-
-### 9.3 客户端中继的测试
-
-核心层 `internal/relay` 与 `internal/certsource` 自建临时 CA + mTLS 网关 stub(echo) 覆盖:
-- 单隧道/多隧道转发、并发
-- **证书复用**(同一 CertID 用于两条隧道都通)
-- 上行 mTLS 失败 → 该连接被拒但监听存活
-- 增删隧道 reload、路径穿越防护、org 过滤
+完整的 pro 审计变更记录见 [docs/AUDIT-CHANGELOG.md](./docs/AUDIT-CHANGELOG.md)(28 批 × 3 专项, 修复 20+ 真实 bug + 20+ 安全加固)。

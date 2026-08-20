@@ -29,6 +29,8 @@ require_ip_bind = true                # 证书是否必须绑定来源 IP(建议
 admin_role = "mtls-superadmin"        # ★ 内置管理角色名(别用常用名; 证书有该角色才能进管理 API;
                                       #   禁止出现在业务服务 roles 里, 否则加载报错)
 tls_min_version = "1.2"               # TLS 最低版本: "1.2" 或 "1.3"
+config_mode = "mutable"               # 配置模式: mutable(落盘,默认) | ephemeral(仅内存) | immutable(只读)
+lang = "zh"                           # 错误消息语言: zh | en
 
 # ---- 日志(事件型, 不记录数据内容) ----
 log_file = "/var/log/mtls-gw/events.log"       # 系统/配置变更/证书签发吊销事件; 空=关
