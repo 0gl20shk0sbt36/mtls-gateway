@@ -206,7 +206,7 @@ func tunnelAdd(args []string) {
 	}
 	body := map[string]any{"service": *service, "cert_id": *cert, "locals": locals}
 	must(post("/api/tunnels", body))
-	fmt.Println("已保存服务隧道:", *service, "(执行 reload 生效; start 首次启动)")
+	fmt.Println("已保存服务隧道:", *service, "(已自动重载生效)")
 }
 
 func tunnelList() {
