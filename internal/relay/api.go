@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"mtls-gateway/internal/api"
 	"mtls-gateway/internal/certsource"
 	"mtls-gateway/internal/eventlog"
 	"mtls-gateway/internal/i18n"
@@ -663,26 +664,8 @@ func writeErr(w http.ResponseWriter, r *http.Request, err error) {
 			code = c
 		}
 	} else {
-		// ② 关键字回退
-		switch {
-		case strings.Contains(raw, "bad request"):
-			code = http.StatusBadRequest
-		case strings.Contains(raw, "admin required"), strings.Contains(raw, "admin cert required"): // 403 优先于 400 的 "required"
-			code = http.StatusForbidden
-		case strings.Contains(raw, "needs password"), strings.Contains(raw, "password incorrect"),
-			strings.Contains(raw, "私钥需要密码"), strings.Contains(raw, "密码错误"):
-			code = http.StatusBadRequest // 客户端输入问题, 非 500
-		case strings.Contains(raw, "required"), strings.Contains(raw, "必填"), strings.Contains(raw, "不能为空"),
-			strings.Contains(raw, "格式"), strings.Contains(raw, "invalid"), strings.Contains(raw, "非法"),
-			strings.Contains(raw, "保留字"), strings.Contains(raw, "未在 roles 声明列表"), strings.Contains(raw, "not declared"):
-			code = http.StatusBadRequest
-		case strings.Contains(raw, "已存在"), strings.Contains(raw, "already exists"):
-			code = http.StatusConflict
-		case strings.Contains(raw, "not found"), strings.Contains(raw, "未找到"), strings.Contains(raw, "不存在"):
-			code = http.StatusNotFound
-		case strings.Contains(raw, "forbidden"), strings.Contains(raw, "无权"), strings.Contains(raw, "拒绝"):
-			code = http.StatusForbidden
-		}
+		// ② 关键字回退: 复用服务端共享权威表(api.StatusFromKeywords), 消除两处映射漂移
+		code = api.StatusFromKeywords(raw)
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8") // 先设头再 WriteHeader
 	w.WriteHeader(code)

@@ -83,3 +83,25 @@ func TestErrStatusConfigVocab(t *testing.T) {
 		}
 	}
 }
+
+// 第二十九批: StatusFromKeywords 覆盖真实错误串变体(bad role %q / bad port / too long)
+func TestStatusFromKeywordsRealErrors(t *testing.T) {
+	cases := []struct {
+		msg  string
+		want int
+	}{
+		{"service svc-a bad role ghost! (只允许 [A-Za-z0-9_-])", 400}, // proxy.go:157 变体(缺 "name")
+		{"mapping m1: bad port in :99999", 400},
+		{"certificate validity too long: 99999 days (max 3650)", 400},
+		{"bad role name 'a b'", 400},
+		{"role x 仍被服务 svc-a 引用", 409},
+		{"缺少隧道 id", 400},
+		{"missing tunnel id", 400},
+		{"service svc-a has no channels", 400},
+	}
+	for _, c := range cases {
+		if got := StatusFromKeywords(c.msg); got != c.want {
+			t.Errorf("StatusFromKeywords(%q) = %d, want %d", c.msg, got, c.want)
+		}
+	}
+}

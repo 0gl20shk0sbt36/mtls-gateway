@@ -165,10 +165,15 @@ func TestAdminHandler_CRUDAndHotReload(t *testing.T) {
 	if len(e.cm.Roles()) != 2 {
 		t.Fatalf("roles: %d", len(e.cm.Roles()))
 	}
-	// 非法操作被拒(重复 listen)
+	// 非法操作被拒(重复 listen → 409 精确断言)
 	resp, body = e.do(e.adminTLS, "POST", "/admin/mappings", `{"id":"m3","listen":":9602","target":"http://x"}`)
-	if resp.StatusCode < 400 {
-		t.Fatalf("dup listen should fail: %d %s", resp.StatusCode, body)
+	if resp.StatusCode != 409 {
+		t.Fatalf("dup listen should be 409: %d %s", resp.StatusCode, body)
+	}
+	// 非法角色名 → 400
+	resp, body = e.do(e.adminTLS, "POST", "/admin/roles", `{"name":"bad role!"}`)
+	if resp.StatusCode != 400 {
+		t.Fatalf("bad role name should be 400: %d %s", resp.StatusCode, body)
 	}
 	// 删除服务
 	resp, _ = e.do(e.adminTLS, "DELETE", "/admin/services?name=svc-b", "")
