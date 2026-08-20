@@ -161,17 +161,7 @@ func NewRouter(ms []Mapping, ss []ServiceCfg, declaredRoles []string) (*Router, 
 			}
 		}
 		for _, ch := range s.Channels {
-			idx := -1
-			if n, err := strconv.Atoi(ch); err == nil {
-				idx = n // 索引引用
-			} else {
-				for i, rt := range r.routes {
-					if rt.id == ch {
-						idx = i
-						break
-					}
-				}
-			}
+			idx := resolveChannelIndex(r.routes, ch)
 			if idx < 0 || idx >= len(r.routes) {
 				return nil, fmt.Errorf("service %s channel %q not found", s.Name, ch)
 			}
@@ -303,17 +293,7 @@ func (r *Router) ServicesAllowed(roles []string) []ServiceInfo {
 		}
 		si := ServiceInfo{Name: s.Name}
 		for _, ch := range s.Channels {
-			idx := -1
-			if n, err := strconv.Atoi(ch); err == nil {
-				idx = n
-			} else {
-				for i, rt := range r.routes {
-					if rt.id == ch {
-						idx = i
-						break
-					}
-				}
-			}
+			idx := resolveChannelIndex(r.routes, ch)
 			if idx >= 0 && idx < len(r.routes) {
 				si.Channels = append(si.Channels, ChannelInfo{Listen: r.routes[idx].Listen(), Target: r.routes[idx].Target()})
 			}
@@ -324,13 +304,27 @@ func (r *Router) ServicesAllowed(roles []string) []ServiceInfo {
 	return out
 }
 
+// resolveChannelIndex 解析 channel 引用: 先按 mapping id 精确匹配, 未命中才尝试数字索引(兼容旧配置)。
+// 防止全数字 id 被 strconv.Atoi 误解析为索引, 导致服务角色/权限挂到错误的路由上(权限错配)。
+func resolveChannelIndex(routes []*route, ch string) int {
+	for i, rt := range routes {
+		if rt.id == ch {
+			return i
+		}
+	}
+	if n, err := strconv.Atoi(ch); err == nil && n >= 0 && n < len(routes) {
+		return n
+	}
+	return -1
+}
+
 func rolesMatch(want, have []string) bool {
 	for _, w := range want {
 		if w == "any" {
 			return true
 		}
 		for _, h := range have {
-			if w == h {
+			if h == w {
 				return true
 			}
 		}
