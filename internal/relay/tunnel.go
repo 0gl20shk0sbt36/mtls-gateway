@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"log"
 	"net"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"mtls-gateway/internal/pathutil"
@@ -73,6 +75,17 @@ func (r *Relay) startTunnel(rt *tunnelRuntime) error {
 	addr := net.JoinHostPort(host, rt.route.LocalPort())
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
+		// 同端口多路径: 本隧道组已有 route(整口优先)占用同端口,
+		// 路径 route 复用该 listener(整口 TCP 透传兜底该端口流量), 不算错误。
+		// 只对"本隧道组内部"的端口复用放行; 端口被外部进程占用仍报错上报。
+		if isAddrInUse(err) && r.hasLocalPort(rt.route.LocalPort()) {
+			rt.listener = nil // 复用: 不独立监听, stop 时跳过 Close
+			ctx, cancel := context.WithCancel(r.runCtx)
+			rt.ctx = ctx
+			rt.cancel = cancel
+			rt.conns = make(map[net.Conn]struct{})
+			return nil
+		}
 		return err
 	}
 	ctx, cancel := context.WithCancel(r.runCtx)
@@ -95,6 +108,20 @@ func (r *Relay) startTunnel(rt *tunnelRuntime) error {
 		go rt.acceptLoop()
 	}
 	return nil
+}
+
+// hasLocalPort 本隧道组是否已有 route 监听该本地端口(整口覆盖路径的复用判定)
+func (r *Relay) hasLocalPort(port string) bool {
+	for _, rt := range r.tunnels {
+		if rt.listener != nil && rt.route.LocalPort() == port {
+			return true
+		}
+	}
+	return false
+}
+
+func isAddrInUse(err error) bool {
+	return errors.Is(err, syscall.EADDRINUSE) || strings.Contains(err.Error(), "address already in use")
 }
 
 // localHTTPHandler 本地路径模式: 剥本地前缀 → 补通道前缀 → mTLS 转发服务端通道
@@ -330,7 +357,9 @@ func (rt *tunnelRuntime) stop() {
 		tr.CloseIdleConnections() // 反代空闲连接释放
 	}
 	rt.cancel()
-	rt.listener.Close()
+	if rt.listener != nil { // 复用整口的路径 route 无独立 listener
+		rt.listener.Close()
+	}
 	if rt.srv != nil {
 		rt.srv.Close()
 	}
