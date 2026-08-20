@@ -185,6 +185,55 @@
 ### 第 28 批
 - 🔴 **ErrStatus 补配置管理词汇**(duplicate/immutable/bad role/missing/has no channels → 409/403/400, 修 gwErr 复用引入的 500 回归)
 
+### 第 29 批
+- 🔴 **抽 `StatusFromKeywords` 单一权威表** —— 根治 writeErr(relay)/ErrStatus(api) 两套关键字表反复漂移的根因, relay 复用 api 表
+- 🔴 补 `bad role %q`/`bad port`/`too long`/`needs password` 等关键字(修 3 处 500 回落)
+- ✅ 删 4 个死 i18n 键(errBadRole/errRoleUndeclared/errMapExists/errChannelRef)
+- ✅ 测试: 真实错误串变体 + HTTP 层精确断言(dup→409 / bad role→400)
+
+### 第 30 批
+- 🔴 `"拒绝"` 关键字收窄为 `"拒绝访问"`(修 server_ca "拒绝降级系统根" 被误标 403)
+- ✅ 删 4 个死 i18n 键(usage/ok/issue_usage/revoke_usage)
+
+### 第 31 批(pro 收敛确认)
+- ✅ 补 `"拒绝"` 收窄回归护栏(拒绝访问→403 / 拒绝降级→500)
+- ✅ **pro 三专项宣告收敛**: 测试无 P1/P2、代码质量无新实质问题、安全面达标
+
+---
+
+## flash 审计(独立视角, 与 pro 正交)
+
+flash 用**横向通读全库**策略(非 pro 的深度迭代), 扫出了 pro 31 批漏掉的缺陷。两轮: low+25 轮 / max+50 轮。
+
+### flash low/25 轮(3 专项)
+**核心发现(pro 漏掉的):**
+- 🔴 **数字型 mapping ID 歧义** — `channels:["1"]` 被 `strconv.Atoi` 当索引而非 id, 可把 A 服务权限静默授给 B 服务(权限错配)
+- 🔴 **`m.relay.L` 裸读 data race** — api.go:294 裸读 vs core.go:56 SetLang 裸写
+- 🔴 **relay 上行 TLS 握手无超时** — 僵尸端点永久挂起 goroutine
+- 🔴 **admin_role 热更新绕过** — 只在启动时校验, 管理 API 可把 admin_role 写进服务 roles
+- 🟠 **网关无条件覆盖 Origin** — 后端依赖 Origin 的 CSRF 防护失效
+- 🟠 **转发头清理不全** — Forwarded/X-Original-URL/X-Rewrite-URL/X-Forwarded-Server/Via 可伪造直达后端
+- 测试盲区: 两个 CLI 整包零测试、Unix socket 通道零覆盖、Dialer 零直测
+
+### flash max/50 轮(3 专项)
+**新增实质发现(low 档没报的):**
+- 🔴 **`AddTunnel` 启动失败被吞** — API 谎报 `ok:true` 但隧道没起, 坏配置已落盘
+- 🔴 **mutable 落盘失败仅打日志** — API 返回成功, 重启丢配置
+- 🔴 **`randPassword` 熵源故障 `log.Fatalf`** — 杀死整个网关(含业务端口)
+- 🔴 **`SanitizeHeader`(防伪造转发头)零测试**
+- 🟠 尾斜杠 listen 前缀匹配失效(`:9443/a/` 永远不匹配)
+- 🟠 `admin_role` 配成 `any` 破坏角色语义(任何 any 证书变管理员)
+- 🟠 前端 `{adminRole}` 占位符从未替换(界面显示字面量)
+- 🟠 WebUI 无 CSP + 外链 Google Fonts
+- 🟠 `go:embed web/*` 把 test/e2e 测试 JS 打进生产二进制
+- 安全 M1: relay 管理 API 无鉴权, 同机进程可借 daemon 身份加载任意证书(窃身份→提权签发)
+- 安全 M2: 隧道 `listen_host` 无 loopback 校验, 误配即暴露到局域网
+
+### flash vs pro 对比结论
+- flash 不是 pro 的加强版, 是**正交补集**: 横向通读扫盲区, 但单轮质量弱于 pro(PR 审计基准 pro 89% vs flash 68%; 审全库场景无直接数据)
+- 思考强度 max 有杠杆(多挖出 4 真 bug + 边界), 但不质变 —— 能力差异是模型本身, 非时长
+- 混合模式最优: pro 深度专项 + flash 横向扫盲
+
 ---
 
 ## 汇总统计
