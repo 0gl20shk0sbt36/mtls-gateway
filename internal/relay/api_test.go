@@ -251,3 +251,41 @@ func TestLocalizeKnownMore(t *testing.T) {
 		}
 	}
 }
+
+// 第二十六批: Config() 应用 --server 覆盖 + 不落盘
+func TestConfigAppliesServerOverride(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "relay.json")
+	SaveConfig(cfgPath, RelayConfig{ServerAddr: "gw:9499", AdminAddr: "gw:9444"})
+	m, err := NewManager(nil, cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.SetServerAddr("gw:9999")
+	if got := m.Config().ServerAddr; got != "gw:9999" {
+		t.Fatalf("Config().ServerAddr = %q, want gw:9999", got)
+	}
+	// 落盘用 m.cfg 原值(不落覆盖)
+	m.AddTunnel(Tunnel{Service: "s1", CertID: "c", Enabled: true})
+	loaded, err := LoadConfig(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.ServerAddr != "gw:9499" {
+		t.Fatalf("persisted ServerAddr = %q, want gw:9499 (override not persisted)", loaded.ServerAddr)
+	}
+}
+
+// 第二十六批: errRevoked/errExpired 无 %!(EXTRA) 垃圾
+func TestLocalizeNoExtraArgs(t *testing.T) {
+	for _, raw := range []string{"cert ABC status=revoked", "cert ABC expired"} {
+		msg := localizeKnown("zh", fmt.Errorf("%s", raw)).Error()
+		if strings.Contains(msg, "%!(") {
+			t.Fatalf("localized message contains %%!(EXTRA) garbage: %q", msg)
+		}
+	}
+	// parse pem keypair 变体提取名字
+	if got := errCertName("parse pem keypair admin: tls: failed to parse private key"); got != "admin" {
+		t.Fatalf("errCertName(pem keypair) = %q, want admin", got)
+	}
+}

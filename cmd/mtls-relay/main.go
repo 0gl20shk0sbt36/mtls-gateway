@@ -60,7 +60,8 @@ func main() {
 		mgr.SetNoPersist(true)
 	}
 	if *server != "" {
-		r.SetServerAddr(*server) // 覆盖发现端点(relay 层生效; admin 桥仍走独立 admin_addr)
+		r.SetServerAddr(*server)   // 覆盖发现端点(relay 层)
+		mgr.SetServerAddr(*server) // Manager 层: Config()/reloadTunnels 应用(Reload 不回退)
 	}
 
 	// 若已有启用的隧道配置, 启动即运行
@@ -68,7 +69,7 @@ func main() {
 	cfgServerAddr := cfg.ServerAddr
 	if *server != "" {
 		cfgServerAddr = *server
-		cfg.ServerAddr = *server // 注入 Start 用的配置: 否则 Start 会用配置文件值覆盖 --server
+		cfg.ServerAddr = *server // 注入 StartWith: Start 会用配置文件值覆盖, 必须显式传
 	}
 	r.SetServerAddr(cfgServerAddr) // 让 Discover(/api/services) 在未 Start 时也能用
 	if err := r.SetServerCA(cfg.ServerCAFile); err != nil {

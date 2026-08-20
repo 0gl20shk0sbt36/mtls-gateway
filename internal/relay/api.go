@@ -19,13 +19,14 @@ import (
 // Manager 中继管理入口: 外壳(CLI/WebUI/GUI)唯一接口。
 // 持有当前 RelayConfig 并持久化到磁盘; 提供 HTTP 管理 API 及便捷方法。
 type Manager struct {
-	relay     *Relay
-	cfgPath   string
-	mu        sync.Mutex
-	cfg       RelayConfig
-	noPersist bool // 只改内存、不落盘 (临时会话)
-	webUIOnce sync.Once
-	webUI     *eventlog.Logger // WebUI 界面事件日志(客户端侧, 单独文件)
+	relay          *Relay
+	cfgPath        string
+	mu             sync.Mutex
+	cfg            RelayConfig
+	noPersist      bool   // 只改内存、不落盘 (临时会话)
+	serverOverride string // --server 覆盖的发现端点(Config()/reloadTunnels 应用; 不落盘, adminAddr 不用)
+	webUIOnce      sync.Once
+	webUI          *eventlog.Logger // WebUI 界面事件日志(客户端侧, 单独文件)
 }
 
 // NewManager 创建管理入口。加载已有配置(若无则用默认)。
@@ -44,6 +45,9 @@ func (m *Manager) Config() RelayConfig {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := m.cfg
+	if m.serverOverride != "" {
+		out.ServerAddr = m.serverOverride // --server 覆盖(发现/隧道拨号用; 保存走 m.cfg 原值)
+	}
 	out.Tunnels = append([]Tunnel(nil), m.cfg.Tunnels...)
 	for i := range out.Tunnels {
 		out.Tunnels[i].Routes = append([]TunnelRoute(nil), m.cfg.Tunnels[i].Routes...) // 内层深拷贝
@@ -68,10 +72,12 @@ func (m *Manager) SetNoPersist(v bool) {
 	m.noPersist = v
 }
 
-// SetServerAddr 已废弃并移除语义: --server 覆盖发现端点需注入 cfg(StartWith)或调 relay.SetServerAddr;
-// admin 桥(签发/吊销/验证)必须走独立 admin_addr, 不可混用。此方法保留仅为兼容外部调用, 无任何效果。
+// SetServerAddr 覆盖服务端发现端点 (--server): 仅影响 Config()/reloadTunnels(发现/隧道拨号),
+// 不落盘; admin 桥(签发/吊销/验证)仍走独立 admin_addr, 不可混用。
 func (m *Manager) SetServerAddr(addr string) {
-	// 无操作: 见注释(调用方应改用 StartWith/relay.SetServerAddr)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.serverOverride = addr
 }
 
 // AddTunnel 新增或覆盖隧道并持久化 (noPersist 时仅内存)
@@ -689,7 +695,7 @@ var (
 	reErrNameCert   = regexp.MustCompile(`cert (\S+) not found`)
 	reErrNameExist  = regexp.MustCompile(`certificate name (\S+) already exists`)
 	reErrNameExist2 = regexp.MustCompile(`name (\S+) already exists`)
-	reErrNameParse  = regexp.MustCompile(`parse keypair (\S+):`)
+	reErrNameParse  = regexp.MustCompile(`parse (?:pem )?keypair (\S+):`)
 	reErrRecord     = regexp.MustCompile(`\((\d+) record`)
 )
 
@@ -743,9 +749,9 @@ func localizeKnown(lang string, err error) error {
 	case strings.Contains(s, "not registered"):
 		return l.E("errNotFound", errCertName(s))
 	case strings.Contains(s, "status=revoked"):
-		return l.E("errRevoked", errCertName(s))
+		return l.E("errRevoked") // 模板无 %s, 不传参
 	case strings.Contains(s, "expired"):
-		return l.E("errExpired", errCertName(s))
+		return l.E("errExpired") // 模板无 %s, 不传参
 	}
 	return err
 }
