@@ -106,6 +106,9 @@ func (m *Manager) reloadTunnels() error {
 		return nil // 无 relay 后端(测试/纯配置模式)
 	}
 	if err := m.relay.Reload(m.Config()); err != nil {
+		if err == errNotStarted {
+			return nil // relay 未启动: 配置已保存, Start 时生效, 不算错误
+		}
 		return err
 	}
 	return nil
