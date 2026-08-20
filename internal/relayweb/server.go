@@ -16,7 +16,8 @@ import (
 	"mtls-gateway/internal/relay"
 )
 
-//go:embed web/*
+//go:embed web/index.html web/app.js web/logic.js web/i18n.js
+// 显式列运行时文件, 避免把 web/test/、web/e2e/ 测试资产打进生产二进制(含 CI 环境信息)
 var webFS embed.FS
 
 // NewHandler 组合管理 handler: /api/* → relay.Manager, 其余 → WebUI 静态页。
