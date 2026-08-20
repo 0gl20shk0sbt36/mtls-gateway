@@ -105,3 +105,13 @@ func TestStatusFromKeywordsRealErrors(t *testing.T) {
 		}
 	}
 }
+
+// 第三十一批: "拒绝"收窄回归护栏(拒绝访问→403, 拒绝降级→500 不误标)
+func TestStatusFromKeywordsDenyNarrowing(t *testing.T) {
+	if got := StatusFromKeywords("访问被拒绝：证书角色无权访问"); got != 403 {
+		t.Fatalf("拒绝访问 should be 403, got %d", got)
+	}
+	if got := StatusFromKeywords("read server_ca x: (拒绝降级系统根)"); got != 500 {
+		t.Fatalf("拒绝降级系统根 should be 500 (not mislabeled 403), got %d", got)
+	}
+}
