@@ -86,7 +86,7 @@ jobs:
           body: |
             ## mtls-gw ${{ github.ref_name }}
 
-            Generic mTLS gateway — device-level authentication + purpose-based routing.
+            Generic mTLS gateway — device-level authentication + role-based routing.
 
             ### Download
             - `mtls-gw-<os>-<arch>` — the gateway daemon

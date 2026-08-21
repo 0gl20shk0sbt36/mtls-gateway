@@ -20,6 +20,9 @@ import (
 	"mtls-gateway/internal/relayweb"
 )
 
+// version 由 release 构建经 -ldflags "-X main.version=..." 注入; 默认 "dev"
+var version = "dev"
+
 func main() {
 	var (
 		configPath  = flag.String("config", "~/.mtls-relay/config.json", "配置 JSON 路径")

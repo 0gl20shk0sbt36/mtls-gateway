@@ -35,6 +35,9 @@ import (
 	"mtls-gateway/internal/proxy"
 )
 
+// version 由 release 构建经 -ldflags "-X main.version=..." 注入; 默认 "dev"
+var version = "dev"
+
 func main() {
 	var servers []*http.Server // 优雅退出时关闭
 	var serversMu sync.Mutex
@@ -55,6 +58,7 @@ func main() {
 		log.Fatalf("db: %v", err)
 	}
 	defer store.Close()
+	log.Printf("mtls-gw %s starting", version)
 	log.Printf("db loaded: %d certs", len(store.List()))
 	// 启动时检查证书重名(禁止同名规则同样约束存量数据): 同名 >1 条 → 拒绝启动
 	{
