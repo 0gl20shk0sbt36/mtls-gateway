@@ -56,9 +56,10 @@ func startupPathNeeds(cfg Config) []pathNeed {
 	if cfg.SockPath != "" {
 		needs = append(needs, pathNeed{filepath.Dir(cfg.SockPath), unix.W_OK, "unix socket 目录(写)"})
 	}
-	// 事件/访问日志: 文件存在=可写; 不存在=父目录可写
+	// 事件/访问/标准日志: 文件存在=可写; 不存在=父目录可写
 	needs = append(needs, filePermNeed(cfg.LogFile, "事件日志", unix.W_OK)...)
 	needs = append(needs, filePermNeed(cfg.AccessLogFile, "访问日志", unix.W_OK)...)
+	needs = append(needs, filePermNeed(cfg.StdoutLogFile, "标准日志(终端+文件双写)", unix.W_OK)...)
 	// 配置落盘(mutable): 配置文件父目录需可写(22:18 事件根因)
 	if cfg.ConfigMode != "ephemeral" && cfgPath != nil && *cfgPath != "" {
 		needs = append(needs, pathNeed{filepath.Dir(*cfgPath), unix.W_OK, "配置文件目录(落盘写)"})

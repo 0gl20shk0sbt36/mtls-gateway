@@ -7,6 +7,7 @@ package main
 
 import (
 	"flag"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"mtls-gateway/internal/certsource"
+	"mtls-gateway/internal/eventlog"
 	"mtls-gateway/internal/relay"
 	"mtls-gateway/internal/relayweb"
 )
@@ -68,6 +70,20 @@ func main() {
 		log.Printf("生成默认配置文件失败: %v (继续用内存默认配置)", cerr)
 	} else if created {
 		log.Printf("已生成默认配置文件 %s; 请填写 server_addr / admin_addr(或经 WebUI 配置)后重启", cfgPath)
+	}
+	// 运行日志(隧道/证书/连接事件等 log.Printf): 终端 + 文件双写(文本滚动文件)
+	// log_file 配置空 → 用分平台默认路径(开箱即有日志); 显式禁用不提供(运行日志必要)
+	stdLog, err := eventlog.NewText(relay.ResolveLogPath(mgr.Config().LogFile), 10, 5)
+	if err != nil {
+		log.Printf("stdout log: %v (仅终端)", err)
+	}
+	defer func() {
+		if stdLog != nil {
+			stdLog.Close()
+		}
+	}()
+	if stdLog != nil {
+		log.SetOutput(io.MultiWriter(os.Stderr, stdLog.TextWriter())) // 双写: 终端 + relay.log
 	}
 	// 错误消息语言(配置 lang; 默认 zh)
 	if cfg := mgr.Config(); cfg.Lang != "" {

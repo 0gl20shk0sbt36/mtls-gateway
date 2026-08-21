@@ -159,3 +159,64 @@ func TestStatusWriterHijackRecords101(t *testing.T) {
 		t.Fatalf("status = %d, want 101", sw.Status())
 	}
 }
+
+// 第二十九批: 文本模式(NewText/WriteString/TextWriter) — 标准日志落盘 + io.Writer 适配
+func TestTextModeWriteAndWriter(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "stdout.log")
+	l, err := NewText(path, 1, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+
+	l.WriteString("first line")
+	l.WriteString("second line\n")
+	// io.Writer 适配(双写场景: log.SetOutput(io.MultiWriter(os.Stderr, l.TextWriter())))
+	if w := l.TextWriter(); w == nil {
+		t.Fatal("TextWriter 不应为 nil")
+	} else if n, err := w.Write([]byte("via writer\n")); err != nil || n != 11 {
+		t.Fatalf("writer write: n=%d err=%v", n, err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(data)
+	for _, want := range []string{"first line\n", "second line\n", "via writer\n"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("文本日志应含 %q: %q", want, got)
+		}
+	}
+}
+
+// 第二十九批: 文本模式滚动(超限 → .1)
+func TestTextModeRotate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "stdout.log")
+	l, err := NewText(path, 1, 2) // 1MB 上限, 2 份历史
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	line := strings.Repeat("x", 512*1024) // 512KB
+	l.WriteString(line)
+	l.WriteString(line)
+	l.WriteString(line)
+	if _, err := os.Stat(path + ".1"); err != nil {
+		t.Fatalf("超限应滚动出 .1: %v", err)
+	}
+}
+
+// 第二十九批: 文本模式空路径 = 禁用(nil), WriteString 安全
+func TestTextModeDisabled(t *testing.T) {
+	l, err := NewText("", 1, 1)
+	if err != nil || l != nil {
+		t.Fatalf("空路径应返回 nil,nil: l=%v err=%v", l, err)
+	}
+	if l != nil {
+		l.WriteString("x") // 不 panic
+	}
+	if w := (*Logger)(nil).TextWriter(); w != nil {
+		t.Fatal("nil Logger 的 TextWriter 应为 nil")
+	}
+}

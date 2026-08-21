@@ -31,6 +31,7 @@ import (
 	"mtls-gateway/internal/db"
 	"mtls-gateway/internal/eventlog"
 	"mtls-gateway/internal/i18n"
+	"mtls-gateway/internal/logging"
 	"mtls-gateway/internal/pathutil"
 	"mtls-gateway/internal/proxy"
 )
@@ -132,6 +133,19 @@ func main() {
 			accLog.Close()
 		}
 	}()
+	// 标准日志(认证/启动/隧道/错误等 log.Printf): 终端 + 文件双写(文本滚动文件)
+	stdLog, err := eventlog.NewText(cfg.StdoutLogFile, cfg.LogMaxSizeMB, cfg.LogMaxFiles)
+	if err != nil {
+		log.Printf("stdout log: %v (仅终端)", err)
+	}
+	defer func() {
+		if stdLog != nil {
+			stdLog.Close()
+		}
+	}()
+	if stdLog != nil {
+		log.SetOutput(io.MultiWriter(os.Stderr, stdLog.TextWriter())) // 双写: 终端(systemd journal) + stdout.log
+	}
 	if evLog != nil {
 		evLog.Write(eventlog.Event{Type: "start", Msg: "mtls-gw 启动"})
 	}
@@ -736,8 +750,9 @@ type Config struct {
 	DefaultDays   int                `toml:"default_days"` // 普通证书默认天数
 	AdminDays     int                `toml:"admin_days"`   // 管理角色证书默认天数
 	RequireIPBind *bool              `toml:"require_ip_bind"`
-	LogFile       string             `toml:"log_file"`        // 事件日志(系统/配置/证书操作); 空=关
-	AccessLogFile string             `toml:"access_log_file"` // 访问日志(大量, 单独文件); 空=关
+	LogFile       string             `toml:"log_file"`        // 事件日志(系统/配置/证书操作); 空=默认分平台路径
+	AccessLogFile string             `toml:"access_log_file"` // 访问日志(大量, 单独文件); 空=默认分平台路径
+	StdoutLogFile string             `toml:"stdout_log_file"` // 标准日志(终端+文件双写: 认证/隧道/错误等 log.Printf); 空=默认分平台路径
 	LogMaxSizeMB  int                `toml:"log_max_size"`    // 单文件上限 MB (默认 10)
 	LogMaxFiles   int                `toml:"log_max_files"`   // 保留历史份数 (默认 5)
 	Roles         []string           `toml:"roles"`           // 角色声明列表(服务 roles / 签发 purposes 必须在此声明)
@@ -774,6 +789,9 @@ func DefaultConfig() Config {
 		OU:            "device",
 		DefaultDays:   365,
 		AdminDays:     30,
+		LogFile:       logging.DefaultPath("mtls-gw", "events.log"), // 事件日志: 分平台默认(Windows=exe 目录 / Linux=用户缓存)
+		AccessLogFile: logging.DefaultPath("mtls-gw", "access.log"), // 访问日志: 分平台默认
+		StdoutLogFile: logging.DefaultPath("mtls-gw", "stdout.log"), // 标准日志(终端+文件双写): 分平台默认
 		LogMaxSizeMB:  10,
 		LogMaxFiles:   5,
 		Roles:         []string{},

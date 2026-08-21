@@ -20,17 +20,28 @@ import (
 
 // Logger 事件日志(滚动 writer)
 type Logger struct {
-	mu      sync.Mutex
-	path    string
-	maxSize int64 // 单文件上限(字节)
-	maxFile int   // 保留份数(不含当前)
-	f       *os.File
-	size    int64
+	mu       sync.Mutex
+	path     string
+	maxSize  int64 // 单文件上限(字节)
+	maxFile  int   // 保留份数(不含当前)
+	f        *os.File
+	size     int64
+	textMode bool // true=纯文本行(标准日志); false=JSON 事件行
 }
 
-// New 打开事件日志; path 为空 → 返回 nil(禁用)
+// New 打开事件日志(JSON 行式); path 为空 → 返回 nil(禁用)
 // maxSizeMB: 单文件上限 MB; maxFiles: 保留的历史份数
 func New(path string, maxSizeMB, maxFiles int) (*Logger, error) {
+	return open(path, maxSizeMB, maxFiles, false)
+}
+
+// NewText 打开纯文本日志(标准 log 输出落盘, 与 JSON 事件日志同滚动策略);
+// path 为空 → 返回 nil(禁用)。
+func NewText(path string, maxSizeMB, maxFiles int) (*Logger, error) {
+	return open(path, maxSizeMB, maxFiles, true)
+}
+
+func open(path string, maxSizeMB, maxFiles int, textMode bool) (*Logger, error) {
 	if path == "" {
 		return nil, nil
 	}
@@ -45,7 +56,7 @@ func New(path string, maxSizeMB, maxFiles int) (*Logger, error) {
 			return nil, fmt.Errorf("eventlog mkdir: %w", err)
 		}
 	}
-	l := &Logger{path: path, maxSize: int64(maxSizeMB) << 20, maxFile: maxFiles}
+	l := &Logger{path: path, maxSize: int64(maxSizeMB) << 20, maxFile: maxFiles, textMode: textMode}
 	if err := l.open(); err != nil {
 		return nil, err
 	}
@@ -109,7 +120,42 @@ func (l *Logger) Write(ev Event) {
 	if err != nil {
 		return
 	}
-	b = append(b, '\n')
+	l.appendLine(append(b, '\n'))
+}
+
+// WriteString 写一行纯文本(标准日志输出; 自动补换行)
+func (l *Logger) WriteString(s string) {
+	if l == nil {
+		return
+	}
+	if s == "" {
+		return
+	}
+	if s[len(s)-1] != '\n' {
+		s += "\n"
+	}
+	l.appendLine([]byte(s))
+}
+
+// textWriter 把 Logger 适配为 io.Writer(文本模式, 供 log.SetOutput 双写)。
+// 不能直接实现 io.Writer: 与 Write(Event) 签名冲突。
+type textWriter struct{ l *Logger }
+
+func (w textWriter) Write(p []byte) (int, error) {
+	w.l.WriteString(string(p))
+	return len(p), nil
+}
+
+// TextWriter 返回把 Logger 当 io.Writer 的适配器(文本模式); l 为 nil 返回 nil。
+func (l *Logger) TextWriter() io.Writer {
+	if l == nil {
+		return nil
+	}
+	return textWriter{l}
+}
+
+// appendLine 追加一行(文本或 JSON), 超限滚动
+func (l *Logger) appendLine(b []byte) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.f == nil {

@@ -33,8 +33,10 @@ config_mode = "mutable"               # 配置模式: mutable(落盘,默认) | e
 lang = "zh"                           # 错误消息语言: zh | en
 
 # ---- 日志(事件型, 不记录数据内容) ----
-log_file = "/var/log/mtls-gw/events.log"       # 系统/配置变更/证书签发吊销事件; 空=关
-access_log_file = "/var/log/mtls-gw/access.log" # 访问日志(大量, 单独文件): 证书/时间/通道/方法/路径/状态/字节
+# 未配置时用分平台默认路径: Windows=exe 同目录 / Linux=~/.cache/mtls-gw
+log_file = "/var/log/mtls-gw/events.log"       # 系统/配置变更/证书签发吊销事件; 空=默认分平台路径
+access_log_file = "/var/log/mtls-gw/access.log" # 访问日志(大量, 单独文件): 证书/时间/通道/方法/路径/状态/字节; 空=默认分平台路径
+stdout_log_file = "/var/log/mtls-gw/stdout.log" # 标准日志(认证/启动/错误等 log.Printf, 终端+文件双写); 空=默认分平台路径
 log_max_size = 10                    # 单文件上限 MB
 log_max_files = 5                    # 保留历史份数(滚动)
 

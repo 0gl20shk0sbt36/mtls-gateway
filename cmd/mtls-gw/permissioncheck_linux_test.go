@@ -34,6 +34,7 @@ func permsOKConfig(t *testing.T) (Config, string) {
 	cfg.SockPath = filepath.Join(dir, "mtls.sock")
 	cfg.LogFile = filepath.Join(dir, "events.log")
 	cfg.AccessLogFile = filepath.Join(dir, "access.log")
+	cfg.StdoutLogFile = filepath.Join(dir, "stdout.log")
 	cfgPath = &dir // 配置目录(可写)
 	return cfg, dir
 }

@@ -13,7 +13,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
+
+	"mtls-gateway/internal/logging"
 )
 
 // CertSel 证书选择 (一证书可复用于多条隧道)
@@ -69,6 +70,7 @@ type RelayConfig struct {
 	ListenHost        string   `json:"listen_host"`                   // 本地监听地址, 默认 127.0.0.1
 	ServerCAFile      string   `json:"server_ca,omitempty"`           // 网关 CA 文件路径 (验证网关服务器证书; 空=系统根)
 	CertDir           string   `json:"cert_dir,omitempty"`            // 客户端证书源: 空=系统证书库; 非空=目录文件源(dir, 每子目录一个证书)
+	LogFile           string   `json:"log_file,omitempty"`            // 运行日志(隧道/证书/连接事件, 终端+文件双写); 空=默认分平台路径
 	WebUILogFile      string   `json:"webui_log_file,omitempty"`      // WebUI 界面事件日志(短时大量, 单独文件); 空=关
 	WebUILogMaxSizeMB int      `json:"webui_log_max_size,omitempty"`  // 单文件上限 MB (默认 10)
 	WebUILogMaxFiles  int      `json:"webui_log_max_files,omitempty"` // 保留份数 (默认 5)
@@ -98,19 +100,23 @@ func LoadConfig(path string) (RelayConfig, error) {
 	return cfg, nil
 }
 
-// DefaultWebUILogPath 返回 WebUI 事件日志的默认路径(分平台):
-// Windows = exe 同目录(便携式); Linux/其他 = XDG cache 目录(不污染安装目录)
+// DefaultLogPath 返回组件运行日志的默认路径(分平台, 经 internal/logging 统一):
+// Windows = exe 同目录(便携式); Linux/其他 = 用户缓存目录(不污染安装目录)。
+func DefaultLogPath() string {
+	return logging.DefaultPath("mtls-relay", "relay.log")
+}
+
+// ResolveLogPath 解析运行日志路径: 配置空 → 分平台默认路径(运行日志必要, 不提供禁用)
+func ResolveLogPath(configured string) string {
+	if configured == "" {
+		return DefaultLogPath()
+	}
+	return configured
+}
+
+// DefaultWebUILogPath 返回 WebUI 事件日志的默认路径(分平台, 与运行日志同目录)
 func DefaultWebUILogPath() string {
-	if runtime.GOOS == "windows" {
-		if exe, err := os.Executable(); err == nil {
-			return filepath.Join(filepath.Dir(exe), "webui.log")
-		}
-		return "webui.log"
-	}
-	if dir, err := os.UserCacheDir(); err == nil {
-		return filepath.Join(dir, "mtls-relay", "webui.log")
-	}
-	return filepath.Join(os.TempDir(), "mtls-relay-webui.log")
+	return logging.DefaultPath("mtls-relay", "webui.log")
 }
 
 // EnsureDefaultConfig 配置文件不存在时自动生成默认配置模板(首次启动初始化)。
@@ -123,7 +129,8 @@ func EnsureDefaultConfig(path string) (bool, error) {
 	}
 	def := RelayConfig{
 		ListenHost:   DefaultListenHost,
-		WebUILogFile: DefaultWebUILogPath(), // 分平台默认日志路径; 空=禁用
+		LogFile:      DefaultLogPath(),      // 运行日志(终端+文件双写): 分平台默认路径
+		WebUILogFile: DefaultWebUILogPath(), // WebUI 事件日志: 分平台默认路径; 空=禁用
 		Tunnels:      []Tunnel{},
 	}
 	if err := SaveConfig(path, def); err != nil {
