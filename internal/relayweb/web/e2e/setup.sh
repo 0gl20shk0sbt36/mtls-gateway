@@ -3,6 +3,9 @@
 # 用法: ./setup.sh [工作目录]   (默认 /tmp/mtls-e2e-ci; 每次全新重建, 不保留旧环境)
 set -euo pipefail
 D="${1:-/tmp/mtls-e2e-ci}"
+# 先解析脚本绝对路径(必须在 cd "$D" 之前: 否则相对路径调用时 BASH_SOURCE 失效)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
 # 清理旧环境(端口占用/残留文件), 保证可重复运行
 for port in 46987 46990 46991 46992 46993 46998 46999 47991; do
   fuser -k "${port}/tcp" 2>/dev/null || true
@@ -11,8 +14,6 @@ rm -rf "$D"
 mkdir -p "$D/certs"
 cd "$D"
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
 echo "repo: $REPO"
 
 # ---- 1. 构建二进制(CI 里 Go 可用; 本地也可直接用) ----
