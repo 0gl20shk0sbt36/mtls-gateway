@@ -354,3 +354,25 @@ test("13. 语言切换 zh/en 生效", async () => {
 test("14. 全程零 JS 错误", () => {
   assert.deepEqual(errors, [], `存在 JS 错误: ${errors.join(" | ")}`);
 });
+
+test("15. 连接设置: 读取 → 修改保存 → 热重载生效", async () => {
+  await page.goto(URL);
+  await page.waitForTimeout(800);
+  const sa = await page.inputValue("#setServerAddr");
+  assert.ok(sa.includes(":"), `连接设置卡片应显示 server_addr(当前: ${sa})`);
+  const adminAddr = await page.inputValue("#setAdminAddr");
+  assert.ok(adminAddr.includes(":"), `应显示 admin_addr(当前: ${adminAddr})`);
+  // 修改 server_addr → 保存(热重载)
+  await page.fill("#setServerAddr", "127.0.0.1:46999");
+  await page.click("#btnSaveSettings");
+  await page.waitForTimeout(900);
+  const hint = await page.textContent("#settingsHint");
+  assert.ok(hint && hint.trim(), "保存后应有成功提示(热重载)");
+  // 服务端确认已落盘(经 /api/settings 读回)
+  const res = await page.evaluate(() => fetch("/api/settings").then((r) => r.json()));
+  assert.ok(res.server_addr === "127.0.0.1:46999", `落盘 server_addr 应为新值, got ${res.server_addr}`);
+  // 恢复原值(避免影响环境)
+  await page.fill("#setServerAddr", sa);
+  await page.click("#btnSaveSettings");
+  await page.waitForTimeout(600);
+});
