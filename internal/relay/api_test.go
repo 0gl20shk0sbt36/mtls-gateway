@@ -335,3 +335,33 @@ func TestWriteErrHTTP2xxFallsBack(t *testing.T) {
 		t.Fatalf("HTTP 2xx should fall back to keyword (404), got %d", rec.Code)
 	}
 }
+
+// UpdateSettings: 连接设置更新 + 落盘 + tunnels 保持 [] 而非 null
+func TestUpdateSettings(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "config.json")
+	m, err := NewManager(nil, cfgPath)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	sa, aa, lh, lang := "gw.example:9499", "gw.example:9444", "0.0.0.0", "en"
+	if err := m.UpdateSettings(SettingsPatch{ServerAddr: &sa, AdminAddr: &aa, ListenHost: &lh, Lang: &lang}); err != nil {
+		t.Fatalf("UpdateSettings: %v", err)
+	}
+	cfg := m.Config()
+	if cfg.ServerAddr != sa || cfg.AdminAddr != aa || cfg.ListenHost != lh || cfg.Lang != lang {
+		t.Fatalf("cfg 未更新: %+v", cfg)
+	}
+	// 落盘验证: 字段写入 + tunnels 为 [] 而非 null
+	raw, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	for _, want := range []string{sa, aa, lh, lang} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("落盘配置缺 %q: %s", want, raw)
+		}
+	}
+	if !strings.Contains(string(raw), `"tunnels": []`) {
+		t.Errorf("落盘 tunnels 应为 []: %s", raw)
+	}
+}

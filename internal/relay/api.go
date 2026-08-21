@@ -110,7 +110,11 @@ func (m *Manager) UpdateSettings(p SettingsPatch) error {
 		m.cfg.Lang = *p.Lang
 	}
 	cfg := m.cfg
-	cfg.Tunnels = append([]Tunnel(nil), m.cfg.Tunnels...)
+	tuns := m.cfg.Tunnels
+	if tuns == nil {
+		tuns = []Tunnel{}
+	}
+	cfg.Tunnels = append([]Tunnel{}, tuns...) // 从非 nil 空数组开始 append, 保持 "tunnels": [] 而非 null
 	np := m.noPersist
 	m.mu.Unlock()
 
