@@ -257,3 +257,59 @@ DNS rebinding 防护、server_ca 拒绝降级、管理 API 强制 loopback、403
 ### 最终状态
 - `go test -race ./...` 全绿 / gofmt+vet 净 / E2E 14/14 / 前端单测 8/8
 - 安全面第 19 批起达标
+
+---
+
+## flash 审计发现 → 修复落地(第 29 批之后)
+
+flash 两轮审计报的 11 项问题全部修复:
+
+| 问题 | 修复 |
+|---|---|
+| 🔴 数字型 mapping ID 歧义(权限错配) | 先按 id 精确匹配再回退索引, 抽 `resolveChannelIndex` |
+| 🔴 AddTunnel 启动失败吞错(谎报 ok) | 如实上报(未启动=不算错) |
+| 🔴 mutable 落盘失败静默 | 8 处 persist 改返回 error |
+| 🔴 randPassword 熵源 Fatalf 杀进程 | 改返回 error |
+| 🔴 `m.relay.L` 裸读 data race | 改 `lang()` 锁内读 |
+| 🔴 TLS 握手无超时 | 握手加 timeout |
+| 🔴 admin_role 热更新绕过 + 配 any | rebuild 统一校验 + AddRole/loadConfig 拒绝 |
+| 🔴 转发头清理不全 | SanitizeHeader 补 5 个转发头 + 测试 |
+| Origin scheme 硬编码 / 尾斜杠前缀 / 前端 {adminRole} | target.Scheme / parseListen 去尾斜杠 / applyI18n 替换 |
+| 🔴 隧道同端口多路径重复 bind(修吞错暴露的既有缺陷) | 整口占用时路径 route 复用 listener |
+| go:embed 打包 test/e2e 进二进制 | 显式列 4 个运行时文件 |
+| Google Fonts 外链(隐私外泄) | 自托管 latin 子集 woff2 |
+| 两个 CLI 整包零测试 | 14 例黑盒测试(编译子进程 + 假 daemon) |
+
+---
+
+## 并发正确性 + 资源生命周期专项(flash 横向扫 → pro 深挖 → 修)
+
+**flash 横向扫出 L2×4 + L3×8; pro 深挖逐条验证(纠正 flash 两处过度判断)。**
+
+### 确认并修复的 3 条 L2
+1. 🔴 **端口复用顺序反转**(flash修复⑤引入的双向缺陷): 复用=no-op, 路径在前则整口语义丢、整口在前则路径语义丢; 删宿主不重建。修: ①`tunnelRoutes` 整口优先稳定排序 ②宿主删除后复用 route 重建 ③`listener==nil` 状态标 Running=false(不再虚报)
+2. 🔴 **僵尸上游**: stop() 只关本地连接不关 upstream, copy goroutine 在上游不响应 FIN 时阻塞(生产默认 idle=120s 是有界残留, idle≤0 才永久)。修: upstream 纳入 `rt.conns` 关闭集合
+3. 🔴 **连接泄漏**: Discover/AdminClient 每次新建无 IdleConnTimeout 的 Transport(有界 ≤60s)。修: 加 `IdleConnTimeout` + `CloseIdleConnections` + AdminClient.Close
+
+### pro 深挖的关键纠正
+- flash 报"永久 goroutine 泄漏"→ 实为"生产默认 idle=120s 有界残留"(idle≤0 仅测试可达)
+- flash 报"无 IdleConnTimeout 泄漏"→ 实为"≤服务端 IdleTimeout 60s 有界"
+
+### L3(未修, 记录)
+锁粒度(Reload 持大锁/persist 持锁 IO/db 写锁 SQLite)、循环内 time.After 未 Stop、优雅退出不彻底、每请求重建 ServeMux、eventlog rotate 失败静默、HTTP 反代每 60s 重建 Transport。
+
+---
+
+## 可读性/可维护性专项(flash 横向扫 → 修)
+
+### P1 高优先级(4 条全修)
+1. 手写标准库替代: `containsCI`/`lowerExt` → `strings.EqualFold`/`filepath.Ext`(删 30 行 + 修 ASCII-only 不支持 Unicode)
+2. deprecated API(`x509.IsEncryptedPEMBlock`/`DecryptPEMBlock`): 加迁移注释(DEK-Info 加密私钥暂无标准替代)
+3. 错误本地化三套机制: gwErr 注释如实描述(只认 errImmutable + 三处分散的坑)
+4. host:port/listen 解析多份: relay 包内统一(stripPort 复用 + splitListen 抽取)
+
+### P2 低风险(4 项已修)
+角色交集 `Allows`/`rolesMatch` 合一、证书加载 `loadCert`/`loadCertLang` 合一、两个 CLI 的 HTTP 客户端三份 → 抽 `do()`、http.Serve 退出日志噪音。
+
+### P2 高风险(未修, 见 TODO.md)
+http.Server 三段复制、configmgr 9 CRUD 模板、DTO 复制、角色名校验 4 份、路径拼接两包、ResponseWriter 两份、原子写两处、跨端 tunnel key 格式耦合 —— 均为"重复代码"型债, 不影响功能, 跨包重构收益递减风险递增。

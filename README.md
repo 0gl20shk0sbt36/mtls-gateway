@@ -190,7 +190,7 @@ relay 自带 WebUI(`--listen-admin :28083`):
 ## 5. 测试
 
 ```bash
-go test -race ./...          # Go 单测/集成(130+ 测试函数, -race 全绿)
+go test -race ./...          # Go 单测/集成(178 个测试函数, -race 全绿)
 go vet ./...
 gofmt -l cmd internal        # 应为空(CI 强制)
 
@@ -224,4 +224,4 @@ node --test internal/relayweb/web/e2e/*.test.mjs   # 14 例
 
 ## 7. 审计历史
 
-完整的 pro 审计变更记录见 [docs/AUDIT-CHANGELOG.md](./docs/AUDIT-CHANGELOG.md)(28 批 × 3 专项, 修复 20+ 真实 bug + 20+ 安全加固)。
+完整的审计变更记录见 [docs/AUDIT-CHANGELOG.md](./docs/AUDIT-CHANGELOG.md)(31 批 pro × 3 专项 + 2 轮 flash 横向扫描, 修复 30+ 真实 bug + 25+ 安全加固)。未完成项见 [TODO.md](./TODO.md)。

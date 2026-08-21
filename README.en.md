@@ -1,294 +1,227 @@
 # mtls-gw — Generic mTLS Gateway
 
-A generic access gateway based on mTLS client certificates. Provides **device-level authentication + purpose-based routing** for self-hosted services. Not tied to any specific application — reuse it for any backend.
+A **generic access gateway** built on mTLS client certificates: device-level authentication + role-based routing. Not tied to any specific application — reuse it for any self-hosted service.
+
+## Architecture in One Line
+
+**Certificate = identity, SQLite = authorization.** Every request passes two gates: ① TLS chain verification (CA-signed) ② database registration (serial present + not revoked + not expired). **Memory is authoritative**: the full DB is loaded into a map at startup, request verification reads memory only (zero I/O), and mutations write through to the DB.
 
 ```
-device (holds device cert)
-  → [mtls-gw] (mTLS verify + IP check + authorization + routing)
-      ├─ app-a → http://127.0.0.1:3080
-      ├─ app-b → http://127.0.0.1:8081   (add one config line for each app)
-      └─ /admin/* → management API (admin cert only)
+client (holds device cert) ──mTLS──▶ mtls-gw ──▶ backend service
+                                     │
+                                     ├─ /info port: service discovery (any registered cert)
+                                     ├─ admin port: issue/revoke/config (admin_role cert only)
+                                     └─ business port: mappings routing + services role authz
 ```
 
 ---
 
 ## 1. Core Design
 
-### 1.1 Cert = Identity, Database = Permissions (separation of concerns)
+### 1.1 Certificate = Identity, DB = Authorization (separation of concerns)
 
-| Layer | Carries | Notes |
-|-------|---------|-------|
-| **Certificate** | Identity | serial (unique primary key) + SAN bound to device IP |
-| **SQLite** | Permissions | serial → {name, purposes[], status, expires} |
+- The certificate contains **no purpose/permission fields**; authorization lives entirely in SQLite. Revoke or change permissions by editing the DB — no re-issuing.
+- The cert SAN is bound to the device IP (TS IP); copying the private key to another device is rejected on IP mismatch (`require_ip_bind=true`).
+- One cert can hold **multiple roles** (`roles` list); one role can access multiple services.
 
-- The certificate contains **no purpose/permission fields** — admin checks rely entirely on the database, never on cert CN/fields
-- Purposes are a list: `admin` / `app-a` / any future purpose
-- Revoking/changing permissions only touches the database — no re-issuing certificates
+### 1.2 Mapping & Authorization Model (two tables)
 
-### 1.2 Verification Flow (per request)
+**mappings (channels)** = the unique routing entity, deduplicated by `listen`:
 
-```
-1. TLS handshake → chain verification (ClientCAs = trusted CA pool)
-   └─ minimum bar only: cert must be signed by a trusted CA, but that alone grants nothing
-2. IP pre-check: cert SAN IP == source IP? mismatch → reject immediately (no DB access)
-   └─ anti key-copy: cert copied to another device fails the source-IP check
-3. In-memory lookup: serial → record (nanoseconds, zero I/O)
-   ├─ serial not in DB → reject (signed by CA but unregistered = denied)
-   ├─ status=revoked → reject
-   └─ expired → reject
-4. Authorize by purposes → route to backend
+```toml
+[[mappings]]
+id = "dsh-main"                    # mnemonic (referenced by services)
+listen = ":9443"                   # entry :port[/path]
+target = "http://127.0.0.1:3080"   # backend URL (URL path = prefix rewrite, nginx proxy_pass semantics)
 ```
 
-> Security model is a **double gate**: ① chain verification (CA-signed) ② database registration (serial in table).
-> Either alone is insufficient — CA-signed but unregistered, or registered but not signed by this CA, both rejected.
+**services** = every service must be declared; authorization by role intersection:
 
-### 1.3 Memory as Authority (performance)
-
-- On startup, load all of SQLite → in-memory map (serial → record)
-- **Request verification hits memory only** (nanosecond, no disk)
-- Mutations (issue/revoke) update memory + persist to SQLite
-- Small dataset (dozens of certs), no cache-consistency issues
-
-### 1.4 Management Channels
-
-| Channel | Use | Auth |
-|---------|-----|------|
-| Unix socket | local CLI | file mode 600 = direct admin |
-| TCP (mTLS) | remote web panel (future) | admin-purpose cert |
-
-### 1.5 Host/Origin Rewrite (no backend changes needed)
-
-mtls-gw rewrites `Host` and `Origin` to the backend's loopback address:
-
-```
-browser request: Host: gw.example:9443, Origin: https://gw.example:9443
-mtls-gw rewrite → Host: 127.0.0.1:3080, Origin: https://127.0.0.1:3080
-backend trust fence: sees loopback → privileged methods pass naturally
+```toml
+[[services]]
+name = "dsh"
+channels = ["dsh-main"]            # this service's channels (mapping ids)
+roles = ["dsh"]                    # roles allowed; "any" = any registered cert
 ```
 
-→ **No backend source changes, upgrade-safe**
+Authorization rule: after a request hits a mapping, it is allowed only if the cert's `roles` intersect the union of `roles` of all services referencing that mapping (or contain `any`); otherwise 403.
+
+### 1.3 Routing & Forwarding
+
+- Same-port multi-path uses **longest-prefix matching**; no path = whole-port fallback.
+- Prefix rewrite: strip the `listen` path prefix, replace with the `target` path prefix.
+- **Host/Origin auto-rewritten** to the backend loopback address — no need to touch the backend's trust fence.
+- WebSocket pass-through (Hijacker).
+- Request path normalized before matching (strips `..`/`.` dot-segments + backslashes, prevents path traversal).
+
+### 1.4 Verification Flow (per request)
+
+1. mTLS handshake (TLS 1.2+, client cert chain verified against CA)
+2. IP pre-check (cert SAN IP == source IP, when `require_ip_bind=true`)
+3. serial lookup in the in-memory table (present + `enabled` + not expired)
+4. mapping match + role authorization
+5. reverse-proxy forward
+
+### 1.5 Dual Management Channel
+
+| Channel | Access | Permission |
+|---|---|---|
+| Unix socket (local CLI) | file perms 600 | direct admin (Linux only) |
+| TCP admin API | mTLS cert | `admin_role` cert only |
+
+The CLI and Web panel are **peer shells** of the management API; the Web panel never calls the CLI directly.
 
 ---
 
-## 2. Deployment
+## 2. Quick Start
 
 ### 2.1 Build
 
 ```bash
-cd mtls-gateway
-go build -o mtls-gw ./cmd/mtls-gw
-go build -o mtls-gw-cli ./cmd/mtls-gw-cli
+go build ./cmd/mtls-gw ./cmd/mtls-gw-cli ./cmd/mtls-relay
 ```
 
-### 2.2 Install
+### 2.2 Configure
 
 ```bash
-sudo cp mtls-gw /usr/local/bin/
-sudo cp mtls-gw-cli /usr/local/bin/
-sudo mkdir -p /var/lib/mtls-gw/certs
-sudo chown -R $(whoami):$(whoami) /var/lib/mtls-gw
-sudo mkdir -p /etc/mtls-gw
+cp config.example.toml /etc/mtls-gw/config.toml
+# edit: fill CA/cert paths, mappings, services
 ```
 
-### 2.3 Config `/etc/mtls-gw/config.json`
+Full field reference in [config.example.toml](./config.example.toml). Core fields:
+
+| Field | Meaning |
+|---|---|
+| `bind_host` | bind address for all listeners (business/admin/discovery) |
+| `ca` / `ca_key` | CA cert/key (for issuing; key 600) |
+| `server_cert` / `server_key` | gateway's own TLS cert |
+| `admin_role` | built-in admin role name (default `mtls-superadmin`; avoid common names) |
+| `admin_listen` | admin API port (admin_role cert only) |
+| `info_listen` | `/info` discovery port (any registered cert) |
+| `config_mode` | `mutable` (persist, default) / `ephemeral` (memory only) / `immutable` (read-only) |
+| `lang` | error message language `zh` / `en` (default zh) |
+| `key_type` / `key_bits` | issued key: rsa 2048/3072/4096 or ecdsa 256/384/521 |
+| `default_days` / `admin_days` | default validity for regular/admin certs |
+
+### 2.3 Run
+
+```bash
+/usr/local/bin/mtls-gw -config /etc/mtls-gw/config.toml
+```
+
+### 2.4 Issue a cert (local CLI, Unix socket)
+
+```bash
+mtls-gw-cli -sock /run/mtls-gw/mtls-gw.sock issue \
+  -name dev-laptop -purpose dsh -ts-ip 100.64.0.10
+mtls-gw-cli revoke -serial <serial>
+mtls-gw-cli list
+```
+
+> Windows has no Unix socket; issue via the TCP admin API (requires an admin cert).
+
+---
+
+## 3. Client Integration
+
+### 3.1 Client relay (mtls-relay)
+
+Client devices run the relay daemon: `/info` discovery → per-service local tunnels → WebUI management.
+
+```bash
+mtls-relay -config ~/.mtls-relay/relay.json
+# or via WebUI: pick cert → verify → add service tunnel
+```
+
+relay config (`relay.json`):
 
 ```json
 {
-  "admin_listen": "0.0.0.0:9444",
-  "ca": "/etc/mtls-gw/ca.crt",
-  "ca_key": "/etc/mtls-gw/ca.key",
-  "server_cert": "/etc/mtls-gw/server.crt",
-  "server_key": "/etc/mtls-gw/server.key",
-  "cert_dir": "/var/lib/mtls-gw/certs",
-  "sock_path": "/run/mtls-gw/mtls-gw.sock",
-  "org": "my-org",
-  "ou": "device",
-  "default_days": 365,
-  "admin_days": 30,
-  "require_ip_bind": true,
-  "backends": {
-    "app-a": {
-      "target": "http://127.0.0.1:3080",
-      "listen": "0.0.0.0:9443"
-    }
-  }
+  "server_addr": "gw.example:9499",
+  "admin_addr": "gw.example:9444",
+  "server_ca": "/path/to/ca.crt",
+  "listen_host": "127.0.0.1",
+  "cert": {"source": "dir", "arg": "/path/to/certs"},
+  "tunnels": [
+    {"service": "dsh", "cert_id": "dev-laptop", "routes": [{"channel": ":9443", "local": ":9443"}]}
+  ]
 }
 ```
 
-- `backends`: **purpose → backend**, each with its own `listen` port
-  - one port per purpose; a cert must have that purpose in its list or it gets 403
-- `org` / `ou`: certificate O/OU fields (default "mtls-gw"/"device")
-- `default_days` / `admin_days`: default validity for normal / admin certs
-- `require_ip_bind`: require cert SAN IP to match source IP (default true; set false to allow unbound certs)
+- `server_addr` = `/info` discovery endpoint; `admin_addr` = admin endpoint (cert management, separate)
+- Tunnels are built **per service** (one service = multiple channels); local routes can override port/path
+- Cert rotation / server address changes rebuild tunnels automatically
 
-### 2.4 systemd service `/etc/systemd/system/mtls-gw.service`
+### 3.2 WebUI
 
-```ini
-[Unit]
-Description=mtls-gw — generic mTLS gateway
-After=network-online.target
-Wants=network-online.target
+The relay ships a WebUI (`--listen-admin :28083`):
 
-[Service]
-Type=simple
-User=<run-as-user>
-WorkingDirectory=/home/<user>
-RuntimeDirectory=mtls-gw
-RuntimeDirectoryMode=0750
-ExecStart=/usr/local/bin/mtls-gw -config /etc/mtls-gw/config.json -db /var/lib/mtls-gw/mtls-gw.db -sock /run/mtls-gw/mtls-gw.sock
-Restart=on-failure
-RestartSec=5
+- **Run control + tunnel table** (grouped by service, status/traffic)
+- **Cert picker** (after selecting, `/info` discovers that cert's accessible services)
+- **Add tunnel** (pick service → local routes auto-filled)
+- **Cert management console** (locked by default: pick admin cert → unlock with password → issue/revoke via admin_addr)
 
-[Install]
-WantedBy=multi-user.target
-```
+### 3.3 Browser / Phone
 
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now mtls-gw
-```
+Import the p12 (private key + password) into the browser/phone — no extra software needed.
 
 ---
 
-## 3. CLI Usage
+## 4. Security Model
 
-```bash
-# issue a cert (local = direct admin via Unix socket)
-mtls-gw-cli issue admin --purpose admin --ts-ip <mgmt-ip> --days 30
-mtls-gw-cli issue device-1 --purpose app-a --ts-ip <device-ip> --days 365
-mtls-gw-cli issue device-2 --purpose app-a,app-b --ts-ip <device-ip>   # multi-purpose
-
-# revoke
-mtls-gw-cli revoke <serial>
-
-# list certs
-mtls-gw-cli list
-
-# health
-mtls-gw-cli health
-
-# custom socket path
-mtls-gw-cli --sock /run/mtls-gw/mtls-gw.sock list
-```
-
-**admin rule**: a cert whose purposes include `admin` is **admin-only**:
-- `--purpose admin,dsh` → warning, only `admin` kept
-- `--purpose dsh,admin` → warning, `admin` removed, `dsh` kept
-
-Output files:
-- `/var/lib/mtls-gw/certs/<name>/cert.pem` — certificate
-- `/var/lib/mtls-gw/certs/<name>/key.pem` — private key
-- `/var/lib/mtls-gw/certs/<name>/device.p12` — for browser/mobile import (password printed by CLI)
-
----
-
-## 4. Client Access
-
-### 4.1 Browser (Windows/macOS)
-
-Import the p12 (certmgr or `Import-PfxCertificate`), visit the gateway address, pick the device cert when prompted.
-
-### 4.2 Mobile
-
-- Android: Settings → Security → Install certificate → pick device.p12
-- iOS: transfer p12 → install profile → trust
-
-### 4.3 CLI tools
-
-```bash
-curl --cert cert.pem --key key.pem https://<gateway>:9443/
-```
-
-> Note: Windows schannel has a TLS 1.3 + client-cert compatibility issue (SEC_E_INTERNAL_ERROR).
-> Browsers (BoringSSL) are unaffected; CLI tools should use TLS 1.2 or test with a browser.
-
----
-
-## 5. Security Model
-
-| Threat | Defense |
-|--------|---------|
-| Private key copied to another device | IP pre-check: cert SAN IP ≠ source IP → reject |
-| Cert leaked / device lost | revoke single cert (DB status change, immediate) |
-| Cert expiry | validity set at issue time (short for admin recommended) |
-| Device cert attacks management plane | privilege separation: /admin/* admin-only |
-| Unregistered cert | serial not in memory table → reject |
-| DNS rebinding / CSRF (backend) | Host/Origin rewritten to loopback, fence passes naturally |
+- **Mutual mTLS**: client verifies the gateway CA; gateway verifies the client CA chain
+- **Cert SAN binds IP**: copied private keys rejected on IP mismatch
+- **Least-privilege roles**: cert roles intersect service roles; admin_role certs can only reach the admin API, never business services
+- **Management-plane isolation**: business/admin/discovery on separate ports; admin API independent of business ports
+- **DNS-rebinding protection**: relay admin API enforces loopback + Origin validation
+- **server_ca unavailable → refuse startup**: prevents MITM via downgrade to system roots
+- **Duplicate cert names forbidden**: pre-issue dedup (incl. revoked), prevents same-name confusion
+- **Error redaction**: auth failures return only `forbidden`; details go to the event log only
+- **Timeout/size limits**: ReadTimeout/WriteTimeout/IdleTimeout on all ports + MaxBytesReader 4MB
 
 ### Known Limitations
 
-- **IP-bound network**: SAN binds the device IP; devices must use the bound network (e.g. tailnet) to pass the IP pre-check
-- For multi-network access: add more IPs to the SAN, or use the TrustSource abstraction (below)
+- Windows has no Unix socket; CLI issuing goes through the TCP admin API
+- Cert expiry compared as `yyyy-mm-dd` strings (still valid on the expiry day)
+- Newly issued certs need a gateway reload/restart before `/info` sees them
 
 ---
 
-## 6. Future Work
-
-### 6.1 TrustSource abstraction (planned)
-
-IP pre-check currently binds to a specific network. Planned as a pluggable trust source:
-
-```
-TrustSource (interface) ── authorize(request) → {device identity} | deny
-    ├─ IPBindSource   ← current: SAN IP binding
-    ├─ LanSource      ← LAN IP whitelist
-    └─ (future) other networks...
-```
-
-### 6.2 Web management panel (planned)
-
-Both CLI and web panel are shells of the core process, both calling the core API (web does NOT call the CLI):
-
-```
-core daemon (mtls-gw) ── management API (controlled ops + audit)
-    ├─ CLI (shell)
-    └─ Web panel (shell, admin cert via mTLS)
-```
-
-### 6.3 More backends
-
-Add one entry in `backends`:
-
-```json
-"backends": {
-  "app-a": { "target": "http://127.0.0.1:3080", "listen": "0.0.0.0:9443" },
-  "app-b": { "target": "http://127.0.0.1:8081", "listen": "0.0.0.0:9445" }
-}
-```
-
-Then issue certs with `--purpose app-b`.
-
----
-
-## 7. Unit Tests
+## 5. Tests
 
 ```bash
-go test ./...          # all tests
-go test -v ./...       # verbose
-go test -cover ./...   # coverage
+go test -race ./...          # Go unit/integration (178 test functions, -race green)
+go vet ./...
+gofmt -l cmd internal        # must be empty (enforced by CI)
+
+# frontend
+node --test internal/relayweb/web/test/*.test.js   # 8 unit tests
+# E2E (run setup.sh first to build the environment)
+bash internal/relayweb/web/e2e/setup.sh /tmp/mtls-e2e
+node --test internal/relayweb/web/e2e/*.test.mjs   # 14 tests
 ```
 
-| Package | Coverage | Tests |
-|---------|----------|-------|
-| `internal/db` | CRUD / revoke / overwrite / persistence reload | 3 |
-| `internal/auth` | authorize / IP mismatch / unregistered / revoked / expired / IP-bind on-off | 8 |
-| `internal/api` | issue / template fields / multi-purpose / admin rule / warnings | 10 |
-| `internal/proxy` | routing / unknown purpose 404 / Host rewrite / Origin rewrite / WebSocket | 6 |
-
-27 tests total. Coverage: db 83% / auth 72% / proxy 84% / api ~55%.
-
-Test highlights:
-- tests build a throwaway CA + server cert — no deployment env needed
-- `TestAuthorizeIPMismatch` proves a copied private key is rejected (IP pre-check)
-- `TestHostRewrite` / `TestOriginRewrite` prove header rewriting (the key to zero backend changes)
-- `TestIssueCertAdminNotFirst` proves the admin-removal warning rule
+- Tests build a **temporary CA + server cert** in-test, no deployment dependency.
+- CI (GitHub Actions): build + vet + gofmt + test + race on Go 1.25 + 1.26; tagged releases auto-cross-compile.
 
 ---
 
-## 8. Pitfalls (development notes)
+## 6. Project Layout
 
-1. **Go flag stops at first non-flag arg**: `--purpose admin` after a positional arg is not parsed → classify args manually
-2. **No write access to /run root**: normal user cannot bind a Unix socket there → use systemd `RuntimeDirectory`
-3. **Management API prefix**: use `/admin/` to avoid colliding with backend `/api/` RPC
-4. **Origin must be rewritten too**: rewriting Host only → browser requests get 403
-5. **Old process not restarted**: changed json tags don't take effect until daemon restart
+| Directory | Responsibility |
+|---|---|
+| `cmd/mtls-gw` | server daemon (config parse + multi-port mTLS + admin API) |
+| `cmd/mtls-gw-cli` | local management CLI (Unix socket) |
+| `cmd/mtls-relay` | client relay daemon (/info discovery → tunnels + WebUI) |
+| `internal/db` | SQLite persistence + in-memory authoritative table |
+| `internal/auth` | authorization (IP pre-check + SAN + serial lookup + roles) |
+| `internal/proxy` | reverse proxy (mapping routing + prefix rewrite + Host/Origin rewrite) |
+| `internal/api` | management API (issue/revoke/list + p12) |
+| `internal/relay` | client core (cert source / tunnels / admin bridge) |
+| `internal/relayweb` | client WebUI (go:embed) |
+| `internal/i18n` | zh/en error message tables |
+| `internal/pathutil` | path utilities (dot-segment cleanup) |
+
+## 7. Audit History
+
+Full audit changelog in [docs/AUDIT-CHANGELOG.md](./docs/AUDIT-CHANGELOG.md) (31 pro batches × 3 tracks + 2 flash sweeps; 30+ real bugs + 25+ security hardening). Unfinished items in [TODO.md](./TODO.md).
