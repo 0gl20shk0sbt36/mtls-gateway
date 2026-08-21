@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -82,9 +83,23 @@ usage:
   mtls-gw-cli --sock <path> ...  指定 socket 路径`)
 }
 
-// httpPost 经 Unix socket 发 JSON 请求
-func httpPost(path string, body any) (*http.Response, error) {
-	data, _ := json.Marshal(body)
+// do 经 Unix socket 发请求(method + 可选 JSON body); httpPost/httpGet 的共用实现
+func do(method, path string, body any) (*http.Response, error) {
+	var rdr io.Reader
+	if body != nil {
+		data, err := json.Marshal(body)
+		if err != nil {
+			return nil, err
+		}
+		rdr = bytes.NewReader(data)
+	}
+	req, err := http.NewRequest(method, "http://unix"+path, rdr)
+	if err != nil {
+		return nil, err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	client := &http.Client{
 		Transport: &http.Transport{
 			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
@@ -96,22 +111,16 @@ func httpPost(path string, body any) (*http.Response, error) {
 		},
 		Timeout: 30 * time.Second,
 	}
-	return client.Post("http://unix"+path, "application/json", bytes.NewReader(data))
+	return client.Do(req)
+}
+
+// httpPost 经 Unix socket 发 JSON 请求
+func httpPost(path string, body any) (*http.Response, error) {
+	return do("POST", path, body)
 }
 
 func httpGet(path string) (*http.Response, error) {
-	client := &http.Client{
-		Transport: &http.Transport{
-			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-				return net.Dial("unix", sockPath)
-			},
-			Dial: func(_, _ string) (net.Conn, error) {
-				return net.Dial("unix", sockPath)
-			},
-		},
-		Timeout: 30 * time.Second,
-	}
-	return client.Get("http://unix" + path)
+	return do("GET", path, nil)
 }
 
 func issue(args []string) {

@@ -86,8 +86,24 @@ func client() *http.Client {
 
 func url(path string) string { return "http://" + adminAddr + path }
 
-func get(path string) ([]byte, error) {
-	resp, err := client().Get(url(path))
+// do 发请求(method + 可选 JSON body)并读响应体; 非 200 返回带 body 的错误。get/post/deleteT 的共用实现
+func do(method, path string, body any) ([]byte, error) {
+	var rdr io.Reader
+	if body != nil {
+		data, err := json.Marshal(body)
+		if err != nil {
+			return nil, err
+		}
+		rdr = bytes.NewReader(data)
+	}
+	req, err := http.NewRequest(method, url(path), rdr)
+	if err != nil {
+		return nil, err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := client().Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -99,22 +115,13 @@ func get(path string) ([]byte, error) {
 	return b, nil
 }
 
+func get(path string) ([]byte, error) {
+	return do("GET", path, nil)
+}
+
 func post(path string, body any) error {
-	var rdr io.Reader
-	if body != nil {
-		data, _ := json.Marshal(body)
-		rdr = bytes.NewReader(data)
-	}
-	resp, err := client().Post(url(path), "application/json", rdr)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	b, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != 200 {
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
-	}
-	return nil
+	_, err := do("POST", path, body)
+	return err
 }
 
 func must(err error) {
@@ -125,17 +132,8 @@ func must(err error) {
 }
 
 func deleteT(path string) error {
-	req, _ := http.NewRequest("DELETE", url(path), nil)
-	resp, err := client().Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	b, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != 200 {
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
-	}
-	return nil
+	_, err := do("DELETE", path, nil)
+	return err
 }
 
 func certs() {

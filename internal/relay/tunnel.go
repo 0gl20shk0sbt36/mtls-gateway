@@ -107,7 +107,7 @@ func (r *Relay) startTunnel(rt *tunnelRuntime) error {
 			IdleTimeout:       60 * time.Second,
 		}
 		go func() {
-			if err := rt.srv.Serve(ln); err != nil && err != http.ErrServerClosed {
+			if err := rt.srv.Serve(ln); err != nil && err != http.ErrServerClosed && !errors.Is(err, net.ErrClosed) {
 				log.Printf("tunnel[%s] http serve: %v", rt.key, err)
 			}
 		}()

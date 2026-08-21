@@ -260,17 +260,7 @@ func matchPath(p, pref string) bool {
 
 // Allows 判断证书角色是否允许访问该映射(服务 roles 含内置 "any" = 任意已登记证书; 否则并集 ∩ 证书 roles)
 func (r *route) Allows(roles []string) bool {
-	for _, want := range r.roles {
-		if want == "any" {
-			return true
-		}
-		for _, have := range roles {
-			if want == have {
-				return true
-			}
-		}
-	}
-	return false
+	return rolesMatch(r.roles, roles)
 }
 
 // Listen 返回入口端口+路径串(供展示)

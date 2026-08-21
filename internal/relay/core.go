@@ -140,23 +140,9 @@ func (r *Relay) applyServerCA(serverCA string) error {
 	return nil
 }
 
-// loadCert 从来源加载证书(CertID), 命中缓存则复用。
+// loadCert 从来源加载证书(CertID), 命中缓存则复用; 与 loadCertLang 同逻辑(用默认语言)
 func (r *Relay) loadCert(certID string) (tls.Certificate, error) {
-	// 三段式: 锁内查缓存 → 锁外 IO(src.Load) → 锁内写缓存(与 loadCertLang 一致)
-	r.mu.Lock()
-	e, ok := r.certCache[certID]
-	r.mu.Unlock()
-	if ok && time.Since(e.loadedAt) < r.certCacheTTL {
-		return e.cert, nil
-	}
-	c, err := r.src.Load(certID) // 锁外: 磁盘 IO 不阻塞其他 Relay 操作
-	if err != nil {
-		return tls.Certificate{}, localizeLoadErr(r.lang(), certID, err)
-	}
-	r.mu.Lock()
-	r.certCache[certID] = certCacheEntry{cert: c, loadedAt: time.Now()}
-	r.mu.Unlock()
-	return c, nil
+	return r.loadCertLang(certID, "")
 }
 
 // relayDial 建立一条到给定路由上游的 mTLS 连接。
