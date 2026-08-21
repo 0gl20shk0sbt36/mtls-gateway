@@ -193,10 +193,7 @@ func (r *Relay) serverHost() string {
 	r.mu.Lock()
 	addr := r.serverAddr
 	r.mu.Unlock()
-	if h, _, err := net.SplitHostPort(addr); err == nil {
-		return h
-	}
-	return addr
+	return stripPort(addr)
 }
 
 // Start 监听并启动所有隧道。

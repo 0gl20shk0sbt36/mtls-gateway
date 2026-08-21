@@ -147,22 +147,25 @@ func stripPort(addr string) string {
 	return addr
 }
 
-// portOfListen 从 ":9443[/path]" 取端口; 失败返回空串。
-func portOfListen(l string) string {
+// splitListen 从 ":9443[/path]" 拆出 (port, path); 无路径 path=""; 不校验(与 proxy.parseListen 的校验式互补)
+func splitListen(l string) (port, path string) {
 	p := strings.TrimPrefix(strings.TrimSpace(l), ":")
 	if i := strings.IndexByte(p, '/'); i >= 0 {
-		p = p[:i]
+		return p[:i], p[i:]
 	}
+	return p, ""
+}
+
+// portOfListen 从 ":9443[/path]" 取端口; 失败返回空串。
+func portOfListen(l string) string {
+	p, _ := splitListen(l)
 	return p
 }
 
 // pathOfListen 从 ":9443[/path]" 取路径前缀; 无路径返回 ""。
 func pathOfListen(l string) string {
-	p := strings.TrimPrefix(strings.TrimSpace(l), ":")
-	if i := strings.IndexByte(p, '/'); i >= 0 {
-		return p[i:]
-	}
-	return ""
+	_, p := splitListen(l)
+	return p
 }
 
 func firstLine(s string) string {

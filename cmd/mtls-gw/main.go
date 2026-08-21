@@ -395,7 +395,10 @@ func gwErrLang(r *http.Request) *i18n.L {
 	return i18n.New("zh")
 }
 
-// gwErr 输出错误; 已知错误按请求语言重翻, 其余原样; 状态码复用 api.ErrStatus(不再固定 400)
+// gwErr 输出错误; 状态码复用 api.ErrStatus(不再固定 400)。
+// 注意: 目前仅 errImmutable 按请求语言重翻; 其余 configmgr/proxy 的 CRUD 错误是硬编码中文,
+// 完整 i18n 接入属后续工作。错误本地化/状态码机制分散三处(此处 + relay.localizeKnown + api.StatusFromKeywords),
+// 新增错误串时需同步对应处, 否则状态码或翻译会静默漂移。
 func gwErr(w http.ResponseWriter, r *http.Request, err error) {
 	msg := err.Error()
 	l := gwErrLang(r)

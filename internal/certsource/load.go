@@ -7,6 +7,8 @@ import (
 	"encoding/pem"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	pkcs12 "software.sslmate.com/src/go-pkcs12"
 )
@@ -73,35 +75,9 @@ func isGwIssued(cert *x509.Certificate, org string) bool {
 	return false
 }
 
+// containsCI 大小写不敏感子串匹配(复用标准库, 正确处理 Unicode)
 func containsCI(s, sub string) bool {
-	if len(sub) > len(s) {
-		return false
-	}
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if equalFold(s[i:i+len(sub)], sub) {
-			return true
-		}
-	}
-	return false
-}
-
-func equalFold(a, b string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := 0; i < len(a); i++ {
-		ca, cb := a[i], b[i]
-		if 'A' <= ca && ca <= 'Z' {
-			ca += 'a' - 'A'
-		}
-		if 'A' <= cb && cb <= 'Z' {
-			cb += 'a' - 'A'
-		}
-		if ca != cb {
-			return false
-		}
-	}
-	return true
+	return strings.Contains(strings.ToLower(s), strings.ToLower(sub))
 }
 
 // parseCertFromPEM 从 PEM 字节解析第一个证书
@@ -144,6 +120,9 @@ func tlsFromPEMWithPassword(name string, pemBytes []byte, password string) (tls.
 			break
 		}
 		rest = r
+		// 兼容 openssl 传统加密私钥(DEK-Info 头): 仅 x509.DecryptPEMBlock 能解。
+		// 该 API 自 Go 1.16 起 deprecated, 但 Go 标准库暂无替代(go-pkcs12 只处理 p12);
+		// 保留直至官方移除或引入替代。PKCS#8 加密私钥(ENCRYPTED PRIVATE KEY)走 p12。
 		if x509.IsEncryptedPEMBlock(b) {
 			der, err := x509.DecryptPEMBlock(b, []byte(password))
 			if err != nil {
@@ -197,21 +176,5 @@ func loadFilePEMOrP12(path string) (tls.Certificate, error) {
 }
 
 func lowerExt(path string) string {
-	s := ""
-	for i := len(path) - 1; i >= 0; i-- {
-		if path[i] == '.' {
-			s = path[i:]
-			break
-		}
-		if path[i] == '/' || path[i] == '\\' {
-			break
-		}
-	}
-	b := []byte(s)
-	for i := range b {
-		if 'A' <= b[i] && b[i] <= 'Z' {
-			b[i] += 'a' - 'A'
-		}
-	}
-	return string(b)
+	return strings.ToLower(filepath.Ext(path))
 }
