@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -24,8 +25,13 @@ import (
 var version = "dev"
 
 func main() {
+	// 便携式: 默认配置文件放 exe 同目录(config.json), 不写用户文件夹; 显式 -config 优先
+	defCfg := "config.json"
+	if exe, err := os.Executable(); err == nil {
+		defCfg = filepath.Join(filepath.Dir(exe), "config.json")
+	}
 	var (
-		configPath  = flag.String("config", "~/.mtls-relay/config.json", "配置 JSON 路径")
+		configPath  = flag.String("config", defCfg, "配置 JSON 路径 (默认 exe 同目录 config.json)")
 		adminListen = flag.String("listen-admin", "127.0.0.1:18081", "本地管理 API 监听 (loopback)")
 		source      = flag.String("source", "system", "证书来源: system|dir|file")
 		sourceArg   = flag.String("source-arg", "", "dir=目录路径 / file=文件路径 (system 忽略)")

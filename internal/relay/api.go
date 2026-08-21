@@ -81,6 +81,61 @@ func (m *Manager) SetServerAddr(addr string) {
 	m.serverOverride = addr
 }
 
+// SettingsPatch 连接设置的部分更新(指针=该字段要改; nil=不动)
+type SettingsPatch struct {
+	ServerAddr *string `json:"server_addr"`
+	AdminAddr  *string `json:"admin_addr"`
+	ListenHost *string `json:"listen_host"`
+	ServerCA   *string `json:"server_ca"`
+	Lang       *string `json:"lang"`
+}
+
+// UpdateSettings 更新连接设置并热应用: 落盘(noPersist 除外) + lang 立即生效 + 重建隧道
+// (Reload 应用 server_addr/listen_host/server_ca; admin_addr 由 adminAddr() 每次读取, 改 cfg 即生效)
+func (m *Manager) UpdateSettings(p SettingsPatch) error {
+	m.mu.Lock()
+	if p.ServerAddr != nil {
+		m.cfg.ServerAddr = *p.ServerAddr
+	}
+	if p.AdminAddr != nil {
+		m.cfg.AdminAddr = *p.AdminAddr
+	}
+	if p.ListenHost != nil {
+		m.cfg.ListenHost = *p.ListenHost
+	}
+	if p.ServerCA != nil {
+		m.cfg.ServerCAFile = *p.ServerCA
+	}
+	if p.Lang != nil {
+		m.cfg.Lang = *p.Lang
+	}
+	cfg := m.cfg
+	cfg.Tunnels = append([]Tunnel(nil), m.cfg.Tunnels...)
+	np := m.noPersist
+	m.mu.Unlock()
+
+	if !np {
+		if err := SaveConfig(m.cfgPath, cfg); err != nil {
+			return fmt.Errorf("persist config: %w", err)
+		}
+	}
+	if m.relay != nil {
+		if p.Lang != nil {
+			m.relay.SetLang(*p.Lang)
+		}
+		if p.ServerCA != nil {
+			if err := m.relay.SetServerCA(*p.ServerCA); err != nil {
+				return fmt.Errorf("set server_ca: %w", err)
+			}
+		}
+	}
+	// server_addr / listen_host / server_ca 变更 → Reload 重建隧道(热生效)
+	if p.ServerAddr != nil || p.ListenHost != nil || p.ServerCA != nil {
+		return m.reloadTunnels()
+	}
+	return nil
+}
+
 // AddTunnel 新增或覆盖隧道并持久化 (noPersist 时仅内存)
 func (m *Manager) AddTunnel(t Tunnel) error {
 	m.mu.Lock()
@@ -558,6 +613,28 @@ func (m *Manager) Handler() http.Handler {
 		w.Write(raw)
 	})
 
+	mux.HandleFunc("GET /api/settings", func(w http.ResponseWriter, r *http.Request) {
+		cfg := m.Config()
+		writeJSON(w, map[string]any{
+			"server_addr": cfg.ServerAddr,
+			"admin_addr":  cfg.AdminAddr,
+			"listen_host": cfg.ListenHost,
+			"server_ca":   cfg.ServerCAFile,
+			"lang":        cfg.Lang,
+		})
+	})
+	mux.HandleFunc("PUT /api/settings", func(w http.ResponseWriter, r *http.Request) {
+		var p SettingsPatch
+		if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+			writeErr(w, r, fmt.Errorf("bad settings body: %w", err))
+			return
+		}
+		if err := m.UpdateSettings(p); err != nil {
+			writeErr(w, r, err)
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true})
+	})
 	mux.HandleFunc("GET /api/config", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, m.Config())
 	})

@@ -154,6 +154,23 @@
   </div>
 
   <div class="card">
+    <h2 data-i18n="connSettings">连接设置</h2>
+    <div class="row" style="gap:8px;flex-wrap:wrap">
+      <input id="setServerAddr" data-i18n-ph="setServerAddrPh" placeholder="server_addr (如 gw.example:9499)" style="flex:1;min-width:220px">
+      <input id="setAdminAddr" data-i18n-ph="setAdminAddrPh" placeholder="admin_addr (如 gw.example:9444)" style="flex:1;min-width:220px">
+    </div>
+    <div class="row" style="gap:8px;margin-top:6px;flex-wrap:wrap">
+      <input id="setServerCA" data-i18n-ph="setServerCAPh" placeholder="server_ca (CA 文件路径, 空=系统根)" style="flex:1;min-width:220px">
+      <input id="setListenHost" data-i18n-ph="setListenHostPh" placeholder="listen_host (默认 127.0.0.1)" style="flex:1;min-width:140px">
+      <input id="setLang" data-i18n-ph="setLangPh" placeholder="lang (zh/en)" style="width:90px">
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button type="button" class="primary small" id="btnSaveSettings" data-i18n="saveSettings">保存并热重载</button>
+      <span class="hint" id="settingsHint" style="margin-left:10px"></span>
+    </div>
+  </div>
+
+  <div class="card">
     <h2>隧道</h2>
     <table>
       <thead><tr><th data-i18n="thService">服务</th><th data-i18n="thChannel">服务端入口</th><th data-i18n="thLocal">本地路由</th><th data-i18n="thStatus">状态</th><th data-i18n="thConns">连接</th><th data-i18n="thIn">流入</th><th data-i18n="thOut">流出</th><th data-i18n="thOps">操作</th></tr></thead>

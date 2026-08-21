@@ -157,11 +157,42 @@ async function api(path, opts) {
   if (data && data.error) throw new Error(data.error);
   return data;
 }
-const jpost = (body) => ({
-  method: "POST",
+const jreq = (method, body) => ({
+  method,
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify(body),
 });
+const jpost = (body) => jreq("POST", body);
+
+// 连接设置: 页面加载时填充; 保存即热重载(server_addr/listen_host/server_ca 重建隧道, lang 即时切换)
+async function loadSettings() {
+  try {
+    const s = await api("/api/settings");
+    $("setServerAddr").value = s.server_addr || "";
+    $("setAdminAddr").value = s.admin_addr || "";
+    $("setServerCA").value = s.server_ca || "";
+    $("setListenHost").value = s.listen_host || "";
+    $("setLang").value = s.lang || "";
+  } catch (e) { /* 拉不到设置不阻塞 */ }
+}
+
+async function saveSettings() {
+  const body = {
+    server_addr: $("setServerAddr").value.trim(),
+    admin_addr: $("setAdminAddr").value.trim(),
+    server_ca: $("setServerCA").value.trim(),
+    listen_host: $("setListenHost").value.trim(),
+    lang: $("setLang").value.trim(),
+  };
+  try {
+    await api("/api/settings", jreq("PUT", body));
+    $("settingsHint").textContent = t("settingsSaved");
+    setTimeout(() => { $("settingsHint").textContent = ""; }, 3000);
+    loadTunnels(); // 热重载后刷新隧道状态
+  } catch (e) {
+    $("settingsHint").textContent = t("settingsFailed", { e: e.message });
+  }
+}
 
 function fmtBytes(n) {
   if (n == null) return "-";
@@ -315,6 +346,7 @@ async function init() {
   $("btnStart").onclick = async () => { try { await api("/api/start", jpost(null)); toast("已启动"); loadTunnels(); } catch (e) { toast(e.message, true); } };
   $("btnReload").onclick = async () => { try { await api("/api/reload", jpost(null)); toast("已 reload"); loadTunnels(); } catch (e) { toast(e.message, true); } };
   $("btnStop").onclick = async () => { try { await api("/api/stop", jpost(null)); toast("已停止"); loadTunnels(); } catch (e) { toast(e.message, true); } };
+  $("btnSaveSettings").onclick = saveSettings;
   $("addTunnel").onclick = async () => {
     const service = getSel("newServiceList");
     const cert = getSel("adminCertList");
@@ -335,7 +367,7 @@ async function init() {
       refreshServiceList(); // 已添加的服务移出下拉
     } catch (e) { toast(e.message, true); }
   };
-  await Promise.all([loadCerts(), loadTunnels()]);
+  await Promise.all([loadCerts(), loadTunnels(), loadSettings()]);
   setInterval(() => { if (!document.hidden) loadTunnels(); }, 2000); // 状态轮询(页面隐藏时暂停)
 }
 
