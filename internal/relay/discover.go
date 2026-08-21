@@ -45,6 +45,7 @@ func discoverHTTPClient(addr string, cert *tls.Certificate, rootCAs *x509.CertPo
 			ServerName:   stripPort(addr),
 			MinVersion:   tls.VersionTLS12, // 纵深防御: 与服务端/其它客户端一致
 		},
+		IdleConnTimeout: 30 * time.Second, // 空闲连接主动到期回收, 不依赖对端 FIN
 	}
 	return &http.Client{Transport: tr, Timeout: 8 * time.Second}
 }
@@ -85,6 +86,7 @@ func (r *Relay) DiscoverWithCert(cert tls.Certificate) ([]ServiceInfo, error) {
 	}
 	req.Header.Set("Accept", "application/json")
 	cli := discoverHTTPClient(addr, &cert, rootCAs)
+	defer cli.CloseIdleConnections() // 一次性 client 用后释放空闲连接(防 mTLS 连接累积)
 	resp, err := cli.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("relay: discover %s: %w", ep, err)

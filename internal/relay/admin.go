@@ -55,8 +55,18 @@ func NewAdminClient(addr string, cert tls.Certificate, roots *x509.CertPool) *Ad
 					ServerName:   stripPort(addr),
 					MinVersion:   tls.VersionTLS12,
 				},
+				IdleConnTimeout: 30 * time.Second, // 空闲连接主动到期回收
 			},
 		},
+	}
+}
+
+// Close 释放底层空闲连接(一次性 AdminClient 用后调用, 防 mTLS 连接累积)
+func (a *AdminClient) Close() {
+	if a != nil && a.h != nil {
+		if tr, ok := a.h.Transport.(*http.Transport); ok {
+			tr.CloseIdleConnections()
+		}
 	}
 }
 

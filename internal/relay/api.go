@@ -199,6 +199,7 @@ func (m *Manager) AdminVerify(certID, password string) error {
 	if err != nil {
 		return err
 	}
+	defer ac.Close()
 	return ac.Verify()
 }
 
@@ -220,9 +221,11 @@ func (m *Manager) Verify(certID, password string) (*VerifyResult, error) {
 	}
 	res := &VerifyResult{Services: svcs}
 	if addr := m.adminAddr(); addr != "" {
-		if err := NewAdminClient(addr, cert, m.relay.rootCAsCopy()).Verify(); err == nil {
+		ac := NewAdminClient(addr, cert, m.relay.rootCAsCopy())
+		if err := ac.Verify(); err == nil {
 			res.Admin = true
 		}
+		ac.Close()
 	}
 	return res, nil
 }
@@ -231,6 +234,7 @@ func (m *Manager) AdminIssue(certID, password string, req IssueRequest) (*IssueR
 	if err != nil {
 		return nil, err
 	}
+	defer ac.Close()
 	return ac.Issue(req)
 }
 func (m *Manager) AdminRevoke(certID, password, serial string) error {
@@ -238,6 +242,7 @@ func (m *Manager) AdminRevoke(certID, password, serial string) error {
 	if err != nil {
 		return err
 	}
+	defer ac.Close()
 	return ac.Revoke(serial)
 }
 
@@ -247,6 +252,7 @@ func (m *Manager) AdminConfig(certID, password string) (json.RawMessage, error) 
 	if err != nil {
 		return nil, err
 	}
+	defer ac.Close()
 	return ac.Cfg()
 }
 
@@ -256,6 +262,7 @@ func (m *Manager) AdminSetConfig(certID, password string, body json.RawMessage) 
 	if err != nil {
 		return nil, err
 	}
+	defer ac.Close()
 	return ac.SetConfig(body)
 }
 
@@ -265,6 +272,7 @@ func (m *Manager) AdminMapping(certID, password, method, id string, body json.Ra
 	if err != nil {
 		return nil, err
 	}
+	defer ac.Close()
 	return ac.Mapping(method, id, body)
 }
 
@@ -274,6 +282,7 @@ func (m *Manager) AdminService(certID, password, method, name string, body json.
 	if err != nil {
 		return nil, err
 	}
+	defer ac.Close()
 	return ac.Service(method, name, body)
 }
 
@@ -283,6 +292,7 @@ func (m *Manager) AdminListCerts(certID, password string) (json.RawMessage, erro
 	if err != nil {
 		return nil, err
 	}
+	defer ac.Close()
 	return ac.List()
 }
 
@@ -292,6 +302,7 @@ func (m *Manager) AdminMappings(certID, password string) ([]MappingInfo, error) 
 	if err != nil {
 		return nil, err
 	}
+	defer ac.Close()
 	return ac.ListMappings()
 }
 

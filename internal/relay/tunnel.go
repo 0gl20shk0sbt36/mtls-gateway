@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -53,7 +54,9 @@ type routeSpec struct {
 	certID  string
 }
 
-// tunnelRoutes 把服务级隧道展开为路由级规格
+// tunnelRoutes 把服务级隧道展开为路由级规格。
+// 整口(LocalPath="")优先排序: 保证同端口多路径时整口 route 先 bind 取得 listener,
+// 路径 route 复用其 listener(整口 TCP 透传兜底), 避免顺序反转导致整口语义静默丢失。
 func tunnelRoutes(t Tunnel) []routeSpec {
 	var out []routeSpec
 	for _, rt := range t.Routes {
@@ -64,6 +67,10 @@ func tunnelRoutes(t Tunnel) []routeSpec {
 			certID:  t.CertID,
 		})
 	}
+	sort.SliceStable(out, func(i, j int) bool {
+		a, b := out[i].route.LocalPath(), out[j].route.LocalPath()
+		return a == "" && b != "" // 整口排在路径前
+	})
 	return out
 }
 
@@ -279,7 +286,16 @@ func (rt *tunnelRuntime) handleConn(local net.Conn) {
 		log.Printf("tunnel[%s] dial upstream: %v", rt.key, err)
 		return
 	}
-	defer upstream.Close()
+	// upstream 也纳入关闭集合: stop() 统一关闭, 防上游不响应 FIN 时 copy goroutine 永久阻塞
+	rt.mu.Lock()
+	rt.conns[upstream] = struct{}{}
+	rt.mu.Unlock()
+	defer func() {
+		upstream.Close()
+		rt.mu.Lock()
+		delete(rt.conns, upstream)
+		rt.mu.Unlock()
+	}()
 
 	// 空闲超时: rt.idle 无数据传输则关闭(按需建连; 活跃连接不受限; idle<=0 = 不监控)
 	idle := rt.idle
@@ -378,7 +394,7 @@ func (rt *tunnelRuntime) snapshot() TunnelStatus {
 		Channel:     rt.route.Channel,
 		Local:       rt.route.Local,
 		CertID:      rt.certID,
-		Running:     true,
+		Running:     rt.listener != nil, // 复用整口的路径 route(listener==nil)不算 Running, 消除状态虚报
 		ActiveConns: atomic.LoadInt64(&rt.metrics.activeConns),
 		ConnsTotal:  atomic.LoadInt64(&rt.metrics.connsTotal),
 		BytesIn:     atomic.LoadInt64(&rt.metrics.bytesIn),
