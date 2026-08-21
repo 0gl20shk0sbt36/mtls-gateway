@@ -92,3 +92,64 @@ func TestConfigManagerValidationRollback(t *testing.T) {
 		t.Fatalf("rollback failed: got %d mappings", len(cm.Mappings()))
 	}
 }
+
+// TestConfigManagerPersistFailureRollback 复现 2026-08-21 22:18 生产事件:
+// 落盘失败(目录不可写 → backup denied → 主写入失败)时, 内存 cfg 与 router 必须整体回滚,
+// 不留下"内存已变、磁盘没写"的半态(此前该半态导致内存 services 变空、重启才恢复)。
+// 用"config 路径指向目录"强制 rename 阶段失败 — 不依赖文件权限(root 跑测试同样复现)。
+func TestConfigManagerPersistFailureRollback(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	if err := os.MkdirAll(path, 0o700); err != nil { // config.toml 位置是个目录 → rename 必然失败
+		t.Fatal(err)
+	}
+	cfg := DefaultConfig()
+	cfg.ConfigMode = "mutable"
+	cfg.Roles = []string{"x"}
+	cfg.Mappings = []proxy.Mapping{{ID: "m1", Listen: ":9601", Target: "http://127.0.0.1:1"}}
+	cfg.Services = []proxy.ServiceCfg{{Name: "s1", Channels: []string{"m1"}, Roles: []string{"x"}}}
+	router, err := proxy.NewRouter(cfg.Mappings, cfg.Services, cfg.Roles)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cm := NewConfigManager(path, cfg, router)
+
+	// 22:18 场景: 批量保存提交空 services(ReplaceAll) → 落盘失败 → 必须整体回滚
+	err = cm.ReplaceAll(
+		[]proxy.Mapping{{ID: "m1", Listen: ":9700", Target: "http://127.0.0.1:9"}},
+		nil, []string{"x"})
+	if err == nil {
+		t.Fatal("落盘失败时 ReplaceAll 应报错")
+	}
+	if !strings.Contains(err.Error(), "persist config") {
+		t.Fatalf("错误应标明 persist 失败: %v", err)
+	}
+	// 内存 cfg 回滚: services 不得变空
+	if n := len(cm.Services()); n != 1 || cm.Services()[0].Name != "s1" {
+		t.Fatalf("persist 失败后内存 services 应回滚为原状, got %d: %+v", n, cm.Services())
+	}
+	if n := len(cm.Mappings()); n != 1 || cm.Mappings()[0].Listen != ":9601" {
+		t.Fatalf("persist 失败后内存 mappings 应回滚为原状, got %d: %+v", n, cm.Mappings())
+	}
+	// router 回滚: 新 listen 不再匹配, 旧 listen 恢复匹配
+	if rt := cm.Router().Match("9700", "/"); rt != nil {
+		t.Fatal("persist 失败后 router 应回滚, :9700 不应匹配")
+	}
+	if rt := cm.Router().Match("9601", "/"); rt == nil {
+		t.Fatal("persist 失败后 router 应回滚, :9601 应匹配")
+	}
+
+	// 单条 CRUD 同样回滚(AddService / AddMapping / DeleteService 方向相反的场景)
+	if err := cm.AddService(proxy.ServiceCfg{Name: "s2", Channels: []string{"m1"}, Roles: []string{"x"}}); err == nil {
+		t.Fatal("落盘失败时 AddService 应报错")
+	}
+	if n := len(cm.Services()); n != 1 {
+		t.Fatalf("AddService persist 失败应回滚, got %d services", n)
+	}
+	if err := cm.AddMapping(proxy.Mapping{ID: "m2", Listen: ":9602", Target: "http://127.0.0.1:2"}); err == nil {
+		t.Fatal("落盘失败时 AddMapping 应报错")
+	}
+	if n := len(cm.Mappings()); n != 1 {
+		t.Fatalf("AddMapping persist 失败应回滚, got %d mappings", n)
+	}
+}

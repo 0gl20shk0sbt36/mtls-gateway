@@ -19,6 +19,11 @@ import (
 	"mtls-gateway/internal/pathutil"
 )
 
+// localHTTPIdleTimeout 本地 HTTP 反代模式浏览器侧 keep-alive 空闲上限。
+// 与服务端 mtls-gw 的 IdleTimeout 对齐(300s): 过短(60s)会让浏览器复用已被关闭的死连接,
+// 表现为"隔一段时间后的第一次请求超时"(与 2026-08-21 DSH 首次发送超时排查同源)。
+const localHTTPIdleTimeout = 300 * time.Second
+
 // tunnelMetrics 单路由运行指标
 type tunnelMetrics struct {
 	activeConns int64
@@ -104,7 +109,7 @@ func (r *Relay) startTunnel(rt *tunnelRuntime) error {
 		rt.srv = &http.Server{
 			Handler:           rt.localHTTPHandler(p),
 			ReadHeaderTimeout: 10 * time.Second,
-			IdleTimeout:       60 * time.Second,
+			IdleTimeout:       localHTTPIdleTimeout, // 浏览器侧 keep-alive 空闲上限(与服务端对齐, 防复用死连接)
 		}
 		go func() {
 			if err := rt.srv.Serve(ln); err != nil && err != http.ErrServerClosed && !errors.Is(err, net.ErrClosed) {

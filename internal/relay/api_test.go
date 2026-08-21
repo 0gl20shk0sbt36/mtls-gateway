@@ -344,11 +344,12 @@ func TestUpdateSettings(t *testing.T) {
 		t.Fatalf("NewManager: %v", err)
 	}
 	sa, aa, lh, lang := "gw.example:9499", "gw.example:9444", "0.0.0.0", "en"
-	if err := m.UpdateSettings(SettingsPatch{ServerAddr: &sa, AdminAddr: &aa, ListenHost: &lh, Lang: &lang}); err != nil {
+	cd := filepath.Join(t.TempDir(), "certs")
+	if err := m.UpdateSettings(SettingsPatch{ServerAddr: &sa, AdminAddr: &aa, ListenHost: &lh, CertDir: &cd, Lang: &lang}); err != nil {
 		t.Fatalf("UpdateSettings: %v", err)
 	}
 	cfg := m.Config()
-	if cfg.ServerAddr != sa || cfg.AdminAddr != aa || cfg.ListenHost != lh || cfg.Lang != lang {
+	if cfg.ServerAddr != sa || cfg.AdminAddr != aa || cfg.ListenHost != lh || cfg.Lang != lang || cfg.CertDir != cd {
 		t.Fatalf("cfg 未更新: %+v", cfg)
 	}
 	// 落盘验证: 字段写入 + tunnels 为 [] 而非 null
@@ -356,7 +357,7 @@ func TestUpdateSettings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
-	for _, want := range []string{sa, aa, lh, lang} {
+	for _, want := range []string{sa, aa, lh, lang, cd} {
 		if !strings.Contains(string(raw), want) {
 			t.Errorf("落盘配置缺 %q: %s", want, raw)
 		}

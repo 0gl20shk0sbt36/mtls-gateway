@@ -38,6 +38,16 @@ import (
 // version 由 release 构建经 -ldflags "-X main.version=..." 注入; 默认 "dev"
 var version = "dev"
 
+// 转发超时参数(全部 http.Server 共用; 防回归常量, 单测断言):
+//   - WriteTimeout: 0(不限制) — 绝对时限会在响应中途强关连接, 即使流式响应持续输出也会到点被切。
+//     LLM/SSE 长流式响应(如 DSH 对话)总时长可远超 60s, 原 60s 表现为"每次发送消息的第一次发送超时"。
+//     frp 对照: frp 隧道转发只设 ReadHeaderTimeout, 不设 WriteTimeout/IdleTimeout, 连接生命周期交对端。
+//   - IdleTimeout: 300s — keep-alive 空闲上限(对齐浏览器连接池习惯); 过短(60s)会让浏览器复用已被关闭的死连接。
+const (
+	gwWriteTimeout = 0 * time.Second   // 不限制响应写时限(长流式/SSE 刚需)
+	gwIdleTimeout  = 300 * time.Second // keep-alive 空闲上限
+)
+
 func main() {
 	var servers []*http.Server // 优雅退出时关闭
 	var serversMu sync.Mutex
@@ -50,6 +60,14 @@ func main() {
 	// 目录
 	if err := os.MkdirAll(filepath.Dir(cfg.DB), 0o700); err != nil {
 		log.Fatalf("mkdir db dir: %v", err)
+	}
+
+	// 启动前权限预检(Linux): 配置引用的全部文件/目录权限不足 → 拒绝启动。
+	// 防 2026-08-21 22:18 类事件(配置目录不可写导致落盘/备份静默失败、内存与磁盘分叉)带病运行。
+	// 失败时 stderr 必有输出; 尝试写事件日志(日志无权限则跳过)。
+	if fails := checkStartupPaths(cfg); len(fails) > 0 {
+		reportStartupFailures(cfg, fails)
+		os.Exit(1)
 	}
 
 	// 数据库
@@ -137,8 +155,11 @@ func main() {
 				Handler:           gatewayHandler(gateway, cm, port, accLog),
 				ReadHeaderTimeout: 10 * time.Second,
 				ReadTimeout:       30 * time.Second,
-				WriteTimeout:      60 * time.Second,
-				IdleTimeout:       60 * time.Second,
+				// WriteTimeout: 流式响应(SSE/LLM token 流)可能持续数分钟,
+				// 60s 会在 LLM 生成中途强制切断连接(表现: 消息超时一次, 重发命中缓存即好)。
+				// 禁用写超时(单用户内网环境, 挂连接风险可接受); 反代侧 ResponseHeaderTimeout 仍保护响应头
+				WriteTimeout: gwWriteTimeout,
+				IdleTimeout:  gwIdleTimeout,
 			}
 			serversMu.Lock()
 			servers = append(servers, srv)
@@ -164,8 +185,8 @@ func main() {
 				Handler:           infoHandler(gateway, cm, accLog),
 				ReadHeaderTimeout: 10 * time.Second,
 				ReadTimeout:       30 * time.Second,
-				WriteTimeout:      60 * time.Second,
-				IdleTimeout:       60 * time.Second,
+				WriteTimeout:      gwWriteTimeout,
+				IdleTimeout:       gwIdleTimeout,
 			}
 			serversMu.Lock()
 			servers = append(servers, infoSrv)
@@ -212,8 +233,8 @@ func main() {
 					Handler:           mm,
 					ReadHeaderTimeout: 10 * time.Second,
 					ReadTimeout:       30 * time.Second,
-					WriteTimeout:      60 * time.Second,
-					IdleTimeout:       60 * time.Second,
+					WriteTimeout:      gwWriteTimeout,
+					IdleTimeout:       gwIdleTimeout,
 				}
 				serversMu.Lock()
 				servers = append(servers, admSrv)
@@ -233,8 +254,8 @@ func main() {
 					Handler:           adminHandler(gateway, mgr, cm, evLog),
 					ReadHeaderTimeout: 10 * time.Second,
 					ReadTimeout:       30 * time.Second,
-					WriteTimeout:      60 * time.Second,
-					IdleTimeout:       60 * time.Second,
+					WriteTimeout:      gwWriteTimeout,
+					IdleTimeout:       gwIdleTimeout,
 				}
 				serversMu.Lock()
 				servers = append(servers, admSrv)

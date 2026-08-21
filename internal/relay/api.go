@@ -87,12 +87,41 @@ type SettingsPatch struct {
 	AdminAddr  *string `json:"admin_addr"`
 	ListenHost *string `json:"listen_host"`
 	ServerCA   *string `json:"server_ca"`
+	CertDir    *string `json:"cert_dir"` // 客户端证书源: 空=系统证书库; 非空=目录文件源
 	Lang       *string `json:"lang"`
 }
 
+// certSourceFromConfig 依据 cert_dir 构建证书源: 空=系统证书库, 非空=目录文件源(dir)。
+// 用于管理 API 热更新 (UpdateSettings 换源)。
+func certSourceFromConfig(certDir string) (certsource.Source, error) {
+	if certDir == "" {
+		return certsource.OpenSystem()
+	}
+	return certsource.New(certsource.Dir, certDir)
+}
+
+// ResolveCertSource 启动时决定证书源: 配置 cert_dir 优先于 CLI 参数(配置即权威)。
+// certDir 非空 = 目录文件源; 空 = 回落 CLI 参数 (-source / -source-arg)。
+func ResolveCertSource(flagType, flagArg, certDir string) (certsource.Source, error) {
+	if certDir != "" {
+		return certsource.New(certsource.Dir, certDir)
+	}
+	return certsource.New(certsource.SourceType(flagType), flagArg)
+}
+
 // UpdateSettings 更新连接设置并热应用: 落盘(noPersist 除外) + lang 立即生效 + 重建隧道
-// (Reload 应用 server_addr/listen_host/server_ca; admin_addr 由 adminAddr() 每次读取, 改 cfg 即生效)
+// (Reload 应用 server_addr/listen_host/server_ca; admin_addr 由 adminAddr() 每次读取, 改 cfg 即生效;
+// cert_dir 变更先构建新证书源(失败则整体失败), 再热替换 relay 来源)
 func (m *Manager) UpdateSettings(p SettingsPatch) error {
+	// 证书源变更: 先构建新源(锁外; 失败则整体失败, 不改 cfg 不落盘)
+	var newSrc certsource.Source
+	if p.CertDir != nil && m.relay != nil {
+		s, err := certSourceFromConfig(*p.CertDir)
+		if err != nil {
+			return fmt.Errorf("cert source: %w", err)
+		}
+		newSrc = s
+	}
 	m.mu.Lock()
 	if p.ServerAddr != nil {
 		m.cfg.ServerAddr = *p.ServerAddr
@@ -105,6 +134,9 @@ func (m *Manager) UpdateSettings(p SettingsPatch) error {
 	}
 	if p.ServerCA != nil {
 		m.cfg.ServerCAFile = *p.ServerCA
+	}
+	if p.CertDir != nil {
+		m.cfg.CertDir = *p.CertDir
 	}
 	if p.Lang != nil {
 		m.cfg.Lang = *p.Lang
@@ -132,9 +164,12 @@ func (m *Manager) UpdateSettings(p SettingsPatch) error {
 				return fmt.Errorf("set server_ca: %w", err)
 			}
 		}
+		if p.CertDir != nil {
+			m.relay.SetSource(newSrc) // 热换源: 清证书缓存, 按当前 server_ca 重新过滤
+		}
 	}
-	// server_addr / listen_host / server_ca 变更 → Reload 重建隧道(热生效)
-	if p.ServerAddr != nil || p.ListenHost != nil || p.ServerCA != nil {
+	// server_addr / listen_host / server_ca / cert_dir 变更 → Reload 重建隧道(热生效)
+	if p.ServerAddr != nil || p.ListenHost != nil || p.ServerCA != nil || p.CertDir != nil {
 		return m.reloadTunnels()
 	}
 	return nil
@@ -624,6 +659,7 @@ func (m *Manager) Handler() http.Handler {
 			"admin_addr":  cfg.AdminAddr,
 			"listen_host": cfg.ListenHost,
 			"server_ca":   cfg.ServerCAFile,
+			"cert_dir":    cfg.CertDir,
 			"lang":        cfg.Lang,
 		})
 	})

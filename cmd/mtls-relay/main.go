@@ -46,8 +46,12 @@ func main() {
 
 	cfgPath := expandHome(*configPath)
 
-	// 证书来源
-	src, err := certsource.New(certsource.SourceType(*source), *sourceArg)
+	// 证书来源: 预加载配置, 配置 cert_dir 优先于 -source 参数(配置即权威)
+	preCfg, err := relay.LoadConfig(cfgPath)
+	if err != nil {
+		log.Fatalf("config %s: %v", cfgPath, err)
+	}
+	src, err := relay.ResolveCertSource(*source, *sourceArg, preCfg.CertDir)
 	if err != nil {
 		log.Fatalf("cert source: %v", err)
 	}

@@ -141,7 +141,7 @@ relay 配置(`relay.json`):
   "admin_addr": "gw.example:9444",
   "server_ca": "/path/to/ca.crt",
   "listen_host": "127.0.0.1",
-  "cert": {"source": "dir", "arg": "/path/to/certs"},
+  "cert_dir": "/path/to/certs",
   "tunnels": [
     {"service": "dsh", "cert_id": "dev-laptop", "routes": [{"channel": ":9443", "local": ":9443"}]}
   ]
@@ -149,6 +149,7 @@ relay 配置(`relay.json`):
 ```
 
 - `server_addr` = `/info` 发现端点; `admin_addr` = admin 端点(证书管理, 独立)
+- `cert_dir` = 客户端证书源: 空=系统证书库(Windows 证书库 / Linux `~/.mtls-gw/certs`), 非空=目录源(每子目录一个证书); 配置优先于启动参数 `-source`/`-source-arg`
 - 隧道按**服务**建(一个服务含多个通道), 本地路由可覆盖端口/路径
 - 证书轮换/服务端地址变化自动重建隧道
 
@@ -175,6 +176,7 @@ relay 自带 WebUI(`--listen-admin :28083`):
 - **管理面隔离**: 业务/管理/发现三个端口分离; 管理 API 独立于业务端口
 - **DNS rebinding 防护**: relay 管理 API 强制 loopback + Origin 校验
 - **server_ca 不可用拒绝启动**: 防降级系统根被 MITM 冒充网关
+- **启动权限预检(Linux)**: 启动时检查配置引用的全部文件/目录权限(CA/DB/证书/日志/sock/落盘目录), 不足拒绝启动并输出到 stderr(尽力写事件日志) — 防"目录不可写带病运行"致落盘失败/内存分叉
 - **同名证书禁止**: 签发前查重(含已吊销), 防同名混淆
 - **错误脱敏**: 认证失败只回 `forbidden`, 细节仅写事件日志
 - **超时/体积限制**: 全端口 ReadTimeout/WriteTimeout/IdleTimeout + 请求体 MaxBytesReader 4MB
@@ -190,7 +192,7 @@ relay 自带 WebUI(`--listen-admin :28083`):
 ## 5. 测试
 
 ```bash
-go test -race ./...          # Go 单测/集成(178 个测试函数, -race 全绿)
+go test -race ./...          # Go 单测/集成(194 个测试函数, -race 全绿)
 go vet ./...
 gofmt -l cmd internal        # 应为空(CI 强制)
 

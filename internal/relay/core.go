@@ -29,8 +29,9 @@ type Relay struct {
 	listenHost string                    // 当前配置的本地监听地址 (Start/Reload 更新)
 	serverAddr string                    // 服务端 /info 发现端点 (Start/Reload 更新; 亦可用 SetServerAddr)
 	serverCA   string                    // 网关 CA 文件路径 (验服务器证书; 空=系统根)
+	caSubject  string                    // 网关 CA 主题 (issuer 过滤系统证书源用; 空=未配置/未解析)
 	rootCAs    *x509.CertPool            // 由 serverCA 构建; nil=系统根
-	src        certsource.Source         // 证书来源 (由外层/daemon 注入)
+	src        certsource.Source         // 证书来源 (由外层/daemon 注入; 亦可用 SetSource 热替换)
 	certCache  map[string]certCacheEntry // source-CertID -> 证书 (复用, TTL 失效支持证书轮换)
 
 	ctx          context.Context
@@ -46,6 +47,14 @@ type Relay struct {
 
 // 证书缓存有效期默认值: 到期重载, 支持证书轮换/续期(≤TTL 生效)
 const defaultCertCacheTTL = 60 * time.Second
+
+// defaultTCPIdle TCP 透传的空闲超时默认值。
+// 原 120s 会杀掉空闲的长连接 —— 浏览器 WebSocket(dsh 等 LLM 对话工具的事件流)
+// 空闲时无帧, 看回复/思考 > 120s 即被切断, 前端重连窗口内第一次发消息超时
+// (2026-08-21 定位: 走 mTLS 时每次发送消息第一次超时, SSH 直连无 relay 层则不超时)。
+// frp 对照: frp TCP 透传不杀空闲连接, 连接生命周期交对端, 死连接由 TCP keepalive 清理。
+// 这里保留 12h 上限仅作极端防泄漏兜底(正常长连接不受影响)。
+const defaultTCPIdle = 12 * time.Hour
 
 type certCacheEntry struct {
 	cert     tls.Certificate
@@ -71,7 +80,7 @@ func New(cfgPath string, src certsource.Source) *Relay {
 		cancel:       cancel,
 		tunnels:      make(map[string]*tunnelRuntime),
 		L:            i18n.New("zh"),
-		idleTimeout:  120 * time.Second,
+		idleTimeout:  defaultTCPIdle,
 		certCacheTTL: defaultCertCacheTTL,
 	}
 }
@@ -128,6 +137,7 @@ func (r *Relay) cfgListenHost() string {
 func (r *Relay) applyServerCA(serverCA string) error {
 	r.serverCA = serverCA
 	r.rootCAs = nil
+	r.caSubject = ""
 	if serverCA == "" {
 		return nil
 	}
@@ -141,12 +151,31 @@ func (r *Relay) applyServerCA(serverCA string) error {
 	}
 	r.rootCAs = pool
 	// 用 CA 主题过滤系统证书源: 只展示由该 CA 签发的身份(过滤 Adobe 等无关证书)
-	if ca := firstCert(pemBytes); ca != nil && r.src != nil {
-		certsource.ApplyIssuerFilter(r.src, ca.Subject.String())
+	if ca := firstCert(pemBytes); ca != nil {
+		r.caSubject = ca.Subject.String()
+		if r.src != nil {
+			certsource.ApplyIssuerFilter(r.src, r.caSubject)
+		}
 	}
 	// 异步匿名引导: 无证书调服务端 /info(null 路由), 拿服务端 CA 自动过滤(server_ca 未配置时的兜底)
 	go r.fetchCAAndFilter()
 	return nil
+}
+
+// SetSource 热替换证书来源 (WebUI 连接设置改 cert_dir 后调用)。
+// 立即生效: 清空证书缓存(下次加载从新源取), 并按当前 server_ca 重新过滤系统证书源。
+// 新来源构建失败由调用方负责(本方法只接受已构建好的源)。
+func (r *Relay) SetSource(src certsource.Source) {
+	r.mu.Lock()
+	r.src = src
+	r.certCache = map[string]certCacheEntry{}
+	subject := r.caSubject
+	r.mu.Unlock()
+	if subject != "" {
+		certsource.ApplyIssuerFilter(src, subject)
+	}
+	// 异步兜底: 重新匿名拉 /info CA 过滤(server_ca 未配置时换源后同样生效)
+	go r.fetchCAAndFilter()
 }
 
 // fetchCAAndFilter 匿名调服务端 /info(不需要客户端证书, 服务端 null 路由),

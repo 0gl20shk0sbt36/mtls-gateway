@@ -164,7 +164,7 @@ const jreq = (method, body) => ({
 });
 const jpost = (body) => jreq("POST", body);
 
-// 连接设置: 页面加载时填充; 保存即热重载(server_addr/listen_host/server_ca 重建隧道, lang 即时切换)
+// 连接设置: 页面加载时填充; 保存即热重载(server_addr/listen_host/server_ca/cert_dir 重建隧道)
 async function loadSettings() {
   try {
     const s = await api("/api/settings");
@@ -172,7 +172,7 @@ async function loadSettings() {
     $("setAdminAddr").value = s.admin_addr || "";
     $("setServerCA").value = s.server_ca || "";
     $("setListenHost").value = s.listen_host || "";
-    $("setLang").value = s.lang || "";
+    $("setCertDir").value = s.cert_dir || "";
   } catch (e) { /* 拉不到设置不阻塞 */ }
 }
 
@@ -182,13 +182,14 @@ async function saveSettings() {
     admin_addr: $("setAdminAddr").value.trim(),
     server_ca: $("setServerCA").value.trim(),
     listen_host: $("setListenHost").value.trim(),
-    lang: $("setLang").value.trim(),
+    cert_dir: $("setCertDir").value.trim(),
   };
   try {
     await api("/api/settings", jreq("PUT", body));
     $("settingsHint").textContent = t("settingsSaved");
     setTimeout(() => { $("settingsHint").textContent = ""; }, 3000);
     loadTunnels(); // 热重载后刷新隧道状态
+    loadCerts();   // 证书源可能已切换, 刷新证书列表
   } catch (e) {
     $("settingsHint").textContent = t("settingsFailed", { e: e.message });
   }

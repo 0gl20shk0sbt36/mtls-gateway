@@ -24,7 +24,12 @@ func (d *Dialer) Dial(ctx context.Context) (net.Conn, error) {
 	if timeout <= 0 {
 		timeout = 10 * time.Second
 	}
-	dialer := &net.Dialer{Timeout: timeout}
+	dialer := &net.Dialer{
+		Timeout: timeout,
+		// 显式 TCP keepalive: 保持隧道连接在 NAT/防火墙/TS 网络上的活跃,
+		// 防空闲连接被静默回收(half-open)导致第一次请求超时(frp 同样依赖内核保活)。
+		KeepAlive: 15 * time.Second,
+	}
 	sni := d.ServerName
 	if sni == "" {
 		sni = stripPort(d.ServerAddr)
