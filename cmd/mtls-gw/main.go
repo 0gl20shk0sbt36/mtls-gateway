@@ -149,8 +149,11 @@ func main() {
 		}()
 	}
 
-	// ===== /info 服务发现 (无需 admin; 已登记设备证书即可; 按证书角色过滤服务) =====
-	if infoListen := resolveListen(bindHost, cfg.InfoListen); infoListen != "" {
+	// ===== /info 服务发现 (已登记设备证书即可; 匿名返回 CA 供引导) =====
+	infoListen := resolveListen(bindHost, cfg.InfoListen)
+	admListen := resolveListen(bindHost, cfg.AdminListen)
+	merged := infoListen != "" && admListen != "" && infoListen == admListen // 同端口合并: /info + /admin 路径区分
+	if infoListen != "" && !merged {
 		go func() {
 			ln, err := net.Listen("tcp", infoListen)
 			if err != nil {
@@ -193,27 +196,54 @@ func main() {
 	}()
 
 	// ===== 管理 API TCP (远程 Web, 需 admin_role 证书) =====
-	if admListen := resolveListen(bindHost, cfg.AdminListen); admListen != "" {
-		go func() {
-			ln, err := net.Listen("tcp", admListen)
-			if err != nil {
-				log.Fatalf("admin listen: %v", err)
-			}
-			log.Printf("admin api listening on %s (mTLS, admin cert required)", admListen)
-			admSrv := &http.Server{
-				Handler:           adminHandler(gateway, mgr, cm, evLog),
-				ReadHeaderTimeout: 10 * time.Second,
-				ReadTimeout:       30 * time.Second,
-				WriteTimeout:      60 * time.Second,
-				IdleTimeout:       60 * time.Second,
-			}
-			serversMu.Lock()
-			servers = append(servers, admSrv)
-			serversMu.Unlock()
-			if err := admSrv.Serve(tlsListener(ln, gateway.ServerTLSConfig())); err != nil && err != http.ErrServerClosed {
-				log.Fatalf("admin serve: %v", err)
-			}
-		}()
+	if admListen != "" {
+		if merged {
+			// 合并端口: /info(匿名引导) + /admin/*(admin 证书) 同端口路径区分
+			mm := http.NewServeMux()
+			mm.HandleFunc("/info", infoHandler(gateway, cm, accLog).ServeHTTP)
+			mm.Handle("/admin", adminHandler(gateway, mgr, cm, evLog))
+			go func() {
+				ln, err := net.Listen("tcp", admListen)
+				if err != nil {
+					log.Fatalf("merged listen: %v", err)
+				}
+				log.Printf("mtls info+admin listening on %s (merged: /info anonymous, /admin mTLS)", admListen)
+				admSrv := &http.Server{
+					Handler:           mm,
+					ReadHeaderTimeout: 10 * time.Second,
+					ReadTimeout:       30 * time.Second,
+					WriteTimeout:      60 * time.Second,
+					IdleTimeout:       60 * time.Second,
+				}
+				serversMu.Lock()
+				servers = append(servers, admSrv)
+				serversMu.Unlock()
+				if err := admSrv.Serve(tlsListener(ln, gateway.ServerTLSConfig())); err != nil && err != http.ErrServerClosed {
+					log.Fatalf("merged serve: %v", err)
+				}
+			}()
+		} else {
+			go func() {
+				ln, err := net.Listen("tcp", admListen)
+				if err != nil {
+					log.Fatalf("admin listen: %v", err)
+				}
+				log.Printf("admin api listening on %s (mTLS, admin cert required)", admListen)
+				admSrv := &http.Server{
+					Handler:           adminHandler(gateway, mgr, cm, evLog),
+					ReadHeaderTimeout: 10 * time.Second,
+					ReadTimeout:       30 * time.Second,
+					WriteTimeout:      60 * time.Second,
+					IdleTimeout:       60 * time.Second,
+				}
+				serversMu.Lock()
+				servers = append(servers, admSrv)
+				serversMu.Unlock()
+				if err := admSrv.Serve(tlsListener(ln, gateway.ServerTLSConfig())); err != nil && err != http.ErrServerClosed {
+					log.Fatalf("admin serve: %v", err)
+				}
+			}()
+		}
 	}
 
 	// 优雅退出: SIGINT/SIGTERM 关闭全部 http.Server 并等 store 落盘
@@ -311,16 +341,6 @@ func accessEvent(rec *db.CertRecord, channel, method, path string, status int, i
 func gatewayHandler(gw *auth.Gateway, cm *ConfigManager, port string, acc *eventlog.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sw := &statusWriter{ResponseWriter: w}
-		rec, err := gw.Authorize(r)
-		if err != nil {
-			auth.AuthLog("", auth.RemoteIP(r), "", false)
-			if acc != nil {
-				acc.Write(eventlog.Event{Type: "deny", Channel: ":" + port, Method: r.Method, Path: r.URL.Path, Status: 403, Msg: err.Error()})
-			}
-			http.Error(sw, "forbidden", http.StatusForbidden) // 脱敏: 细节仅写事件日志
-			return
-		}
-		remote := auth.RemoteIP(r)
 
 		// 匹配前规范化请求路径: 防 /admin/../secret 命中 /admin 映射后逃逸 target 前缀
 		// (dot-segment 只清替换结果不够 — 匹配用的是原始路径)
@@ -329,11 +349,39 @@ func gatewayHandler(gw *auth.Gateway, cm *ConfigManager, port string, acc *event
 		rt := router.Match(port, r.URL.Path)
 		if rt == nil {
 			if acc != nil {
-				acc.Write(eventlog.Event{Type: "deny", Cert: rec.Name, Serial: rec.Serial, Role: strings.Join(rec.Purposes, ","), Channel: ":" + port, Method: r.Method, Path: r.URL.Path, Status: 404, Msg: "no route"})
+				acc.Write(eventlog.Event{Type: "deny", Channel: ":" + port, Method: r.Method, Path: r.URL.Path, Status: 404, Msg: "no route"})
 			}
 			http.Error(sw, "no route for "+r.URL.Path, http.StatusNotFound)
 			return
 		}
+		remote := auth.RemoteIP(r)
+
+		// null 路由: 匿名放行(不需要证书; 任意来源可访问, 由部署方确保端口暴露面)
+		if rt.AllowsNull() {
+			auth.AuthLog(rt.Listen(), remote, "(anonymous)", true)
+			proxy.SanitizeHeader(r)
+			router.Serve(rt, sw, r)
+			if acc != nil {
+				code := sw.status
+				if code == 0 {
+					code = http.StatusOK
+				}
+				acc.Write(accessEvent(&db.CertRecord{Name: "(anonymous)"}, rt.Listen(), r.Method, r.URL.Path, code, r.ContentLength, sw.bytes))
+			}
+			return
+		}
+
+		// 非 null 路由: 需要证书 + 授权
+		rec, err := gw.Authorize(r)
+		if err != nil {
+			auth.AuthLog("", remote, "", false)
+			if acc != nil {
+				acc.Write(eventlog.Event{Type: "deny", Channel: ":" + port, Method: r.Method, Path: r.URL.Path, Status: 403, Msg: err.Error()})
+			}
+			http.Error(sw, "forbidden", http.StatusForbidden) // 脱敏: 细节仅写事件日志
+			return
+		}
+
 		if !rt.Allows(rec.Purposes) {
 			auth.AuthLog(rt.Listen(), remote, rec.Serial, false)
 			if acc != nil {
@@ -356,25 +404,38 @@ func gatewayHandler(gw *auth.Gateway, cm *ConfigManager, port string, acc *event
 }
 
 // infoHandler /info: 无需 admin; 已登记证书即可; 返回该证书可访问的服务(按角色过滤)
+// infoHandler /info: 匿名引导(null)或已登记证书; 无证书时返回 CA(供客户端过滤证书源), 有证书时附带可访问服务列表
 func infoHandler(gw *auth.Gateway, cm *ConfigManager, acc *eventlog.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sw := &statusWriter{ResponseWriter: w}
 		rec, err := gw.Authorize(r)
 		if err != nil {
-			if acc != nil {
-				acc.Write(eventlog.Event{Type: "deny", Channel: "/info", Method: r.Method, Path: r.URL.Path, Status: 403, Msg: err.Error()})
+			// 有证书但认证失败(吊销/未登记) → 403; 仅真匿名(无证书)才返回 CA 引导
+			if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
+				if acc != nil {
+					acc.Write(eventlog.Event{Type: "deny", Channel: "/info", Method: r.Method, Path: r.URL.Path, Status: 403, Msg: err.Error()})
+				}
+				http.Error(sw, "forbidden", http.StatusForbidden)
+				return
 			}
-			http.Error(sw, "forbidden", http.StatusForbidden)
-			return
+		}
+		var services []proxy.ServiceInfo
+		name := "(anonymous)"
+		if err == nil {
+			services = cm.Router().ServicesAllowed(rec.Purposes)
+			name = rec.Name
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(sw).Encode(map[string]any{"services": cm.Router().ServicesAllowed(rec.Purposes)})
+		json.NewEncoder(sw).Encode(map[string]any{
+			"ca":       string(gw.CAPEM()),
+			"services": services,
+		})
 		if acc != nil {
 			code := sw.status
 			if code == 0 {
-				code = http.StatusOK // 兜底(与 gatewayHandler 一致)
+				code = http.StatusOK
 			}
-			acc.Write(accessEvent(rec, "/info", r.Method, r.URL.Path, code, r.ContentLength, sw.bytes))
+			acc.Write(accessEvent(&db.CertRecord{Name: name}, "/info", r.Method, r.URL.Path, code, r.ContentLength, sw.bytes))
 		}
 	})
 }

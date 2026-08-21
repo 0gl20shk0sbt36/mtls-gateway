@@ -21,10 +21,14 @@ import (
 type Gateway struct {
 	store         *db.Store
 	caPool        *x509.CertPool
+	caPEM         []byte // CA 证书 PEM(匿名 /info 引导用: 客户端过滤证书源)
 	serverTLS     *tls.Config
 	requireIPBind bool   // 是否强制 IP 绑定 (默认 true; false = 允许不绑 IP 的证书)
 	AdminRole     string // 内置管理角色名 (config admin_role, 默认 mtls-superadmin)
 }
+
+// CAPEM 返回 CA 证书 PEM(客户端用它过滤系统证书库, 只显示本 CA 签发的身份)
+func (g *Gateway) CAPEM() []byte { return g.caPEM }
 
 // DefaultAdminRole 内置管理角色的默认名(可通过 config admin_role 覆盖; 勿用常用名)
 const DefaultAdminRole = "mtls-superadmin"
@@ -63,13 +67,16 @@ func New(store *db.Store, caPath, serverCertPath, serverKeyPath string, requireI
 	g := &Gateway{
 		store:         store,
 		caPool:        pool,
+		caPEM:         caPEM,
 		requireIPBind: requireIPBind,
 		AdminRole:     adminRole,
 		serverTLS: &tls.Config{
 			Certificates: []tls.Certificate{cert},
-			ClientAuth:   tls.RequireAndVerifyClientCert,
-			ClientCAs:    pool,
-			MinVersion:   minV,
+			// VerifyClientCertIfGiven: 有证书则验证(坏证书拒绝), 无证书放行到应用层。
+			// 应用层按路由授权: null 角色路由匿名可访问, 其余要求证书。
+			ClientAuth: tls.VerifyClientCertIfGiven,
+			ClientCAs:  pool,
+			MinVersion: minV,
 		},
 	}
 	return g, nil

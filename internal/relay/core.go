@@ -4,10 +4,12 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"strings"
 	"sync"
@@ -142,7 +144,42 @@ func (r *Relay) applyServerCA(serverCA string) error {
 	if ca := firstCert(pemBytes); ca != nil && r.src != nil {
 		certsource.ApplyIssuerFilter(r.src, ca.Subject.String())
 	}
+	// 异步匿名引导: 无证书调服务端 /info(null 路由), 拿服务端 CA 自动过滤(server_ca 未配置时的兜底)
+	go r.fetchCAAndFilter()
 	return nil
+}
+
+// fetchCAAndFilter 匿名调服务端 /info(不需要客户端证书, 服务端 null 路由),
+// 用返回的 CA 过滤系统证书源; 失败(旧服务端/不可达)静默降级。
+func (r *Relay) fetchCAAndFilter() {
+	r.mu.Lock()
+	addr, caFile, roots := r.serverAddr, r.serverCA, r.rootCAs
+	r.mu.Unlock()
+	if addr == "" || roots == nil {
+		return
+	}
+	cli := &http.Client{
+		Timeout: 5 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{RootCAs: roots}, // 无客户端证书(匿名)
+		},
+	}
+	resp, err := cli.Get("https://" + addr + "/info")
+	if err != nil {
+		log.Printf("anonymous /info 引导: %v (降级: 用本地 server_ca %s 过滤)", err, caFile)
+		return
+	}
+	defer resp.Body.Close()
+	var info struct {
+		CA string `json:"ca"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil || info.CA == "" {
+		return
+	}
+	if caCert := firstCert([]byte(info.CA)); caCert != nil {
+		certsource.ApplyIssuerFilter(r.src, caCert.Subject.String())
+		log.Printf("anonymous /info 引导: 已用服务端 CA 过滤证书源 (%s)", caCert.Subject.String())
+	}
 }
 
 // firstCert 解析 PEM 里的第一张证书(用于提取 CA 主题)

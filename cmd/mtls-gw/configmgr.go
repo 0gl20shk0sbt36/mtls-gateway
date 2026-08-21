@@ -188,6 +188,9 @@ func (m *ConfigManager) AddRole(name string) error {
 	if name == "any" {
 		return fmt.Errorf("any 是内置保留字, 禁止声明")
 	}
+	if name == "null" {
+		return fmt.Errorf("null 是内置保留字(匿名访问), 禁止声明")
+	}
 	if name == m.cfg.AdminRole {
 		return fmt.Errorf("内置管理角色 %q 禁止声明为普通角色", name)
 	}

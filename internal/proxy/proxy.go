@@ -148,9 +148,9 @@ func NewRouter(ms []Mapping, ss []ServiceCfg, declaredRoles []string) (*Router, 
 		if len(s.Channels) == 0 {
 			return nil, fmt.Errorf("service %s has no channels", s.Name)
 		}
-		// 服务 roles: "any"(内置)= 任意已登记证书; 其他必须在声明列表中
+		// 服务 roles: "any"(内置)= 任意已登记证书; "null"(内置)= 匿名可访问; 其他必须在声明列表中
 		for _, r := range s.Roles {
-			if r == "any" {
+			if r == "any" || r == "null" {
 				continue
 			}
 			if !ValidRoleName(r) {
@@ -261,6 +261,16 @@ func matchPath(p, pref string) bool {
 // Allows 判断证书角色是否允许访问该映射(服务 roles 含内置 "any" = 任意已登记证书; 否则并集 ∩ 证书 roles)
 func (r *route) Allows(roles []string) bool {
 	return rolesMatch(r.roles, roles)
+}
+
+// AllowsNull 该路由是否匿名可访问(服务 roles 含内置 "null" = 不需要证书)
+func (r *route) AllowsNull() bool {
+	for _, want := range r.roles {
+		if want == "null" {
+			return true
+		}
+	}
+	return false
 }
 
 // Listen 返回入口端口+路径串(供展示)

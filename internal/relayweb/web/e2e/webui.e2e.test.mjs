@@ -220,18 +220,18 @@ test("7. ★转发真的转发: 隧道本地路由 → 网关 → echo 后端(�
 });
 
 test("8. ★mTLS 壳真的套上: 无证书/坏证书被拒, 带证书通过(直连网关)", async () => {
-  // 无客户端证书 → TLS 握手失败
+  // 无客户端证书 → TLS 允许匿名(VerifyClientCertIfGiven), 应用层对非 null 路由 403
   const bare = await httpsGet(GW_PORT);
-  assert.ok(bare.error || !bare.status, `无证书应被拒: ${JSON.stringify(bare)}`);
-  // 错误 CA 签发的客户端证书 → 服务器拒绝(unknown CA)
+  assert.ok(bare.status === 403, `无证书应 403(应用层拒绝): ${JSON.stringify(bare)}`);
+  // 错误 CA 签发的客户端证书 → 服务器拒绝(unknown CA, 握手失败)
   const bad = await httpsGet(GW_PORT, { withBadCert: true });
   assert.ok(bad.error || !bad.status, `坏CA证书应被拒: ${JSON.stringify(bad)}`);
   // 带 e2e-a 客户端证书(服务器证书也真验证)→ 200
   const withCert = await httpsGet(GW_PORT, { withCert: true });
   assert.equal(withCert.status, 200, `带证书应通过: ${JSON.stringify(withCert).slice(0, 120)}`);
-  // admin 管理端口同样无证书被拒
+  // admin 管理端口同样无证书被拒(应用层 403)
   const admBare = await httpsGet(46999);
-  assert.ok(admBare.error || !admBare.status, `admin 端口无证书应被拒: ${JSON.stringify(admBare)}`);
+  assert.ok(admBare.status === 403, `admin 端口无证书应 403: ${JSON.stringify(admBare)}`);
 });
 
 test("9. 删除隧道 + 服务回归下拉", async () => {

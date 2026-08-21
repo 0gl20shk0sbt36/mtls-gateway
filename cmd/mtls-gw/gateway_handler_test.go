@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"fmt"
 	"io"
 	"math/big"
 	"net"
@@ -241,9 +242,41 @@ func TestGatewayHandler_NoClientCert(t *testing.T) {
 	back := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	defer back.Close()
 	_, srv, cl := newGWTestEnv(t, map[string]*httptest.Server{"ok": back})
-	_, err := cl.Get(srv.URL + "/x")
-	if err == nil {
-		t.Fatal("no client cert should fail TLS")
+	// TLS 层 VerifyClientCertIfGiven: 无证书允许握手(匿名), 应用层对非 null 路由 403
+	resp, err := cl.Get(srv.URL + "/hello")
+	if err != nil {
+		t.Fatalf("no client cert should reach app layer (anonymous TLS allowed): %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 403 {
+		t.Fatalf("no client cert on non-null route should 403, got %d", resp.StatusCode)
+	}
+}
+
+// null 路由: 匿名访问放行(不需要证书), 转发到后端
+func TestGatewayHandler_NullRouteAnonymous(t *testing.T) {
+	back := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "public-ok")
+	}))
+	defer back.Close()
+	env, srv, cl := newGWTestEnv(t, map[string]*httptest.Server{"ok": back})
+	// 给 svc-a 的 roles 加 null: 匿名可访问
+	for _, s := range env.cm.Services() {
+		if s.Name == "svc-a" {
+			s.Roles = append(s.Roles, "null")
+			if err := env.cm.UpdateService("svc-a", s); err != nil {
+				t.Fatalf("update service: %v", err)
+			}
+		}
+	}
+	resp, err := cl.Get(srv.URL + "/hello") // 无证书
+	if err != nil {
+		t.Fatalf("anonymous req: %v", err)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || string(b) != "public-ok" {
+		t.Fatalf("null route anonymous should 200+public-ok, got %d: %s", resp.StatusCode, b)
 	}
 }
 
