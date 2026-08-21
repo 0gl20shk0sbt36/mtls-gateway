@@ -201,7 +201,7 @@ func main() {
 			// 合并端口: /info(匿名引导) + /admin/*(admin 证书) 同端口路径区分
 			mm := http.NewServeMux()
 			mm.HandleFunc("/info", infoHandler(gateway, cm, accLog).ServeHTTP)
-			mm.Handle("/admin", adminHandler(gateway, mgr, cm, evLog))
+			mm.Handle("/admin/", adminHandler(gateway, mgr, cm, evLog)) // 尾部斜杠=前缀匹配(/admin/*)
 			go func() {
 				ln, err := net.Listen("tcp", admListen)
 				if err != nil {
