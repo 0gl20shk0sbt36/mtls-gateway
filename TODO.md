@@ -7,6 +7,10 @@
 - [ ] **重写 `certsource_windows.go`(系统证书库源)** — certstore v0.1.3(2021 停更)对 RSACng 私钥签名失败(`bad private key`), 导致 `-source system` 在 Windows 上无法做 mTLS。改为直接用 x/sys/windows 的 CNG API(NCryptSignHash 需自声明), 枚举 CurrentUser\My + 过滤 issuer。当前 Windows relay 已改用文件证书(dir 源)顶住
 - [ ] **WebUI 连接设置加"客户端证书源"字段** — `cert_dir`(填路径=文件源 dir, 留空=系统证书库); 改配置后热重建证书源(relay 需加 SetSource)。配套: relay 启动时配置优先于 `-source` 参数
 - [ ] **WebUI 连接设置去掉 lang 输入框** — 设置界面已有"语言"选项(重复); 后端 settings API 保留 lang 字段
+- [ ] **统一授权模型(管理端点 vs 业务路由两套概念)** — /info、/admin 是内置硬编码端点, 业务走 mappings+roles。目标: /info 角色可配置(默认 ["null"] 匿名)、admin 强制 admin_role、全部走同一 Authorize。改动较大(用户已定: 交接给另一个 agent 做, 见 docs/handoff-20260821.md)
+- [ ] **服务端 config 备份权限 bug** — 2026-08-21 22:18 日志 `config backup failed: open /etc/mtls-gw/config.toml.bak-*: permission denied (仍继续写入)`: /etc/mtls-gw 目录写备份失败(服务以何身份运行?目录权限?)
+- [ ] **服务端内存 Router 与磁盘不一致(22:18 事件)** — 配置写入后内存 services 变空(重启才恢复, 磁盘配置完好)。疑 configmgr 热重载在落盘失败时状态不一致, 需排查根因(潜在复现)
+- [ ] **admin 证书到期重签** — admin/gw-admin 证书 2026-09-16 前后到期, 到期前用 mtls-gw-cli 重签(admin_days=30)
 - [ ] **推送代码到云端** — 150+ 提交全本地未推(用户纪律: 不主动推送, 等指示)
 - [ ] **部署最新二进制到 Windows** — win2 常驻进程(mtls-e2e/mtls-gw2/mtls-echo)仍是旧版
 - [ ] **生产 mtls-gw.service 重部署** — v4 TOML 重写后未部署(当前 DSH 9443 下线)
