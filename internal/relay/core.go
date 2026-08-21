@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -118,9 +119,22 @@ func (r *Relay) loadCertLang(certID, lang string) (tls.Certificate, error) {
 		return tls.Certificate{}, localizeLoadErr(l, certID, err)
 	}
 	r.mu.Lock()
+	if old, ok2 := r.certCache[certID]; ok2 {
+		closeCertKey(old.cert) // 释放旧 signer(Windows CNG 密钥句柄; 普通内存密钥无 Close, 忽略)
+	}
 	r.certCache[certID] = certCacheEntry{cert: c, loadedAt: time.Now()}
 	r.mu.Unlock()
 	return c, nil
+}
+
+// closeCertKey 释放证书私钥资源(实现 io.Closer 的 signer, 如 Windows CNG NCRYPT 句柄)。
+// fileSource/dirSource 的内存密钥无 Close, 静默忽略。
+func closeCertKey(tc tls.Certificate) {
+	if tc.PrivateKey != nil {
+		if cl, ok := tc.PrivateKey.(io.Closer); ok {
+			_ = cl.Close()
+		}
+	}
 }
 
 // cfgListenHost 返回当前本地监听地址
@@ -163,12 +177,15 @@ func (r *Relay) applyServerCA(serverCA string) error {
 }
 
 // SetSource 热替换证书来源 (WebUI 连接设置改 cert_dir 后调用)。
-// 立即生效: 清空证书缓存(下次加载从新源取), 并按当前 server_ca 重新过滤系统证书源。
+// 立即生效: 清空证书缓存(释放旧 signer 资源 + 下次加载从新源取), 并按当前 server_ca 重新过滤系统证书源。
 // 新来源构建失败由调用方负责(本方法只接受已构建好的源)。
 func (r *Relay) SetSource(src certsource.Source) {
 	r.mu.Lock()
 	r.src = src
-	r.certCache = map[string]certCacheEntry{}
+	for k, e := range r.certCache {
+		closeCertKey(e.cert)
+		delete(r.certCache, k)
+	}
 	subject := r.caSubject
 	r.mu.Unlock()
 	if subject != "" {

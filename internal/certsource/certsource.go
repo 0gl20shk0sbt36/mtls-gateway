@@ -8,7 +8,9 @@ package certsource
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
+	"strings"
 )
 
 // SourceType 证书来源类型
@@ -46,11 +48,15 @@ type LoaderWithPassword interface {
 	LoadWithPassword(id, password string) (tls.Certificate, error)
 }
 
-// OpenSystem 打开"系统证书源" (跨平台分派):
-//   - Windows: 系统证书库 "My" 存储
-//   - Linux:   统一证书目录 (~/.mtls-gw/certs, /etc/mtls-gw/certs)
+// OpenSystem 打开"系统证书源"(跨平台分派) — system = 平台原生身份库:
 //
-// 由平台实现文件提供 (certsource_windows.go / certsource_linux.go)。
+//	Windows: 系统证书库「个人/My」(CNG: 枚举 + NCryptSignHash, 支持 RSACng/TPM 硬件私钥)
+//	Linux:   约定统一证书目录(~/.mtls-gw/certs, /etc/mtls-gw/certs; 无统一系统证书库)
+//	Android: 应用私有证书目录(沙箱无统一系统证书库; 未来可扩展 Keystore)
+//	macOS:   暂未支持(可扩展 Keychain)
+//
+// 由平台实现文件提供(certsource_windows.go / certsource_linux.go / certsource_android.go)。
+// 新增平台 = 加一个 <platform>_impl 文件实现 openSystemImpl, 无需改核心层。
 func OpenSystem() (Source, error) { return openSystemImpl() }
 
 // OpenDir 打开指定目录扫描源 (每子目录一个证书, 或顶层 *.p12)
@@ -107,4 +113,19 @@ func ApplyIssuerFilter(src Source, caSubject string) {
 	if f, ok := src.(interface{ SetIssuerFilter(string) }); ok {
 		f.SetIssuerFilter(caSubject)
 	}
+}
+
+// acceptCert 证书展示过滤公共规则(winSource 与 dirSource 共用, 平台无关):
+//   - issuerFilter 非空: 按 CA 主题匹配(精确或包含) — 系统证书库优先用它;
+//   - 否则 filterOrg 非空且非 showAll: 按签发 org 匹配(isGwIssued);
+//   - 其余: 展示。
+func acceptCert(issuerFilter, filterOrg string, showAll bool, cert *x509.Certificate) bool {
+	if issuerFilter != "" {
+		issuer := cert.Issuer.String()
+		return issuer == issuerFilter || strings.Contains(issuer, issuerFilter)
+	}
+	if filterOrg == "" || showAll {
+		return true
+	}
+	return isGwIssued(cert, filterOrg)
 }

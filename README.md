@@ -149,7 +149,7 @@ relay 配置(`relay.json`):
 ```
 
 - `server_addr` = `/info` 发现端点; `admin_addr` = admin 端点(证书管理, 独立)
-- `cert_dir` = 客户端证书源: 空=系统证书库(Windows 证书库 / Linux `~/.mtls-gw/certs`), 非空=目录源(每子目录一个证书); 配置优先于启动参数 `-source`/`-source-arg`
+- `cert_dir` = 客户端证书源: 空=系统证书库(平台原生身份库: Windows 系统证书库「个人/My」CNG / Linux 约定目录 `~/.mtls-gw/certs` / Android 应用私有目录), 非空=目录源(每子目录一个证书); 配置优先于启动参数 `-source`/`-source-arg`
 - 隧道按**服务**建(一个服务含多个通道), 本地路由可覆盖端口/路径
 - 证书轮换/服务端地址变化自动重建隧道
 

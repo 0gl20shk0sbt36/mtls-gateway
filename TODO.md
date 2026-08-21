@@ -4,7 +4,7 @@
 
 ## 高优先级(功能/发布相关)
 
-- [ ] **重写 `certsource_windows.go`(系统证书库源)** — certstore v0.1.3(2021 停更)对 RSACng 私钥签名失败(`bad private key`), 导致 `-source system` 在 Windows 上无法做 mTLS。改为直接用 x/sys/windows 的 CNG API(NCryptSignHash 需自声明), 枚举 CurrentUser\My + 过滤 issuer。当前 Windows relay 已改用文件证书(dir 源)顶住
+- [x] **重写 `certsource_windows.go`(系统证书库源, 代码完成, 待 win2 真机验证 RSACng)** — 弃用 certstore(2021 停更, RSACng 签名失败)。零新依赖用 x/sys/windows 自实现: CertOpenStore/CertEnumCertificatesInStore 枚举 CurrentUser\My + CryptAcquireCertificatePrivateKey(CRYPT_ACQUIRE_ONLY_NCRYPT_KEY_FLAG 强制 CNG) + 自声明 NCryptSignHash(签名包装参考 google/certtostore: RSA PKCS1/PSS padding + ECDSA raw→DER)。配套跨平台兼容层: system 源语义矩阵(Windows=My 存储 / Linux=约定目录 / Android=应用私有目录预留 / macOS=未支持), 过滤规则抽公共 acceptCert; relay 证书缓存替换时释放旧 signer(io.Closer, 防 NCRYPT 句柄泄漏)。三平台(linux/windows/android)编译+vet 通过
 - [x] **WebUI 连接设置加"客户端证书源"字段** — `cert_dir`(填路径=文件源 dir, 留空=系统证书库); 改配置后热重建证书源(relay 加 SetSource: 清缓存+按 server_ca 重新过滤)。配套: relay 启动时配置优先于 `-source` 参数(ResolveCertSource)
 - [x] **WebUI 连接设置去掉 lang 输入框** — 设置界面已有"语言"选项(header 下拉); 后端 settings API 保留 lang 字段
 - [ ] **统一授权模型(管理端点 vs 业务路由两套概念)** — /info、/admin 是内置硬编码端点, 业务走 mappings+roles。目标: /info 角色可配置(默认 ["null"] 匿名)、admin 强制 admin_role、全部走同一 Authorize。改动较大(用户已定: 交接给另一个 agent 做, 见 docs/handoff-20260821.md)

@@ -33,12 +33,9 @@ func openDirImpl(root string) (Source, error) {
 // SetFilter 设置是否只展示给定 org 签发的证书
 func (d *dirSource) SetFilter(org string, showAll bool) { d.filterOrg, d.showAll = org, showAll }
 
-// accept 是否展示该证书 (无过滤要求 / 显示全部 / 由目标 org 签发)
+// accept 是否展示该证书(与 winSource 共用 acceptCert 公共规则)
 func (d *dirSource) accept(cert *x509.Certificate) bool {
-	if d.filterOrg == "" || d.showAll {
-		return true
-	}
-	return isGwIssued(cert, d.filterOrg)
+	return acceptCert("", d.filterOrg, d.showAll, cert)
 }
 
 // List 扫描目录, 返回每条身份元数据

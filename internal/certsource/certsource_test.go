@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -123,6 +124,43 @@ func TestNew_OpenSystem(t *testing.T) {
 	// verify enum values exist
 	if File != "file" || Dir != "dir" || System != "system" {
 		t.Fatalf("const mismatch")
+	}
+}
+
+// TestAcceptCert 公共过滤规则(winSource/dirSource 共用): issuer 匹配 / org 匹配 / showAll / 空过滤
+func TestAcceptCert(t *testing.T) {
+	ca := genTestCert(t, "gw-ca", "mtls-gw", "dev")
+	cert, err := parseCertFromPEM(ca.CertPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	issuer := cert.Issuer.String()
+	if !strings.Contains(issuer, "gw-ca") {
+		t.Fatalf("issuer should contain gw-ca: %s", issuer)
+	}
+	// issuer 精确/包含匹配
+	if !acceptCert(issuer, "", false, cert) {
+		t.Fatal("issuer 精确匹配应展示")
+	}
+	if !acceptCert("gw-ca", "", false, cert) {
+		t.Fatal("issuer 包含匹配应展示")
+	}
+	if acceptCert("other-ca", "", false, cert) {
+		t.Fatal("issuer 不匹配应拒绝")
+	}
+	// org 过滤(issuer 优先, 传空)
+	if !acceptCert("", "mtls-gw", false, cert) {
+		t.Fatal("org 匹配应展示")
+	}
+	if acceptCert("", "other-org", false, cert) {
+		t.Fatal("org 不匹配应拒绝")
+	}
+	// showAll / 空过滤
+	if !acceptCert("", "other-org", true, cert) {
+		t.Fatal("showAll 应展示")
+	}
+	if !acceptCert("", "", false, cert) {
+		t.Fatal("空过滤应展示")
 	}
 }
 
