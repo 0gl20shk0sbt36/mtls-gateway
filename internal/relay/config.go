@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 )
 
 // CertSel 证书选择 (一证书可复用于多条隧道)
@@ -97,6 +98,21 @@ func LoadConfig(path string) (RelayConfig, error) {
 	return cfg, nil
 }
 
+// DefaultWebUILogPath 返回 WebUI 事件日志的默认路径(分平台):
+// Windows = exe 同目录(便携式); Linux/其他 = XDG cache 目录(不污染安装目录)
+func DefaultWebUILogPath() string {
+	if runtime.GOOS == "windows" {
+		if exe, err := os.Executable(); err == nil {
+			return filepath.Join(filepath.Dir(exe), "webui.log")
+		}
+		return "webui.log"
+	}
+	if dir, err := os.UserCacheDir(); err == nil {
+		return filepath.Join(dir, "mtls-relay", "webui.log")
+	}
+	return filepath.Join(os.TempDir(), "mtls-relay-webui.log")
+}
+
 // EnsureDefaultConfig 配置文件不存在时自动生成默认配置模板(首次启动初始化)。
 // 已存在返回 (false, nil); 生成成功返回 (true, nil)。目录自动创建。
 func EnsureDefaultConfig(path string) (bool, error) {
@@ -105,7 +121,11 @@ func EnsureDefaultConfig(path string) (bool, error) {
 	} else if !os.IsNotExist(err) {
 		return false, fmt.Errorf("stat config %s: %w", path, err)
 	}
-	def := RelayConfig{ListenHost: DefaultListenHost, Tunnels: []Tunnel{}}
+	def := RelayConfig{
+		ListenHost:   DefaultListenHost,
+		WebUILogFile: DefaultWebUILogPath(), // 分平台默认日志路径; 空=禁用
+		Tunnels:      []Tunnel{},
+	}
 	if err := SaveConfig(path, def); err != nil {
 		return false, err
 	}

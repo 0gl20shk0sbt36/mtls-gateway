@@ -35,3 +35,14 @@ func TestEnsureDefaultConfig(t *testing.T) {
 		t.Fatalf("已存在时: created=%v err=%v, want false,nil", created, err)
 	}
 }
+
+// 分平台默认日志路径: 非空且指向 .log 文件
+func TestDefaultWebUILogPath(t *testing.T) {
+	p := DefaultWebUILogPath()
+	if p == "" {
+		t.Fatal("默认日志路径不应为空")
+	}
+	if filepath.Ext(p) != ".log" {
+		t.Fatalf("应为 .log 文件: %s", p)
+	}
+}
