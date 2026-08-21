@@ -17,8 +17,9 @@ import (
 // Windows 系统证书库: 打开「个人 / My」存储, 列出所有带私钥的身份,
 // 用户选择其一用于 mTLS 客户端认证. 默认只展示 mtls-gw 签发的身份.
 type winSource struct {
-	filterOrg string
-	showAll   bool
+	filterOrg    string
+	issuerFilter string // CA 主题; 非空时按 issuer 精确匹配(只展示该 CA 签发的)
+	showAll      bool
 }
 
 func openSystemImpl() (Source, error) {
@@ -28,8 +29,14 @@ func openSystemImpl() (Source, error) {
 // SetFilter 设置是否只展示给定 org 签发的证书
 func (s *winSource) SetFilter(org string, showAll bool) { s.filterOrg, s.showAll = org, showAll }
 
-// accept 是否展示该证书 (无过滤要求 / 显示全部 / 由目标 org 签发)
+// SetIssuerFilter 按 CA 主题过滤(issuer 精确匹配); 空=不过滤
+func (s *winSource) SetIssuerFilter(caSubject string) { s.issuerFilter = caSubject }
+
+// accept 是否展示该证书 (issuer 匹配 CA 主题 / 无过滤要求 / 显示全部 / 由目标 org 签发)
 func (s *winSource) accept(cert *x509.Certificate) bool {
+	if s.issuerFilter != "" {
+		return cert.Issuer.String() == s.issuerFilter || strings.Contains(cert.Issuer.String(), s.issuerFilter)
+	}
 	if s.filterOrg == "" || s.showAll {
 		return true
 	}

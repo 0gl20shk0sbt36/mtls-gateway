@@ -97,3 +97,14 @@ func ApplyGwFilter(src Source, org string, showAll bool) {
 		f.SetFilter(org, showAll)
 	}
 }
+
+// ApplyIssuerFilter 按 CA 主题过滤证书源: 只展示由该 CA(issuer 匹配主题)签发的证书。
+// 空主题 = 不过滤。用于 system 证书源(只显示自家 CA 签发的身份, 过滤 Adobe 等无关证书)。
+func ApplyIssuerFilter(src Source, caSubject string) {
+	if caSubject == "" {
+		return
+	}
+	if f, ok := src.(interface{ SetIssuerFilter(string) }); ok {
+		f.SetIssuerFilter(caSubject)
+	}
+}

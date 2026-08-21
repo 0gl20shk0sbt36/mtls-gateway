@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"log"
 	"net"
@@ -137,7 +138,31 @@ func (r *Relay) applyServerCA(serverCA string) error {
 		return fmt.Errorf("parse server_ca %s failed (拒绝降级系统根)", serverCA)
 	}
 	r.rootCAs = pool
+	// 用 CA 主题过滤系统证书源: 只展示由该 CA 签发的身份(过滤 Adobe 等无关证书)
+	if ca := firstCert(pemBytes); ca != nil && r.src != nil {
+		certsource.ApplyIssuerFilter(r.src, ca.Subject.String())
+	}
 	return nil
+}
+
+// firstCert 解析 PEM 里的第一张证书(用于提取 CA 主题)
+func firstCert(pemBytes []byte) *x509.Certificate {
+	rest := pemBytes
+	for {
+		var block *pem.Block
+		block, rest = pem.Decode(rest)
+		if block == nil {
+			return nil
+		}
+		if block.Type != "CERTIFICATE" {
+			continue
+		}
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			return nil
+		}
+		return cert
+	}
 }
 
 // loadCert 从来源加载证书(CertID), 命中缓存则复用; 与 loadCertLang 同逻辑(用默认语言)
