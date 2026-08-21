@@ -241,3 +241,91 @@ func TestAdminHandler_ReplaceAll(t *testing.T) {
 		t.Fatalf("replace not applied: %+v", e.cm.Mappings())
 	}
 }
+
+// H-?: POST /admin/reload — 全量热重载(DB + 配置), admin 证书保护; 非 admin 403
+func TestAdminHandler_Reload(t *testing.T) {
+	e := newAdminEnv(t)
+
+	// 非 admin → 403
+	resp, _ := e.do(e.userTLS, "POST", "/admin/reload", "")
+	if resp.StatusCode != 403 {
+		t.Fatalf("non-admin reload should be 403, got %d", resp.StatusCode)
+	}
+
+	// 准备: cm.path 写初始配置文件(ReloadFromDisk 读它)
+	initial := "roles = [\"svc-a\"]\n\n[[mappings]]\nid = \"m1\"\nlisten = \":9601\"\ntarget = \"http://127.0.0.1:1\"\n\n[[services]]\nname = \"svc-a\"\nchannels = [\"m1\"]\nroles = [\"svc-a\"]\n"
+	if err := os.WriteFile(e.cm.ConfigPath(), []byte(initial), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// DB 变更(模拟管理进程写库): 新证书 + 配置变更(:9602)
+	ghost := genClientCert(t, t.TempDir(), "newdev", e.caCert, e.caKey)
+	leaf, _ := x509.ParseCertificate(ghost.Certificate[0])
+	if err := e.store.Upsert(db.CertRecord{Serial: leaf.SerialNumber.String(), Name: "newdev", Purposes: []string{"svc-a"}, Status: "enabled", IssuedAt: time.Now().Format(time.RFC3339), ExpiresAt: "2099-01-01"}); err != nil {
+		t.Fatal(err)
+	}
+	updated := "roles = [\"svc-a\"]\n\n[[mappings]]\nid = \"m1\"\nlisten = \":9601\"\ntarget = \"http://127.0.0.1:1\"\n\n[[mappings]]\nid = \"m2\"\nlisten = \":9602\"\ntarget = \"http://127.0.0.1:2\"\n\n[[services]]\nname = \"svc-a\"\nchannels = [\"m1\", \"m2\"]\nroles = [\"svc-a\"]\n"
+	if err := os.WriteFile(e.cm.ConfigPath(), []byte(updated), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// admin 调 reload
+	resp2, body := e.do(e.adminTLS, "POST", "/admin/reload", "")
+	if resp2.StatusCode != 200 {
+		t.Fatalf("reload should be 200, got %d: %s", resp2.StatusCode, body)
+	}
+	// 配置热重载生效: :9602 可路由
+	if n := len(e.cm.Mappings()); n != 2 {
+		t.Fatalf("reload 后 mappings 应为 2, got %d", n)
+	}
+	if rt := e.cm.Router().Match("9602", "/"); rt == nil {
+		t.Fatal("reload 后 :9602 应可匹配")
+	}
+	// DB 热重载生效: 新证书可认证
+	req := httptest.NewRequest("GET", "https://gw/", nil)
+	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{leaf}}
+	if rec, err := e.gw.Authorize(req); err != nil || rec.Name != "newdev" {
+		t.Fatalf("reload 后新证书应可认证: rec=%+v err=%v", rec, err)
+	}
+	// 事件日志记录 reload
+	data, _ := os.ReadFile(e.evPath)
+	if !strings.Contains(string(data), "热重载") {
+		t.Fatalf("事件日志应记录 reload: %s", data)
+	}
+}
+
+// H-?: reload 配置失败(重复 listen) → 报错; DB 侧已生效(先 DB 后配置), 配置保持旧状态
+func TestAdminHandler_ReloadBadConfig(t *testing.T) {
+	e := newAdminEnv(t)
+	initial := "roles = [\"svc-a\"]\n\n[[mappings]]\nid = \"m1\"\nlisten = \":9601\"\ntarget = \"http://127.0.0.1:1\"\n\n[[services]]\nname = \"svc-a\"\nchannels = [\"m1\"]\nroles = [\"svc-a\"]\n"
+	if err := os.WriteFile(e.cm.ConfigPath(), []byte(initial), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// DB 变更(先 DB 后配置, DB 会成功) + 坏配置(重复 listen → 配置失败)
+	ghost := genClientCert(t, t.TempDir(), "ghost2", e.caCert, e.caKey)
+	leaf, _ := x509.ParseCertificate(ghost.Certificate[0])
+	if err := e.store.Upsert(db.CertRecord{Serial: leaf.SerialNumber.String(), Name: "ghost2", Purposes: []string{"svc-a"}, Status: "enabled", IssuedAt: time.Now().Format(time.RFC3339), ExpiresAt: "2099-01-01"}); err != nil {
+		t.Fatal(err)
+	}
+	bad := "roles = [\"svc-a\"]\n\n[[mappings]]\nid = \"m1\"\nlisten = \":9601\"\ntarget = \"http://127.0.0.1:1\"\n\n[[mappings]]\nid = \"m3\"\nlisten = \":9601\"\ntarget = \"http://127.0.0.1:3\"\n"
+	if err := os.WriteFile(e.cm.ConfigPath(), []byte(bad), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	resp, _ := e.do(e.adminTLS, "POST", "/admin/reload", "")
+	if resp.StatusCode == 200 {
+		t.Fatal("坏配置 reload 应报错")
+	}
+	// 配置保持旧状态(1 个 mapping, :9602 不存在)
+	if n := len(e.cm.Mappings()); n != 1 {
+		t.Fatalf("reload 失败后配置应保持 1 个 mapping, got %d", n)
+	}
+	if rt := e.cm.Router().Match("9601", "/"); rt == nil {
+		t.Fatal("旧路由 :9601 应保持")
+	}
+	// DB 侧已生效(先 DB 后配置): 新证书可认证(下次修复配置再 reload 即可收敛)
+	req := httptest.NewRequest("GET", "https://gw/", nil)
+	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{leaf}}
+	if rec, err := e.gw.Authorize(req); err != nil || rec.Name != "ghost2" {
+		t.Fatalf("DB 侧 reload 应已生效: rec=%+v err=%v", rec, err)
+	}
+}

@@ -153,3 +153,49 @@ func TestConfigManagerPersistFailureRollback(t *testing.T) {
 		t.Fatalf("AddMapping persist 失败应回滚, got %d mappings", n)
 	}
 }
+
+// TestConfigManagerReloadFromDisk 热重载: 配置文件变更后 ReloadFromDisk 生效; 坏配置失败保持旧状态
+func TestConfigManagerReloadFromDisk(t *testing.T) {
+	cm, path := testConfigManager(t, "mutable") // 初始: m1 :9601 + s1
+	// 写一份可解析的初始配置文件(ReloadFromDisk 读它)
+	initial := "roles = [\"x\"]\n\n[[mappings]]\nid = \"m1\"\nlisten = \":9601\"\ntarget = \"http://127.0.0.1:1\"\n\n[[services]]\nname = \"s1\"\nchannels = [\"m1\"]\nroles = [\"x\"]\n"
+	if err := os.WriteFile(path, []byte(initial), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// 配置变更: 新增 m2 :9602(模拟管理进程改配置)
+	updated := "roles = [\"x\"]\n\n[[mappings]]\nid = \"m1\"\nlisten = \":9601\"\ntarget = \"http://127.0.0.1:1\"\n\n[[mappings]]\nid = \"m2\"\nlisten = \":9602\"\ntarget = \"http://127.0.0.1:2\"\n\n[[services]]\nname = \"s1\"\nchannels = [\"m1\"]\nroles = [\"x\"]\n"
+	if err := os.WriteFile(path, []byte(updated), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := cm.ReloadFromDisk(); err != nil {
+		t.Fatalf("ReloadFromDisk: %v", err)
+	}
+	if n := len(cm.Mappings()); n != 2 {
+		t.Fatalf("reload 后 mappings 应为 2, got %d", n)
+	}
+	if rt := cm.Router().Match("9602", "/"); rt == nil {
+		t.Fatal("reload 后 :9602 应可匹配")
+	}
+
+	// 坏配置(重复 listen) → 报错 + 状态保持
+	bad := "roles = [\"x\"]\n\n[[mappings]]\nid = \"m1\"\nlisten = \":9601\"\ntarget = \"http://127.0.0.1:1\"\n\n[[mappings]]\nid = \"m3\"\nlisten = \":9601\"\ntarget = \"http://127.0.0.1:3\"\n"
+	if err := os.WriteFile(path, []byte(bad), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := cm.ReloadFromDisk(); err == nil {
+		t.Fatal("坏配置 reload 应报错")
+	}
+	if n := len(cm.Mappings()); n != 2 {
+		t.Fatalf("reload 失败后应保持旧状态(2 mappings), got %d", n)
+	}
+	if rt := cm.Router().Match("9602", "/"); rt == nil {
+		t.Fatal("reload 失败后旧路由 :9602 应保持")
+	}
+
+	// 配置文件缺失 → 报错(不得静默用默认值清空路由)
+	missing := filepath.Join(t.TempDir(), "nope.toml")
+	cm2 := NewConfigManager(missing, DefaultConfig(), nil)
+	if err := cm2.ReloadFromDisk(); err == nil {
+		t.Fatal("配置文件缺失 reload 应报错")
+	}
+}

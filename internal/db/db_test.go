@@ -197,3 +197,45 @@ func TestInsertUniqueNameConcurrent(t *testing.T) {
 		t.Fatalf("concurrent same-name inserts: %d succeeded, want exactly 1", okCount)
 	}
 }
+
+// TestReload 全量热重载: 管理进程(另一连接)写库后, Reload 重读可见新数据; 失败保持旧表
+func TestReload(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.db")
+	s1, err := Open(path) // 网关侧(只读消费者)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s1.Close()
+	s2, err := Open(path) // 管理进程侧(写者)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s2.Close()
+
+	rec := CertRecord{Serial: "2001", Name: "dev-a", Purposes: []string{"dsh"}, Status: "enabled", ExpiresAt: "2099-01-01"}
+	if err := s2.Upsert(rec); err != nil { // 管理进程写库
+		t.Fatal(err)
+	}
+	// 网关侧 reload 前不可见
+	if _, ok := s1.Get("2001"); ok {
+		t.Fatal("reload 前不应看到新记录")
+	}
+	if err := s1.Reload(); err != nil { // 网关 reload
+		t.Fatal(err)
+	}
+	got, ok := s1.Get("2001")
+	if !ok || got.Name != "dev-a" || !got.HasPurpose("dsh") {
+		t.Fatalf("reload 后应看到新记录: %+v ok=%v", got, ok)
+	}
+
+	// 吊销(管理进程) → reload 后网关侧 status 同步
+	if err := s2.Revoke("2001"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s1.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s1.Get("2001"); got.Status != "revoked" {
+		t.Fatalf("reload 后吊销状态应同步: %+v", got)
+	}
+}

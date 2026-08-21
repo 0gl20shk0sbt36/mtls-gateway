@@ -535,6 +535,22 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *ConfigManager, ev *eve
 		})
 	})
 
+	// POST /admin/reload — 全量热重载(DB + 配置): 管理进程改完 DB/配置后调用。
+	// 先 DB 后配置, 各自原子替换; 任一失败返回错误(成功侧已生效, 失败侧保持旧副本, 可重试)。
+	// admin 证书保护(adminHandler 外层统一 Authorize + IsAdmin)。
+	mux.HandleFunc("POST /admin/reload", func(w http.ResponseWriter, r *http.Request) {
+		if err := gw.Reload(); err != nil {
+			gwErr(w, r, fmt.Errorf("db reload: %w", err))
+			return
+		}
+		if err := cm.ReloadFromDisk(); err != nil {
+			gwErr(w, r, err)
+			return
+		}
+		cfgChanged("热重载: DB + 配置(管理进程触发)")
+		writeJSON(w, map[string]any{"ok": true})
+	})
+
 	// 整体替换保存 (批量编辑)
 	mux.HandleFunc("POST /admin/config", func(w http.ResponseWriter, r *http.Request) {
 		var b struct {
@@ -805,21 +821,31 @@ func DefaultConfig() Config {
 	}
 }
 
+// loadConfig 启动时加载配置; 解析/语义错误拒绝启动(静默用默认值可能带错安全配置)
 func loadConfig(path string) Config {
-	cfg := DefaultConfig()
-	if _, err := toml.DecodeFile(path, &cfg); err != nil {
+	cfg, err := parseConfig(path)
+	if err != nil {
 		if os.IsNotExist(err) {
 			log.Printf("config %s 不存在 (使用默认值)", path)
-		} else {
-			// 解析/语义错误: 静默用默认值可能带错 CA/证书/权限配置启动, 属安全风险
-			log.Fatalf("config %s: %v (配置文件错误, 拒绝启动)", path, err)
+			return DefaultConfig()
 		}
+		log.Fatalf("config %s: %v (配置文件错误, 拒绝启动)", path, err)
+	}
+	return cfg
+}
+
+// parseConfig 解析配置文件 + 完整校验, 返回 error(启动 fatal 包装 / reload 直接返回)。
+// 文件不存在也返回错误 — reload 时配置文件缺失必须报错, 不得静默用默认值清空运行中路由。
+func parseConfig(path string) (Config, error) {
+	cfg := DefaultConfig()
+	if _, err := toml.DecodeFile(path, &cfg); err != nil {
+		return cfg, err
 	}
 	if cfg.AdminRole == "" {
 		cfg.AdminRole = auth.DefaultAdminRole
 	}
 	if cfg.AdminRole == "any" {
-		log.Fatalf("admin_role 不能是保留字 \"any\"(会导致任意 any 证书获得管理权限)")
+		return cfg, fmt.Errorf("admin_role 不能是保留字 \"any\"(会导致任意 any 证书获得管理权限)")
 	}
 	switch cfg.ConfigMode {
 	case "", "mutable", "ephemeral", "immutable":
@@ -827,13 +853,13 @@ func loadConfig(path string) Config {
 			cfg.ConfigMode = "mutable"
 		}
 	default:
-		log.Fatalf("bad config_mode %q (mutable|ephemeral|immutable)", cfg.ConfigMode)
+		return cfg, fmt.Errorf("bad config_mode %q (mutable|ephemeral|immutable)", cfg.ConfigMode)
 	}
 	// 校验: 内置管理角色不得出现在业务服务 roles 里
 	for _, s := range cfg.Services {
 		for _, r := range s.Roles {
 			if r == cfg.AdminRole {
-				log.Fatalf("service %s roles 里不允许出现内置管理角色 %q", s.Name, cfg.AdminRole)
+				return cfg, fmt.Errorf("service %s roles 里不允许出现内置管理角色 %q", s.Name, cfg.AdminRole)
 			}
 		}
 	}
@@ -841,27 +867,27 @@ func loadConfig(path string) Config {
 	switch cfg.KeyType {
 	case "", "rsa":
 		if cfg.KeyBits != 0 && cfg.KeyBits != 2048 && cfg.KeyBits != 3072 && cfg.KeyBits != 4096 {
-			log.Fatalf("bad key_bits %d for rsa (2048/3072/4096)", cfg.KeyBits)
+			return cfg, fmt.Errorf("bad key_bits %d for rsa (2048/3072/4096)", cfg.KeyBits)
 		}
 	case "ecdsa":
 		if cfg.KeyBits != 0 && cfg.KeyBits != 256 && cfg.KeyBits != 384 && cfg.KeyBits != 521 {
-			log.Fatalf("bad key_bits %d for ecdsa (256/384/521)", cfg.KeyBits)
+			return cfg, fmt.Errorf("bad key_bits %d for ecdsa (256/384/521)", cfg.KeyBits)
 		}
 	default:
-		log.Fatalf("bad key_type %q (rsa|ecdsa)", cfg.KeyType)
+		return cfg, fmt.Errorf("bad key_type %q (rsa|ecdsa)", cfg.KeyType)
 	}
 	// 角色声明列表校验: 命名合法 + 去重 (服务 roles 校验在 NewRouter)
 	seen := map[string]bool{}
 	for _, r := range cfg.Roles {
 		if !proxy.ValidRoleName(r) {
-			log.Fatalf("bad role name %q (只允许字母/数字/下划线/连字符)", r)
+			return cfg, fmt.Errorf("bad role name %q (只允许字母/数字/下划线/连字符)", r)
 		}
 		if seen[r] {
-			log.Fatalf("duplicate role %q", r)
+			return cfg, fmt.Errorf("duplicate role %q", r)
 		}
 		seen[r] = true
 	}
-	return cfg
+	return cfg, nil
 }
 
 var cfgPath *string

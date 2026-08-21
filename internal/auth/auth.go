@@ -30,6 +30,10 @@ type Gateway struct {
 // CAPEM 返回 CA 证书 PEM(客户端用它过滤系统证书库, 只显示本 CA 签发的身份)
 func (g *Gateway) CAPEM() []byte { return g.caPEM }
 
+// Reload 从 DB 全量重载认证表(管理进程变更后经 /admin/reload 调用)。
+// 失败保持旧表继续服务(与"加载失败不切换"原则一致)。
+func (g *Gateway) Reload() error { return g.store.Reload() }
+
 // DefaultAdminRole 内置管理角色的默认名(可通过 config admin_role 覆盖; 勿用常用名)
 const DefaultAdminRole = "mtls-superadmin"
 

@@ -71,31 +71,49 @@ CREATE TABLE IF NOT EXISTS certs (
 	}
 
 	s := &Store{sqlite: sdb, table: make(map[string]CertRecord)}
-	if err := s.load(); err != nil {
+	if err := s.Reload(); err != nil {
 		return nil, err
 	}
 	return s, nil
 }
 
-// load 启动时全量加载到内存
-func (s *Store) load() error {
+// buildTable 从 SQLite 全量构建内存表(Open/Reload 共用; 不持锁, 调用方负责)
+func (s *Store) buildTable() (map[string]CertRecord, error) {
 	rows, err := s.sqlite.Query(`SELECT serial,name,purpose,ts_ip,status,issued_at,expires_at,fingerprint FROM certs`)
 	if err != nil {
-		return fmt.Errorf("load: %w", err)
+		return nil, fmt.Errorf("load: %w", err)
 	}
 	defer rows.Close()
+	next := make(map[string]CertRecord)
 	for rows.Next() {
 		var r CertRecord
 		var purposes string
 		if err := rows.Scan(&r.Serial, &r.Name, &purposes, &r.TSIP, &r.Status, &r.IssuedAt, &r.ExpiresAt, &r.Fingerprint); err != nil {
-			return fmt.Errorf("scan: %w", err)
+			return nil, fmt.Errorf("scan: %w", err)
 		}
 		if purposes != "" {
 			r.Purposes = strings.Split(purposes, ",")
 		}
-		s.table[r.Serial] = r
+		next[r.Serial] = r
 	}
-	return rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("load: %w", err)
+	}
+	return next, nil
+}
+
+// Reload 从 SQLite 全量重载内存表(管理进程变更后调用 /admin/reload)。
+// 先构建新表再原子替换(失败保持旧表继续服务, 与"加载失败不切换"原则一致)。
+// WAL 模式下读取最新已提交事务, 管理进程单写者不并发写。
+func (s *Store) Reload() error {
+	next, err := s.buildTable()
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.table = next
+	s.mu.Unlock()
+	return nil
 }
 
 // Get 内存查表 (请求验证路径, 零 IO)

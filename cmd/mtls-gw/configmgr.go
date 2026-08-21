@@ -73,6 +73,9 @@ func (m *ConfigManager) Roles() []string {
 	return append([]string(nil), m.cfg.Roles...)
 }
 
+// ConfigPath 返回配置文件路径(ReloadFromDisk / 测试用)
+func (m *ConfigManager) ConfigPath() string { return m.path }
+
 func (m *ConfigManager) checkWritable() error {
 	if m.mode == "immutable" {
 		return m.L.E("errImmutable")
@@ -99,6 +102,27 @@ func (m *ConfigManager) rebuild() error {
 		old.Close() // 释放旧路由的 idle 连接(热重载不累积 Transport)
 	}
 	m.router = r
+	return nil
+}
+
+// ReloadFromDisk 重读配置文件并全量热重载(管理进程改配置后经 /admin/reload 调用)。
+// 先解析+校验+构建新 router, 再原子替换(mode/Lang 同步); 任一步失败保持旧配置继续服务(失败不切换)。
+func (m *ConfigManager) ReloadFromDisk() error {
+	cfg, err := parseConfig(m.path)
+	if err != nil {
+		return fmt.Errorf("reload config: %w", err)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, err := proxy.NewRouter(cfg.Mappings, cfg.Services, cfg.Roles)
+	if err != nil {
+		return fmt.Errorf("reload config: %w", err)
+	}
+	if m.router != nil {
+		m.router.Close()
+	}
+	m.cfg, m.router, m.mode = cfg, r, cfg.ConfigMode
+	m.L = i18n.New(cfg.Lang)
 	return nil
 }
 
