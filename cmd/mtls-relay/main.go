@@ -53,6 +53,12 @@ func main() {
 	if err != nil {
 		log.Fatalf("manager: %v", err)
 	}
+	// 首次启动: 配置文件不存在 → 自动生成默认配置模板(用户编辑后重启生效)
+	if created, cerr := relay.EnsureDefaultConfig(cfgPath); cerr != nil {
+		log.Printf("生成默认配置文件失败: %v (继续用内存默认配置)", cerr)
+	} else if created {
+		log.Printf("已生成默认配置文件 %s; 请填写 server_addr / admin_addr(或经 WebUI 配置)后重启", cfgPath)
+	}
 	// 错误消息语言(配置 lang; 默认 zh)
 	if cfg := mgr.Config(); cfg.Lang != "" {
 		r.SetLang(cfg.Lang)

@@ -96,6 +96,21 @@ func LoadConfig(path string) (RelayConfig, error) {
 	return cfg, nil
 }
 
+// EnsureDefaultConfig 配置文件不存在时自动生成默认配置模板(首次启动初始化)。
+// 已存在返回 (false, nil); 生成成功返回 (true, nil)。目录自动创建。
+func EnsureDefaultConfig(path string) (bool, error) {
+	if _, err := os.Stat(path); err == nil {
+		return false, nil
+	} else if !os.IsNotExist(err) {
+		return false, fmt.Errorf("stat config %s: %w", path, err)
+	}
+	def := RelayConfig{ListenHost: DefaultListenHost, Tunnels: []Tunnel{}}
+	if err := SaveConfig(path, def); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // SaveConfig 将配置写回 JSON 文件 (目录自动创建)
 func SaveConfig(path string, cfg RelayConfig) error {
 	if cfg.ListenHost == "" {
