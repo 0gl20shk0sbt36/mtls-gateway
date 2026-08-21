@@ -175,9 +175,10 @@ function fmtBytes(n) {
 async function loadCerts() {
   try {
     const certs = await api("/api/certs");
-    const items = certs.map((c) => ({ value: c.id, label: `${c.common_name || "(无名)"}  [${c.id}]` }));
+    // 防御: 证书源异常时后端可能返回空/null, 不阻塞页面(显示空列表)
+    const items = (certs || []).map((c) => ({ value: c.id, label: `${c.common_name || "(无名)"}  [${c.id}]` }));
     setSel("adminCertList", items);
-    $("adminCertHint").textContent = certs.length ? `共 ${certs.length} 个证书可用；选一枚点"验证"。` : "未找到证书。请检查 daemon 证书来源配置。";
+    $("adminCertHint").textContent = items.length ? `共 ${items.length} 个证书可用；选一枚点"验证"。` : "未找到证书。请检查 daemon 证书来源配置。";
   } catch (e) {
     toast(e.message, true);
   }
