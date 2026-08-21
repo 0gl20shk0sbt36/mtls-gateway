@@ -35,7 +35,7 @@ func main() {
 		adminListen = flag.String("listen-admin", "127.0.0.1:18081", "本地管理 API 监听 (loopback)")
 		source      = flag.String("source", "system", "证书来源: system|dir|file")
 		sourceArg   = flag.String("source-arg", "", "dir=目录路径 / file=文件路径 (system 忽略)")
-		filterOrg   = flag.String("filter-org", "mtls-gw", "只展示该 org 签发的证书 (空=不过滤)")
+		filterOrg   = flag.String("filter-org", "", "只展示该 org 签发的证书 (空=不过滤; 如 CA 的 O=yyx 则传 yyx)")
 		showAll     = flag.Bool("show-all", false, "显示全部证书 (跳过 org 过滤)")
 		noWeb       = flag.Bool("no-web", false, "不启动管理 HTTP (纯中继, 无 WebUI/API)")
 		allowRemote = flag.Bool("allow-remote", false, "允许管理 API 监听非 loopback (⚠️ 无鉴权, 仅可信网络)")
