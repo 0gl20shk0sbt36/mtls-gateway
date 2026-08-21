@@ -394,7 +394,7 @@ func gatewayHandler(gw *auth.Gateway, cm *ConfigManager, port string, acc *event
 		// null 路由: 匿名放行(不需要证书; 任意来源可访问, 由部署方确保端口暴露面)
 		if rt.AllowsNull() {
 			auth.AuthLog(rt.Listen(), remote, "(anonymous)", true)
-			proxy.SanitizeHeader(r)
+			rt.ApplyHeaders(r, proxy.HeaderVars{RemoteIP: remote}) // 默认防伪造基线 + mapping.headers(证书变量为空)
 			router.Serve(rt, sw, r)
 			if acc != nil {
 				code := sw.status
@@ -426,7 +426,12 @@ func gatewayHandler(gw *auth.Gateway, cm *ConfigManager, port string, acc *event
 			return
 		}
 		auth.AuthLog(rt.Listen(), remote, rec.Serial, true)
-		proxy.SanitizeHeader(r)
+		rt.ApplyHeaders(r, proxy.HeaderVars{ // 默认防伪造基线 + mapping.headers(证书变量注入)
+			CertName:   rec.Name,
+			CertSerial: rec.Serial,
+			CertRoles:  strings.Join(rec.Purposes, ","),
+			RemoteIP:   remote,
+		})
 		router.Serve(rt, sw, r)
 		if acc != nil {
 			code := sw.status

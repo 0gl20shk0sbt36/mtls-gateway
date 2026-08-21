@@ -259,3 +259,102 @@ func TestSubstituteCleanDotSegments(t *testing.T) {
 		}
 	}
 }
+
+// —— 请求头改写(headers 配置 + 证书变量注入) ——
+
+// headerRouter 构造带 headers 规则的路由器
+func headerRouter(t *testing.T, rules []HeaderRule) *Router {
+	t.Helper()
+	r, err := NewRouter(
+		[]Mapping{{ID: "m1", Listen: ":9601", Target: "http://127.0.0.1:1", Headers: rules}},
+		[]ServiceCfg{{Name: "s1", Channels: []string{"m1"}, Roles: []string{"x"}}},
+		[]string{"x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+// TestHeaderRulesValidation 非法规则拒绝(新配置校验)
+func TestHeaderRulesValidation(t *testing.T) {
+	bad := [][]HeaderRule{
+		{{Op: "bogus", Name: "X-A"}}, // op 非法
+		{{Op: "set", Name: "  "}},    // name 空
+	}
+	for _, rules := range bad {
+		if _, err := NewRouter(
+			[]Mapping{{ID: "m1", Listen: ":9601", Target: "http://127.0.0.1:1", Headers: rules}},
+			[]ServiceCfg{{Name: "s1", Channels: []string{"m1"}, Roles: []string{"x"}}},
+			[]string{"x"}); err == nil {
+			t.Fatalf("非法规则应报错: %+v", rules)
+		}
+	}
+	// 合法规则通过
+	headerRouter(t, []HeaderRule{{Op: "set", Name: "X-Client-Cert", Value: "{cert_name}"}})
+}
+
+// TestApplyHeaders 规则执行: set(变量注入) / del / 默认基线 / 先删后设防伪造 / 匿名空值不注入
+func TestApplyHeaders(t *testing.T) {
+	rt := headerRouter(t, []HeaderRule{
+		{Op: "set", Name: "X-Client-Cert", Value: "{cert_name}"},
+		{Op: "set", Name: "X-Client-Serial", Value: "serial:{cert_serial}"},
+		{Op: "set", Name: "X-Client-Roles", Value: "{cert_roles}"},
+		{Op: "del", Name: "X-Strip-Me"},
+	}).Match("9601", "/")
+	if rt == nil {
+		t.Fatal("route not found")
+	}
+
+	req := httptest.NewRequest("GET", "/", nil)
+	// 客户端伪造身份头 + 伪造转发头 + 要删的头
+	req.Header.Set("X-Client-Cert", "FORGED")
+	req.Header.Set("X-Forwarded-For", "1.2.3.4")
+	req.Header.Set("X-Strip-Me", "x")
+	rt.ApplyHeaders(req, HeaderVars{CertName: "dev-1", CertSerial: "ABC123", CertRoles: "dsh,staff", RemoteIP: "100.64.0.2"})
+
+	// 先删后设: 伪造头被真实值覆盖
+	if got := req.Header.Get("X-Client-Cert"); got != "dev-1" {
+		t.Errorf("X-Client-Cert = %q, want dev-1(防伪造先删后设)", got)
+	}
+	if got := req.Header.Get("X-Client-Serial"); got != "serial:ABC123" {
+		t.Errorf("X-Client-Serial = %q", got)
+	}
+	if got := req.Header.Get("X-Client-Roles"); got != "dsh,staff" {
+		t.Errorf("X-Client-Roles = %q", got)
+	}
+	// 默认基线: 伪造转发头被删
+	if req.Header.Get("X-Forwarded-For") != "" {
+		t.Error("X-Forwarded-For 应被默认基线删除")
+	}
+	// del 规则
+	if req.Header.Get("X-Strip-Me") != "" {
+		t.Error("X-Strip-Me 应被 del 规则删除")
+	}
+}
+
+// TestApplyHeadersAnonymous 匿名(null 路由): 证书变量为空 → 不注入空头, del 仍执行
+func TestApplyHeadersAnonymous(t *testing.T) {
+	rt := headerRouter(t, []HeaderRule{
+		{Op: "set", Name: "X-Client-Cert", Value: "{cert_name}"},
+		{Op: "del", Name: "X-Anon-Strip"},
+	}).Match("9601", "/")
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("X-Anon-Strip", "x")
+	rt.ApplyHeaders(req, HeaderVars{RemoteIP: "100.64.0.9"}) // 无证书变量
+	if req.Header.Get("X-Client-Cert") != "" {
+		t.Error("匿名时证书头不应注入(空值)")
+	}
+	if req.Header.Get("X-Anon-Strip") != "" {
+		t.Error("匿名时 del 规则仍应执行")
+	}
+}
+
+// TestExpandVars 变量模板替换 + 未识别占位原样保留
+func TestExpandVars(t *testing.T) {
+	got := expandVars("cert={cert_name} serial={cert_serial} roles={cert_roles} ip={remote_ip} x={unknown}",
+		HeaderVars{CertName: "a", CertSerial: "b", CertRoles: "c", RemoteIP: "d"})
+	want := "cert=a serial=b roles=c ip=d x={unknown}"
+	if got != want {
+		t.Fatalf("expandVars = %q, want %q", got, want)
+	}
+}

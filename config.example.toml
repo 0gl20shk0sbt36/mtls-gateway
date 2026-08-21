@@ -56,6 +56,14 @@ admin_listen = ":9444"                # 管理 API 端口(仅 admin_role 证书�
 id = "dsh-main"                       # 助记符(服务用 id 或索引引用它)
 listen = ":9443"                      # 入口 :端口[/路径]; 同端口多路径按最长前缀匹配
 target = "http://127.0.0.1:3080"      # 后端地址(URL 带路径=前缀替换, nginx proxy_pass 语义)
+# ---- 请求头改写(示例, 默认配置不含; 供后端二级授权/独立管理模块识别证书身份) ----
+# op = set|del; value 支持动态变量(认证后求值): {cert_name} {cert_serial} {cert_roles} {remote_ip}
+# 安全: ① 身份头先删后设, 客户端无法伪造(后端只信网关) ② 匿名(null)路由时证书变量为空 → 不注入 ③ 默认防伪造基线(9 个转发头)始终执行
+# headers = [
+#   { op = "set", name = "X-Client-Cert",   value = "{cert_name}" },
+#   { op = "set", name = "X-Client-Serial", value = "{cert_serial}" },
+#   { op = "set", name = "X-Client-Roles",  value = "{cert_roles}" },
+# ]
 
 [[mappings]]
 id = "vault-admin"

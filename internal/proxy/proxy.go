@@ -25,9 +25,39 @@ import (
 
 // Mapping 一条映射(通道)配置 (TOML [[mappings]] 直接对应)
 type Mapping struct {
-	ID     string `toml:"id" json:"id"`         // 助记符(唯一; 判重仍靠 listen)
-	Listen string `toml:"listen" json:"listen"` // 入口 :port[/path]
-	Target string `toml:"target" json:"target"` // 后端 URL(带路径=前缀替换)
+	ID      string       `toml:"id" json:"id"`           // 助记符(唯一; 判重仍靠 listen)
+	Listen  string       `toml:"listen" json:"listen"`   // 入口 :port[/path]
+	Target  string       `toml:"target" json:"target"`   // 后端 URL(带路径=前缀替换)
+	Headers []HeaderRule `toml:"headers" json:"headers"` // 请求头改写规则(认证后求值); 空=仅默认防伪造基线
+}
+
+// HeaderRule 一条请求头改写规则。
+//   - Op: "set" | "del"
+//   - Value 支持动态变量(认证后求值): {cert_name} {cert_serial} {cert_roles}(逗号分隔) {remote_ip}
+//   - set 时变量为空(匿名/null 路由) → 删除该头, 不注入空值
+//   - 防伪造: 所有 set 先删后设(客户端自带同名头被覆盖), 且默认基线先删 9 个转发头
+type HeaderRule struct {
+	Op    string `toml:"op" json:"op"`
+	Name  string `toml:"name" json:"name"`
+	Value string `toml:"value" json:"value"`
+}
+
+// HeaderVars 头规则动态变量(认证后由网关填充)
+type HeaderVars struct {
+	CertName   string // {cert_name}   证书登记名(匿名=空)
+	CertSerial string // {cert_serial} 证书序列号(匿名=空)
+	CertRoles  string // {cert_roles}  角色列表, 逗号分隔(匿名=空)
+	RemoteIP   string // {remote_ip}   来源 IP
+}
+
+// expandVars 模板替换 {cert_*}/{remote_ip}
+func expandVars(s string, v HeaderVars) string {
+	return strings.NewReplacer(
+		"{cert_name}", v.CertName,
+		"{cert_serial}", v.CertSerial,
+		"{cert_roles}", v.CertRoles,
+		"{remote_ip}", v.RemoteIP,
+	).Replace(s)
 }
 
 // ServiceCfg 服务注册条目 (TOML [[services]] 直接对应)
@@ -51,12 +81,13 @@ type ServiceInfo struct {
 
 // route 编译后的映射
 type route struct {
-	id     string
-	port   string
-	path   string   // 入口路径前缀 ("/a" 或 "")
-	roles  []string // 引用本映射的所有服务的 roles 并集
-	target *url.URL
-	rp     *httputil.ReverseProxy
+	id      string
+	port    string
+	path    string   // 入口路径前缀 ("/a" 或 "")
+	roles   []string // 引用本映射的所有服务的 roles 并集
+	target  *url.URL
+	rp      *httputil.ReverseProxy
+	headers []HeaderRule // mapping.headers(请求头改写, 认证后应用)
 }
 
 // Router 按端口分组的路由器
@@ -122,7 +153,17 @@ func NewRouter(ms []Mapping, ss []ServiceCfg, declaredRoles []string) (*Router, 
 		if err != nil || u.Scheme == "" || u.Host == "" {
 			return nil, fmt.Errorf("mapping %s bad target %q", m.Listen, m.Target)
 		}
-		rt := &route{id: m.ID, port: port, path: path, target: u, rp: newReverseProxy(u)}
+		// 请求头改写规则校验: op 合法 + name 非空
+		for _, h := range m.Headers {
+			if h.Op != "set" && h.Op != "del" {
+				return nil, fmt.Errorf("mapping %s bad header op %q (set|del)", m.Listen, h.Op)
+			}
+			if strings.TrimSpace(h.Name) == "" {
+				return nil, fmt.Errorf("mapping %s header rule missing name", m.Listen)
+			}
+		}
+		rt := &route{id: m.ID, port: port, path: path, target: u, rp: newReverseProxy(u),
+			headers: append([]HeaderRule(nil), m.Headers...)}
 		r.routes = append(r.routes, rt)
 		pr := r.byPort[port]
 		if pr == nil {
@@ -414,4 +455,24 @@ func SanitizeHeader(r *http.Request) {
 	r.Header.Del("X-Original-URL")
 	r.Header.Del("X-Rewrite-URL")
 	r.Header.Del("Via")
+}
+
+// ApplyHeaders 转发前应用请求头改写: 先执行默认防伪造基线(SanitizeHeader),
+// 再按 mapping.headers 配置执行 set/del(变量认证后求值)。
+// 防伪造: set 一律先删后设(客户端自带同名头被覆盖, 后端拿到的身份头只能来自网关)。
+func (rt *route) ApplyHeaders(req *http.Request, v HeaderVars) {
+	SanitizeHeader(req) // 默认基线: 删 9 个转发头
+	for _, h := range rt.headers {
+		switch h.Op {
+		case "del":
+			req.Header.Del(h.Name)
+		case "set":
+			val := expandVars(h.Value, v)
+			if val == "" {
+				req.Header.Del(h.Name) // 变量为空(匿名路由): 不注入空头
+				continue
+			}
+			req.Header.Set(h.Name, val)
+		}
+	}
 }
