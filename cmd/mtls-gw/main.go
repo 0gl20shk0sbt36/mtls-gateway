@@ -6,7 +6,6 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -210,24 +209,8 @@ func main() {
 		}()
 	}
 
-	// 管理 API
-	mgr, err := api.NewManager(store, cfg.CA, cfg.CAKey, cfg.CertDir, cfg.SockPath, api.CertTemplate{
-		Org:         cfg.Org,
-		OU:          cfg.OU,
-		DefaultDays: cfg.DefaultDays,
-		AdminDays:   cfg.AdminDays,
-	}, cfg.AdminRole, cfg.KeyType, cfg.KeyBits, cfg.PwdLength, cfg.Roles)
-	if err != nil {
-		log.Fatalf("manager: %v", err)
-	}
-	mgr.SetDeclaredRoles(cfg.Roles)
-
-	// ===== Unix socket 管理通道 (本机直接 admin) =====
-	go func() {
-		if err := mgr.ServeUnixSocket(); err != nil {
-			log.Printf("unix socket: %v", err)
-		}
-	}()
+	// 注: 管理功能(签发/吊销/配置 CRUD/Unix socket)已拆分至独立 mtls-admin 进程(管理服务拆分)。
+	// 网关仅保留数据面: 认证 + 路由 + 转发 + /info 服务发现 + /admin/reload(供管理进程调用)。
 
 	// ===== 管理 API TCP (远程 Web, 需 admin_role 证书) =====
 	if admListen != "" {
@@ -235,7 +218,7 @@ func main() {
 			// 合并端口: /info(匿名引导) + /admin/*(admin 证书) 同端口路径区分
 			mm := http.NewServeMux()
 			mm.HandleFunc("/info", infoHandler(gateway, cm, accLog).ServeHTTP)
-			mm.Handle("/admin/", adminHandler(gateway, mgr, cm, evLog)) // 尾部斜杠=前缀匹配(/admin/*)
+			mm.Handle("/admin/", adminHandler(gateway, cm, evLog)) // 尾部斜杠=前缀匹配(/admin/*)
 			go func() {
 				ln, err := net.Listen("tcp", admListen)
 				if err != nil {
@@ -264,7 +247,7 @@ func main() {
 				}
 				log.Printf("admin api listening on %s (mTLS, admin cert required)", admListen)
 				admSrv := &http.Server{
-					Handler:           adminHandler(gateway, mgr, cm, evLog),
+					Handler:           adminHandler(gateway, cm, evLog),
 					ReadHeaderTimeout: 10 * time.Second,
 					ReadTimeout:       30 * time.Second,
 					WriteTimeout:      gwWriteTimeout,
@@ -501,8 +484,11 @@ func gwErr(w http.ResponseWriter, r *http.Request, err error) {
 	http.Error(w, msg, api.ErrStatus(err))
 }
 
-// 提供: 证书签发/吊销 (mgr) + 通道/服务/角色 CRUD (cm, 尊重 config_mode)
-func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *configmgr.ConfigManager, ev *eventlog.Logger) http.Handler {
+// adminHandler 网关管理端点(管理服务拆分后仅剩 reload):
+//   - POST /admin/reload — 全量热重载(DB + 配置), 由独立 mtls-admin 进程调用(admin 证书)
+//
+// 其余管理功能(签发/吊销/配置 CRUD)已拆分至 mtls-admin 进程, 网关不再提供。
+func adminHandler(gw *auth.Gateway, cm *configmgr.ConfigManager, ev *eventlog.Logger) http.Handler {
 	mux := http.NewServeMux()
 
 	// 记配置变更事件
@@ -512,20 +498,9 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *configmgr.ConfigManage
 		}
 	}
 
-	// 配置总览(UI 用): 模式 + 通道 + 服务 + 角色
-	mux.HandleFunc("GET /admin/config", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, map[string]any{
-			"mode":       cm.Mode(),
-			"admin_role": cm.AdminRole(),
-			"roles":      cm.Roles(),
-			"mappings":   cm.Mappings(),
-			"services":   cm.Services(),
-		})
-	})
-
 	// POST /admin/reload — 全量热重载(DB + 配置): 管理进程改完 DB/配置后调用。
 	// 先 DB 后配置, 各自原子替换; 任一失败返回错误(成功侧已生效, 失败侧保持旧副本, 可重试)。
-	// admin 证书保护(adminHandler 外层统一 Authorize + IsAdmin)。
+	// admin 证书保护(外层统一 Authorize + IsAdmin)。
 	mux.HandleFunc("POST /admin/reload", func(w http.ResponseWriter, r *http.Request) {
 		if err := gw.Reload(); err != nil {
 			gwErr(w, r, fmt.Errorf("db reload: %w", err))
@@ -539,177 +514,6 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *configmgr.ConfigManage
 		writeJSON(w, map[string]any{"ok": true})
 	})
 
-	// 整体替换保存 (批量编辑)
-	mux.HandleFunc("POST /admin/config", func(w http.ResponseWriter, r *http.Request) {
-		var b struct {
-			Mappings []proxy.Mapping    `json:"mappings"`
-			Services []proxy.ServiceCfg `json:"services"`
-			Roles    []string           `json:"roles"`
-		}
-		r.Body = http.MaxBytesReader(w, r.Body, 4<<20)
-		if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
-			gwErr(w, r, err)
-			return
-		}
-		if err := cm.ReplaceAll(b.Mappings, b.Services, b.Roles); err != nil {
-			gwErr(w, r, err)
-			return
-		}
-		mgr.SetDeclaredRoles(cm.Roles())
-		cfgChanged(fmt.Sprintf("批量保存配置: mappings=%d services=%d roles=%d", len(b.Mappings), len(b.Services), len(b.Roles)))
-		writeJSON(w, map[string]any{"ok": true})
-	})
-
-	// 角色声明列表 CRUD
-	mux.HandleFunc("POST /admin/roles", func(w http.ResponseWriter, r *http.Request) {
-		var b struct {
-			Name string `json:"name"`
-		}
-		r.Body = http.MaxBytesReader(w, r.Body, 4<<20)
-		if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
-			gwErr(w, r, err)
-			return
-		}
-		if err := cm.AddRole(b.Name); err != nil {
-			gwErr(w, r, err)
-			return
-		}
-		mgr.SetDeclaredRoles(cm.Roles())
-		cfgChanged("新增角色 " + b.Name)
-		writeJSON(w, map[string]any{"ok": true})
-	})
-	mux.HandleFunc("DELETE /admin/roles", func(w http.ResponseWriter, r *http.Request) {
-		name := r.URL.Query().Get("name")
-		if err := cm.DeleteRole(name); err != nil {
-			gwErr(w, r, err)
-			return
-		}
-		mgr.SetDeclaredRoles(cm.Roles())
-		cfgChanged("删除角色 " + name)
-		writeJSON(w, map[string]any{"ok": true})
-	})
-
-	// 通道 CRUD
-	mux.HandleFunc("GET /admin/mappings", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, map[string]any{"mappings": cm.Mappings()})
-	})
-	mux.HandleFunc("POST /admin/mappings", func(w http.ResponseWriter, r *http.Request) {
-		var m proxy.Mapping
-		r.Body = http.MaxBytesReader(w, r.Body, 4<<20)
-		if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
-			gwErr(w, r, err)
-			return
-		}
-		if err := cm.AddMapping(m); err != nil {
-			gwErr(w, r, err)
-			return
-		}
-		cfgChanged(fmt.Sprintf("新增通道 id=%s listen=%s target=%s", m.ID, m.Listen, m.Target))
-		writeJSON(w, map[string]any{"ok": true})
-	})
-	mux.HandleFunc("PUT /admin/mappings", func(w http.ResponseWriter, r *http.Request) {
-		var m proxy.Mapping
-		r.Body = http.MaxBytesReader(w, r.Body, 4<<20)
-		if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
-			gwErr(w, r, err)
-			return
-		}
-		if err := cm.UpdateMapping(r.URL.Query().Get("id"), m); err != nil {
-			gwErr(w, r, err)
-			return
-		}
-		cfgChanged(fmt.Sprintf("修改通道 id=%s listen=%s", r.URL.Query().Get("id"), m.Listen))
-		writeJSON(w, map[string]any{"ok": true})
-	})
-	mux.HandleFunc("DELETE /admin/mappings", func(w http.ResponseWriter, r *http.Request) {
-		if err := cm.DeleteMapping(r.URL.Query().Get("id")); err != nil {
-			gwErr(w, r, err)
-			return
-		}
-		cfgChanged("删除通道 id=" + r.URL.Query().Get("id"))
-		writeJSON(w, map[string]any{"ok": true})
-	})
-
-	// 服务 CRUD
-	mux.HandleFunc("GET /admin/services", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, map[string]any{"services": cm.Services()})
-	})
-	mux.HandleFunc("POST /admin/services", func(w http.ResponseWriter, r *http.Request) {
-		var s proxy.ServiceCfg
-		r.Body = http.MaxBytesReader(w, r.Body, 4<<20)
-		if err := json.NewDecoder(r.Body).Decode(&s); err != nil {
-			gwErr(w, r, err)
-			return
-		}
-		if err := cm.AddService(s); err != nil {
-			gwErr(w, r, err)
-			return
-		}
-		cfgChanged(fmt.Sprintf("新增服务 name=%s channels=%v roles=%v", s.Name, s.Channels, s.Roles))
-		writeJSON(w, map[string]any{"ok": true})
-	})
-	mux.HandleFunc("PUT /admin/services", func(w http.ResponseWriter, r *http.Request) {
-		var s proxy.ServiceCfg
-		r.Body = http.MaxBytesReader(w, r.Body, 4<<20)
-		if err := json.NewDecoder(r.Body).Decode(&s); err != nil {
-			gwErr(w, r, err)
-			return
-		}
-		if err := cm.UpdateService(r.URL.Query().Get("name"), s); err != nil {
-			gwErr(w, r, err)
-			return
-		}
-		cfgChanged(fmt.Sprintf("修改服务 name=%s channels=%v roles=%v", s.Name, s.Channels, s.Roles))
-		writeJSON(w, map[string]any{"ok": true})
-	})
-	mux.HandleFunc("DELETE /admin/services", func(w http.ResponseWriter, r *http.Request) {
-		if err := cm.DeleteService(r.URL.Query().Get("name")); err != nil {
-			gwErr(w, r, err)
-			return
-		}
-		cfgChanged("删除服务 name=" + r.URL.Query().Get("name"))
-		writeJSON(w, map[string]any{"ok": true})
-	})
-
-	// 证书管理 (mgr) — 包装记录签发/吊销事件(带对象详情)
-	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		sw := &statusWriter{ResponseWriter: w}
-		msg := ""
-		if r.URL.Path == "/admin/certs/revoke" || r.URL.Path == "/admin/certs/issue" {
-			if b, err := io.ReadAll(io.LimitReader(r.Body, 4<<20)); err == nil { // 限 4MB
-				r.Body = io.NopCloser(bytes.NewReader(b)) // 恢复 body 供下游解析
-				var rb struct {
-					Serial   string   `json:"serial"`
-					Name     string   `json:"name"`
-					Purposes []string `json:"purposes"`
-				}
-				if json.Unmarshal(b, &rb) == nil {
-					if r.URL.Path == "/admin/certs/revoke" && rb.Serial != "" {
-						msg = "吊销证书 serial=" + rb.Serial
-					}
-					if r.URL.Path == "/admin/certs/issue" {
-						msg = fmt.Sprintf("签发证书 name=%s purposes=%v", rb.Name, rb.Purposes)
-					}
-				}
-			}
-		}
-		mgr.HTTPHandler().ServeHTTP(sw, r)
-		if ev != nil && sw.status >= 200 && sw.status < 400 {
-			switch r.URL.Path {
-			case "/admin/certs/issue":
-				if msg == "" {
-					msg = "签发证书"
-				}
-				ev.Write(eventlog.Event{Type: "cert_issue", Msg: msg})
-			case "/admin/certs/revoke":
-				if msg == "" {
-					msg = "吊销证书"
-				}
-				ev.Write(eventlog.Event{Type: "cert_revoke", Msg: msg})
-			}
-		}
-	}))
-
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rec, err := gw.Authorize(r)
 		if err != nil {
@@ -720,7 +524,6 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *configmgr.ConfigManage
 			http.Error(w, "admin cert required", http.StatusForbidden)
 			return
 		}
-		r.Header.Set("X-Auth-Purpose", gw.AdminRole)
 		mux.ServeHTTP(w, r)
 	})
 }

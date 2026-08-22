@@ -65,9 +65,9 @@ CLI / Web 面板 / relay-admin ──▶ mtls-admin 管理 API
 | 阶段 | 内容 | 状态 |
 |---|---|---|
 | 0 | 请求头改写配置化 + 证书身份注入 | ✅ 已交付(04d04d9) |
-| 1 | 网关 reload API(db.Store.Reload + ConfigManager.ReloadFromDisk + /admin/reload) | ▶ 本阶段 |
-| 2 | mtls-admin 进程(搬 api.Manager + 配置写 + 调 reload) | 待 |
-| 3 | CLI/Web/relay 适配(admin_addr 指向管理进程) + config_mode 迁移 | 待 |
+| 1 | 网关 reload API(db.Store.Reload + ConfigManager.ReloadFromDisk + /admin/reload) | ✅ |
+| 2 | mtls-admin 进程(搬 api.Manager + 配置写 + 调 reload) | ✅ |
+| 3 | 网关瘦身 + CLI/Web/relay 适配(admin_addr 指向管理进程) + config_mode 迁移 | ✅ |
 
 ## 7. 安全
 
