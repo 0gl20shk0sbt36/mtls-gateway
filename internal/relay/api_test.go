@@ -1,11 +1,13 @@
 package relay
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -139,10 +141,12 @@ func TestSaveConfigAtomicRoundTrip(t *testing.T) {
 	if loaded.ServerAddr != "gw:9999" || len(loaded.Tunnels) != 1 || loaded.Tunnels[0].Service != "s1" {
 		t.Fatalf("round-trip mismatch: %+v", loaded)
 	}
-	// 权限 0600
-	st, _ := os.Stat(path)
-	if st.Mode().Perm() != 0o600 {
-		t.Fatalf("config perm = %v, want 0600", st.Mode().Perm())
+	// 权限 0600(Unix 语义; Windows 上 os.Stat 的 Perm() 恒 0666, 无意义)
+	if runtime.GOOS != "windows" {
+		st, _ := os.Stat(path)
+		if st.Mode().Perm() != 0o600 {
+			t.Fatalf("config perm = %v, want 0600", st.Mode().Perm())
+		}
 	}
 	// 无 tmp-* 残留(CreateTemp 前缀)
 	entries, _ := os.ReadDir(filepath.Dir(path))
@@ -352,15 +356,19 @@ func TestUpdateSettings(t *testing.T) {
 	if cfg.ServerAddr != sa || cfg.AdminAddr != aa || cfg.ListenHost != lh || cfg.Lang != lang || cfg.CertDir != cd {
 		t.Fatalf("cfg 未更新: %+v", cfg)
 	}
-	// 落盘验证: 字段写入 + tunnels 为 [] 而非 null
+	// 落盘验证: 字段写入 + tunnels 为 [] 而非 null。
+	// 用 unmarshal 比较字段值 — 字符串 Contains 在 Windows 上会因 JSON 反斜杠
+	// 转义(路径 C:\ → "C:\\")误判缺失(windows-test 抓出)。
 	raw, err := os.ReadFile(cfgPath)
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
-	for _, want := range []string{sa, aa, lh, lang, cd} {
-		if !strings.Contains(string(raw), want) {
-			t.Errorf("落盘配置缺 %q: %s", want, raw)
-		}
+	var saved RelayConfig
+	if err := json.Unmarshal(raw, &saved); err != nil {
+		t.Fatalf("unmarshal saved config: %v", err)
+	}
+	if saved.ServerAddr != sa || saved.AdminAddr != aa || saved.ListenHost != lh || saved.Lang != lang || saved.CertDir != cd {
+		t.Errorf("落盘字段不符: %+v", saved)
 	}
 	if !strings.Contains(string(raw), `"tunnels": []`) {
 		t.Errorf("落盘 tunnels 应为 []: %s", raw)

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -232,9 +233,12 @@ func TestConfigManagerPersistAtomic(t *testing.T) {
 			t.Fatalf("stale tmp: %s", e.Name())
 		}
 	}
-	st, _ := os.Stat(path)
-	if st.Mode().Perm() != 0o600 {
-		t.Fatalf("perm %v, want 0600", st.Mode().Perm())
+	// 权限 0600(Unix 语义; Windows 上 os.Stat 的 Perm() 恒 0666, 无意义)
+	if runtime.GOOS != "windows" {
+		st, _ := os.Stat(path)
+		if st.Mode().Perm() != 0o600 {
+			t.Fatalf("perm %v, want 0600", st.Mode().Perm())
+		}
 	}
 	// round-trip
 	data, _ := os.ReadFile(path)

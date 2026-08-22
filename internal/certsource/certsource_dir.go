@@ -164,8 +164,18 @@ func (d *dirSource) warnSymlinkEscape(err error) {
 
 // checkWithinRoot 符号链接防护: 解析后路径必须仍在 root 目录内。
 // EvalSymlinks 失败(路径缺失等)不在此拦截, 由调用方后续 stat/read 报错。
+// 注意: root 也须先 EvalSymlinks — Windows 会把 8.3 短名(RUNNER~1)展开为长名,
+// 只解析 p 时 Rel(root, real) 会算到 root 外 → 合法文件被误判逃逸(CI windows 抓出)。
 func (d *dirSource) checkWithinRoot(p string) error {
-	if real, err := filepath.EvalSymlinks(p); err == nil && !withinRoot(d.root, real) {
+	real, err := filepath.EvalSymlinks(p)
+	if err != nil {
+		return nil
+	}
+	rootReal, rerr := filepath.EvalSymlinks(d.root)
+	if rerr != nil {
+		rootReal = d.root
+	}
+	if !withinRoot(rootReal, real) {
 		return fmt.Errorf("%s resolves outside cert dir (symlink rejected)", p)
 	}
 	return nil
