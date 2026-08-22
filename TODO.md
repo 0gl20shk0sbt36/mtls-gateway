@@ -83,7 +83,7 @@
 - [ ] eventlog maxFile=0 仍保留 .1 一份历史(既有行为, 与"0=不留历史"语义不符)
 - [x] ~~README 2.2 端口表漏 reload_listen 一行~~ — 文档收尾已补; 存量合并端口配置(info==admin)升级需迁移配置(新示例已分离端口)仍待运维侧注意
 - [ ] 存量重名库打开报原始 SQLite 错误(UNIQUE 索引在 db.Open 失败; 功能仍正确拒绝, 提示不友好)
-- [ ] windows-test job 首次真实 runner 观察(AF_UNIX 黑盒测试依赖 Windows AF_UNIX 支持, 预期可过)
+- [x] ~~windows-test job 首次真实 runner 观察~~ — 2026-08-22 CI 首跑 3 轮修复后全绿(8.3 短名 EvalSymlinks 误判/CLI .exe/JSON 转义/Unix 权限断言守卫; AF_UNIX 黑盒测试在 Windows Server 2022 正常)
 
 ## 审计第三轮(3 个复审子代理复审 6e0a456, 2026-08-22)— 收敛
 安全/正确性/平台三复审均报**无必须再修**; 已顺手收编其建议(提交 8e8cf9a + b629c0f):

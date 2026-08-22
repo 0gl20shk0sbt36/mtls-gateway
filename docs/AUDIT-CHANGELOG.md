@@ -339,9 +339,21 @@ http.Server 三段复制、configmgr 9 CRUD 模板、DTO 复制、角色名校�
 ### 最终验证(2 复审 3b26f1a7/1a5e2e9b)
 平台/安全双复审对 8e8cf9a 均报无必须再修; 文档一致性收尾 e7271cf(README 端口表 reload_listen/ModeRestrict 权衡/config.example 日志段说明/CHANGELOG/arch/TODO + i18n 占位符后端 39 键前端 115 键 0 错配静态校验)
 
-### 测试全面性专项(独立审计, 2026-08-22 派发 → 已收敛)
-审计测试场景设计是否全面(负面路径/边界值/安全断言/失败回滚/并发/平台矩阵/回归护栏), 非覆盖率数字。
+### 测试全面性专项(独立审计, 2026-08-22 派发 → 已收敛)审计测试场景设计是否全面(负面路径/边界值/安全断言/失败回滚/并发/平台矩阵/回归护栏), 非覆盖率数字。
 **结论**: 护栏整体完备(22:18 落盘回滚/DSH 超时/日志注入/admin_role 启动校验/转发头伪造/403 脱敏/并发同名签发/configmgr 回滚/permissioncheck/E2E 主流程), 但有 4 高危 + 9 中危"有功能但零测试"缺口。
 **已补(本提交)**: SetAudit 审计回调触发与失败不触发 / IssueCert 保留字+未声明角色实测 / symlink 逃逸三处拒绝(List/Load/LoadWithPassword) + 合法身份不误伤 / api+relay 两侧 4MB 请求体上限 / UpdateSettings SetServerCA 失败回滚 / Start 中途失败回滚(监听释放) / db.Reload 失败保持旧表 / /info 吊销证书 403 + 匿名引导 200 / eventlog maxFiles=1 / NewManager 坏 CA/key / configmgr null+admin_role 禁声明+any 禁删 / /info 超 1MB 响应限流回归 / **新增 Windows 门控冒烟测试**(certsource_windows_test.go, 随 CI windows-test 真机跑 CNG 枚举, 填补"Windows CNG 零直接测试"缺口)。
 **补测发现的真实缺口**: `PUT /api/settings` 直接 json.Decode 绕过 MaxBytesReader 4MB 限流(5MB body 返回 200)→ 已改 decodeJSON 修复。
 **记录待补(低危/复杂)**: Reload 热切换失败恢复旧隧道(需起真实隧道+冲突端口编排, 成本高)、E2E 配置成功保存路径、accessEvent 字段断言、rolesMu 并发 -race、等价 listen 写法判重、Discover 失败路径。
+
+---
+
+## CI 首跑(2026-08-22 推送后, 3 轮修复 → 7/7 全绿)
+
+推送 183 个本地提交后 GitHub Actions 首次真机执行, 连续抓出本地无法暴露的问题:
+
+1. **windows-test 第 1 轮**: 管理桥测试字符串拼接 Windows 路径进 JSON(`\U` 非法转义) / CLI 黑盒测试 exec 路径缺 `.exe`(go build -o 在 Windows 自动追加)。
+2. **WebUI E2E setup.sh 单进程架构**(管理拆分遗留): 脚本只起 gw 经其 socket 签发, 拆分后签发在 mtls-admin → 必失败。重写为双进程: 两阶段 admin(先起签发 → 追加 reload 配置并重启激活 reload 客户端 → 再起 gw 全量载入)。端口 469xx→57xxx(与生产在用网关冲突, 永久避开); TOML 追加键放 [[services]] 之后会被当 service 字段吞掉 → awk 插到 [[mappings]] 前; relay.json 显式配 cert_dir(否则 UI 保存发空值触发 OpenSystem 失败)。
+3. **真功能缺口(管理拆分数据流)**: 证书签发/吊销从不触发网关 reload(只有 config CRUD 接 changed()) → api.Manager 加 SetPostChange 回调, mtls-admin 接 rc.Trigger(); 网关/管理进程预检前 MkdirAll 日志目录(新机器默认路径目录不存在 → 拒启)。
+4. **windows-test 第 2 轮**: certsource checkWithinRoot 的 EvalSymlinks 在 Windows 展开 8.3 短名(RUNNER~1)→ 合法证书全被误判 symlink 逃逸 → root 也先解析再比较; 另修 3 处 Windows 不兼容测试断言(JSON 反斜杠转义/Unix 0600 权限)。
+
+**结果**: 7 job 全绿(Test 1.25/1.26、windows-test、WebUI unit、WebUI E2E、windows/android build), E2E 本地 15/15 也真实跑通。
