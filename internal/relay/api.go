@@ -14,11 +14,9 @@ import (
 	"mtls-gateway/internal/api"
 	"mtls-gateway/internal/certsource"
 	"mtls-gateway/internal/eventlog"
+	"mtls-gateway/internal/httpshared"
 	"mtls-gateway/internal/i18n"
 )
-
-// maxBodyBytes 管理 API 请求体上限(防内存耗尽)
-const maxBodyBytes = 4 << 20
 
 // Manager 中继管理入口: 外壳(CLI/WebUI/GUI)唯一接口。
 // 持有当前 RelayConfig 并持久化到磁盘; 提供 HTTP 管理 API 及便捷方法。
@@ -771,39 +769,31 @@ func (m *Manager) Handler() http.Handler {
 
 func (m *Manager) ConfigPath() string { return m.cfgPath }
 
-func writeJSON(w http.ResponseWriter, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(v)
-}
+// writeJSON 输出 JSON 成功响应(统一信封, httpshared 共享)。
+func writeJSON(w http.ResponseWriter, v any) { httpshared.WriteJSON(w, v) }
 
-// writeErr 输出错误响应; 已知错误按请求语言(X-Lang)翻译, 其余原样;
-// 状态码判定顺序: ① 管理桥错误内嵌的 "HTTP NNN"(权威) → ② 原始错误关键字(本地化译文措辞变化会错标)
-func writeErr(w http.ResponseWriter, r *http.Request, err error) {
+// errStatus 错误→HTTP 状态码: ① 管理桥错误内嵌的 "HTTP NNN"(权威, 服务端已判定)
+// → ② 关键字回退(复用服务端权威表 api.StatusFromKeywords, 消除两处映射漂移)。
+func errStatus(err error) int {
 	raw := err.Error()
-	msg := raw
-	if r != nil {
-		if lang := r.Header.Get("X-Lang"); lang == "en" || lang == "zh" {
-			msg = localizeKnown(lang, err).Error()
-		}
-	}
-	code := http.StatusInternalServerError
-	// ① 优先解析管理桥错误里的真实状态码: "admin POST /x: HTTP 400: ..."(正则仅匹配 4xx/5xx)
 	if m := reHTTPStatus.FindStringSubmatch(raw); len(m) == 2 {
 		if c, e := strconv.Atoi(m[1]); e == nil {
-			code = c
+			return c
 		}
-	} else {
-		// ② 关键字回退: 复用服务端共享权威表(api.StatusFromKeywords), 消除两处映射漂移
-		code = api.StatusFromKeywords(raw)
 	}
-	w.Header().Set("Content-Type", "application/json; charset=utf-8") // 先设头再 WriteHeader
-	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+	return api.StatusFromKeywords(raw)
 }
+
+// writeErr 输出错误响应(统一 JSON 信封 httpshared.ErrWriter): 已知错误按请求
+// 语言(X-Lang)翻译, 其余原样; 状态码走 errStatus。
+var writeErr = httpshared.ErrWriter{
+	Status:   errStatus,
+	Localize: localizeKnown,
+}.Write
 
 // decodeJSON 解码请求体; 失败写 400 并返回 false
 func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes) // 4MB 上限
+	r.Body = http.MaxBytesReader(w, r.Body, httpshared.MaxBodyBytes) // 4MB 上限
 	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
 		writeErr(w, r, fmt.Errorf("bad request: %v", err))
 		return false

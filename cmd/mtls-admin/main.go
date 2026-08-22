@@ -13,7 +13,6 @@ package main
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -33,6 +32,7 @@ import (
 	"mtls-gateway/internal/configmgr"
 	"mtls-gateway/internal/db"
 	"mtls-gateway/internal/eventlog"
+	"mtls-gateway/internal/httpshared"
 	"mtls-gateway/internal/i18n"
 	"mtls-gateway/internal/logging"
 	"mtls-gateway/internal/permissioncheck"
@@ -42,13 +42,7 @@ import (
 // version 由 release 构建经 -ldflags "-X main.version=..." 注入; 默认 "dev"
 var version = "dev"
 
-// 管理端口超时: 与网关一致(WriteTimeout 不限制, IdleTimeout 300s)
-const (
-	gwWriteTimeout = 0 * time.Second
-	gwIdleTimeout  = 300 * time.Second
-	// maxBodyBytes 管理 API 请求体上限(防内存耗尽)
-	maxBodyBytes = 4 << 20
-)
+// 管理端口超时: 与网关共享 httpshared 常量(WriteTimeout 不限制, IdleTimeout 300s)
 
 func main() {
 	configPath := flag.String("config", "/etc/mtls-gw/config.toml", "配置文件路径(与网关同一份)")
@@ -169,9 +163,9 @@ func main() {
 	// 网关 reload 客户端(可选): 变更后调网关 /admin/reload 热重载。
 	// 配置错误(缺 reload_cert/key 等)降级为警告并禁用自动 reload —
 	// 自动 reload 是增强项, 不应因它瘫痪证书管理/签发(证书管理仍可用, 稍后手动 reload 即可)。
-	var rc *reloadClient
+	var rc *httpshared.ReloadClient
 	if cfg.GatewayReloadAddr != "" {
-		rc, err = newReloadClient(cfg)
+		rc, err = httpshared.NewReloadClient(cfg.GatewayReloadAddr, cfg.ReloadCert, cfg.ReloadKey, cfg.CA)
 		if err != nil {
 			log.Printf("gateway reload 客户端配置错误: %v (自动 reload 禁用; 变更后需手动调网关 /admin/reload)", err)
 			rc = nil
@@ -216,8 +210,8 @@ func main() {
 			Handler:           h,
 			ReadHeaderTimeout: 10 * time.Second,
 			ReadTimeout:       30 * time.Second,
-			WriteTimeout:      gwWriteTimeout,
-			IdleTimeout:       gwIdleTimeout,
+			WriteTimeout:      httpshared.WriteTimeout,
+			IdleTimeout:       httpshared.IdleTimeout,
 		}
 		go func() {
 			if err := srv.Serve(tls.NewListener(ln, gw.ServerTLSConfig())); err != nil && err != http.ErrServerClosed {
@@ -242,61 +236,12 @@ func main() {
 	}
 }
 
-// reloadClient 调网关 POST /admin/reload(admin 证书 mTLS)触发全量热重载
-type reloadClient struct {
-	addr string // host:port
-	cli  *http.Client
-}
-
-func newReloadClient(cfg config.Config) (*reloadClient, error) {
-	if cfg.ReloadCert == "" || cfg.ReloadKey == "" {
-		return nil, fmt.Errorf("gateway_reload_addr 已配置但缺 reload_cert/reload_key(admin 客户端证书)")
-	}
-	cert, err := tls.LoadX509KeyPair(cfg.ReloadCert, cfg.ReloadKey)
-	if err != nil {
-		return nil, fmt.Errorf("load reload cert: %w", err)
-	}
-	caPEM, err := os.ReadFile(cfg.CA)
-	if err != nil {
-		return nil, fmt.Errorf("read ca: %w", err)
-	}
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM(caPEM) {
-		return nil, fmt.Errorf("parse ca pem")
-	}
-	return &reloadClient{
-		addr: cfg.GatewayReloadAddr,
-		cli: &http.Client{
-			Timeout: 15 * time.Second,
-			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{RootCAs: pool, Certificates: []tls.Certificate{cert}},
-			},
-		},
-	}, nil
-}
-
-// Trigger 调网关 /admin/reload; 返回是否成功(失败由调用方写事件留痕, 管理侧已落盘可重试)
-func (c *reloadClient) Trigger() bool {
-	if c == nil {
-		return false
-	}
-	resp, err := c.cli.Post("https://"+c.addr+"/admin/reload", "application/json", nil)
-	if err != nil {
-		log.Printf("gateway reload: %v (管理侧已落盘, 可稍后重试)", err)
-		return false
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		log.Printf("gateway reload: HTTP %d (管理侧已落盘)", resp.StatusCode)
-		return false
-	}
-	log.Printf("gateway reload: ok")
-	return true
-}
+// reloadClient 已移至 internal/httpshared(ReloadClient) — 网关 reload 客户端,
+// 跨进程共享(管理进程 + 未来 GUI 服务端复用)。
 
 // —— 管理 handler(admin 证书保护): 证书管理(api.Manager) + 配置 CRUD(configmgr, 落盘后调网关 reload) ——
 
-func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *configmgr.ConfigManager, ev *eventlog.Logger, rc *reloadClient) http.Handler {
+func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *configmgr.ConfigManager, ev *eventlog.Logger, rc *httpshared.ReloadClient) http.Handler {
 	mux := http.NewServeMux()
 
 	cfgChanged := func(msg string) {
@@ -317,7 +262,7 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *configmgr.ConfigManage
 
 	// 配置总览
 	mux.HandleFunc("GET /admin/config", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, map[string]any{
+		httpshared.WriteJSON(w, map[string]any{
 			"mode":       cm.Mode(),
 			"admin_role": cm.AdminRole(),
 			"roles":      cm.Roles(),
@@ -332,7 +277,7 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *configmgr.ConfigManage
 			Services []proxy.ServiceCfg `json:"services"`
 			Roles    []string           `json:"roles"`
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+		r.Body = http.MaxBytesReader(w, r.Body, httpshared.MaxBodyBytes)
 		if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
 			gwErr(w, r, err)
 			return
@@ -342,7 +287,7 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *configmgr.ConfigManage
 			return
 		}
 		changed(fmt.Sprintf("批量保存配置: mappings=%d services=%d roles=%d", len(b.Mappings), len(b.Services), len(b.Roles)))
-		writeJSON(w, map[string]any{"ok": true})
+		httpshared.WriteJSON(w, map[string]any{"ok": true})
 	})
 
 	// 角色 CRUD
@@ -350,7 +295,7 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *configmgr.ConfigManage
 		var b struct {
 			Name string `json:"name"`
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+		r.Body = http.MaxBytesReader(w, r.Body, httpshared.MaxBodyBytes)
 		if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
 			gwErr(w, r, err)
 			return
@@ -360,7 +305,7 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *configmgr.ConfigManage
 			return
 		}
 		changed("新增角色 " + b.Name)
-		writeJSON(w, map[string]any{"ok": true})
+		httpshared.WriteJSON(w, map[string]any{"ok": true})
 	})
 	mux.HandleFunc("DELETE /admin/roles", func(w http.ResponseWriter, r *http.Request) {
 		name := r.URL.Query().Get("name")
@@ -369,16 +314,16 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *configmgr.ConfigManage
 			return
 		}
 		changed("删除角色 " + name)
-		writeJSON(w, map[string]any{"ok": true})
+		httpshared.WriteJSON(w, map[string]any{"ok": true})
 	})
 
 	// 通道 CRUD
 	mux.HandleFunc("GET /admin/mappings", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, map[string]any{"mappings": cm.Mappings()})
+		httpshared.WriteJSON(w, map[string]any{"mappings": cm.Mappings()})
 	})
 	mux.HandleFunc("POST /admin/mappings", func(w http.ResponseWriter, r *http.Request) {
 		var m proxy.Mapping
-		r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+		r.Body = http.MaxBytesReader(w, r.Body, httpshared.MaxBodyBytes)
 		if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
 			gwErr(w, r, err)
 			return
@@ -388,11 +333,11 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *configmgr.ConfigManage
 			return
 		}
 		changed(fmt.Sprintf("新增通道 id=%s listen=%s target=%s", m.ID, m.Listen, m.Target))
-		writeJSON(w, map[string]any{"ok": true})
+		httpshared.WriteJSON(w, map[string]any{"ok": true})
 	})
 	mux.HandleFunc("PUT /admin/mappings", func(w http.ResponseWriter, r *http.Request) {
 		var m proxy.Mapping
-		r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+		r.Body = http.MaxBytesReader(w, r.Body, httpshared.MaxBodyBytes)
 		if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
 			gwErr(w, r, err)
 			return
@@ -402,7 +347,7 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *configmgr.ConfigManage
 			return
 		}
 		changed(fmt.Sprintf("修改通道 id=%s listen=%s", r.URL.Query().Get("id"), m.Listen))
-		writeJSON(w, map[string]any{"ok": true})
+		httpshared.WriteJSON(w, map[string]any{"ok": true})
 	})
 	mux.HandleFunc("DELETE /admin/mappings", func(w http.ResponseWriter, r *http.Request) {
 		id := r.URL.Query().Get("id")
@@ -411,16 +356,16 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *configmgr.ConfigManage
 			return
 		}
 		changed("删除通道 id=" + id)
-		writeJSON(w, map[string]any{"ok": true})
+		httpshared.WriteJSON(w, map[string]any{"ok": true})
 	})
 
 	// 服务 CRUD
 	mux.HandleFunc("GET /admin/services", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, map[string]any{"services": cm.Services()})
+		httpshared.WriteJSON(w, map[string]any{"services": cm.Services()})
 	})
 	mux.HandleFunc("POST /admin/services", func(w http.ResponseWriter, r *http.Request) {
 		var s proxy.ServiceCfg
-		r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+		r.Body = http.MaxBytesReader(w, r.Body, httpshared.MaxBodyBytes)
 		if err := json.NewDecoder(r.Body).Decode(&s); err != nil {
 			gwErr(w, r, err)
 			return
@@ -430,11 +375,11 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *configmgr.ConfigManage
 			return
 		}
 		changed(fmt.Sprintf("新增服务 name=%s channels=%v roles=%v", s.Name, s.Channels, s.Roles))
-		writeJSON(w, map[string]any{"ok": true})
+		httpshared.WriteJSON(w, map[string]any{"ok": true})
 	})
 	mux.HandleFunc("PUT /admin/services", func(w http.ResponseWriter, r *http.Request) {
 		var s proxy.ServiceCfg
-		r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+		r.Body = http.MaxBytesReader(w, r.Body, httpshared.MaxBodyBytes)
 		if err := json.NewDecoder(r.Body).Decode(&s); err != nil {
 			gwErr(w, r, err)
 			return
@@ -444,7 +389,7 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *configmgr.ConfigManage
 			return
 		}
 		changed(fmt.Sprintf("修改服务 name=%s channels=%v roles=%v", s.Name, s.Channels, s.Roles))
-		writeJSON(w, map[string]any{"ok": true})
+		httpshared.WriteJSON(w, map[string]any{"ok": true})
 	})
 	mux.HandleFunc("DELETE /admin/services", func(w http.ResponseWriter, r *http.Request) {
 		name := r.URL.Query().Get("name")
@@ -453,7 +398,7 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *configmgr.ConfigManage
 			return
 		}
 		changed("删除服务 name=" + name)
-		writeJSON(w, map[string]any{"ok": true})
+		httpshared.WriteJSON(w, map[string]any{"ok": true})
 	})
 
 	// 证书管理(api.Manager 现成): 审计事件(cert_issue/cert_revoke)已下沉到 Manager 内部
@@ -478,25 +423,21 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *configmgr.ConfigManage
 	})
 }
 
-func writeJSON(w http.ResponseWriter, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(v)
-}
-
-// gwErrLang 按请求 X-Lang 返回错误字典(默认 zh)
-func gwErrLang(r *http.Request) *i18n.L {
-	if lang := r.Header.Get("X-Lang"); lang == "en" || lang == "zh" {
-		return i18n.New(lang)
-	}
-	return i18n.New("zh")
-}
-
-// gwErr 输出错误(状态码复用 api.ErrStatus; errImmutable 按请求语言重翻)
-func gwErr(w http.ResponseWriter, r *http.Request, err error) {
+// localizeErrImmutable 仅 errImmutable 按请求语言重翻; 其余 configmgr/proxy 的
+// CRUD 错误是硬编码中文, 完整 i18n 接入属后续工作(结构化错误改造时统一)。
+func localizeErrImmutable(lang string, err error) error {
 	msg := err.Error()
-	l := gwErrLang(r)
-	if localized := l.E("errImmutable").Error(); msg == i18n.New("zh").S("errImmutable") || msg == i18n.New("en").S("errImmutable") || msg == localized {
-		msg = localized
+	zh := i18n.New("zh").S("errImmutable")
+	en := i18n.New("en").S("errImmutable")
+	if msg == zh || msg == en || msg == i18n.New(lang).S("errImmutable") {
+		return i18n.New(lang).E("errImmutable")
 	}
-	http.Error(w, msg, api.ErrStatus(err))
+	return err
 }
+
+// gwErr 输出管理 API 错误(JSON 信封 + 状态码): 统一出口收敛到 httpshared.ErrWriter,
+// 状态码复用 api.ErrStatus(服务端权威表), 本地化仅覆盖 errImmutable。
+var gwErr = httpshared.ErrWriter{
+	Status:   api.ErrStatus,
+	Localize: localizeErrImmutable,
+}.Write

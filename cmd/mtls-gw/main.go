@@ -28,6 +28,7 @@ import (
 	"mtls-gateway/internal/configmgr"
 	"mtls-gateway/internal/db"
 	"mtls-gateway/internal/eventlog"
+	"mtls-gateway/internal/httpshared"
 	"mtls-gateway/internal/i18n"
 	"mtls-gateway/internal/pathutil"
 	"mtls-gateway/internal/permissioncheck"
@@ -42,10 +43,8 @@ var version = "dev"
 //     LLM/SSE 长流式响应(如 DSH 对话)总时长可远超 60s, 原 60s 表现为"每次发送消息的第一次发送超时"。
 //     frp 对照: frp 隧道转发只设 ReadHeaderTimeout, 不设 WriteTimeout/IdleTimeout, 连接生命周期交对端。
 //   - IdleTimeout: 300s — keep-alive 空闲上限(对齐浏览器连接池习惯); 过短(60s)会让浏览器复用已被关闭的死连接。
-const (
-	gwWriteTimeout = 0 * time.Second   // 不限制响应写时限(长流式/SSE 刚需)
-	gwIdleTimeout  = 300 * time.Second // keep-alive 空闲上限
-)
+//
+// 常量本体在 internal/httpshared(与 mtls-admin 共享, 防两进程漂移)。
 
 func main() {
 	var servers []*http.Server // 优雅退出时关闭
@@ -61,8 +60,8 @@ func main() {
 			// WriteTimeout=0: 流式响应(SSE/LLM token 流)可能持续数分钟, 60s 会在生成中途
 			// 强制切断(表现: 消息超时一次, 重发命中缓存即好); 单用户内网挂连接风险可接受,
 			// 反代侧 ResponseHeaderTimeout 仍保护响应头
-			WriteTimeout: gwWriteTimeout,
-			IdleTimeout:  gwIdleTimeout,
+			WriteTimeout: httpshared.WriteTimeout,
+			IdleTimeout:  httpshared.IdleTimeout,
 		}
 		serversMu.Lock()
 		servers = append(servers, srv)

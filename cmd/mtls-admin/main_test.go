@@ -24,6 +24,7 @@ import (
 	"mtls-gateway/internal/config"
 	"mtls-gateway/internal/configmgr"
 	"mtls-gateway/internal/db"
+	"mtls-gateway/internal/httpshared"
 	"mtls-gateway/internal/proxy"
 )
 
@@ -147,12 +148,12 @@ func TestNewReloadClient(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.GatewayReloadAddr = "127.0.0.1:1"
 	cfg.CA = filepath.Join(dir, "ca.crt")
-	if _, err := newReloadClient(cfg); err == nil {
+	if _, err := httpshared.NewReloadClient(cfg.GatewayReloadAddr, cfg.ReloadCert, cfg.ReloadKey, cfg.CA); err == nil {
 		t.Fatal("缺 reload_cert/reload_key 应报错")
 	}
 	cfg.ReloadCert = filepath.Join(dir, "c.pem")
 	cfg.ReloadKey = filepath.Join(dir, "k.pem")
-	if _, err := newReloadClient(cfg); err == nil {
+	if _, err := httpshared.NewReloadClient(cfg.GatewayReloadAddr, cfg.ReloadCert, cfg.ReloadKey, cfg.CA); err == nil {
 		t.Fatal("证书文件不存在应报错")
 	}
 }
@@ -220,7 +221,7 @@ func genClientCert(t *testing.T, dir, name string, caCert *x509.Certificate, caK
 func TestReloadClientTriggerHandshake(t *testing.T) {
 	dir := t.TempDir()
 	caCert, caKey, caPath, _ := genCA(t, dir)
-	// reload 客户端证书(CA 签发, 写文件供 newReloadClient 加载)
+	// reload 客户端证书(CA 签发, 写文件供 NewReloadClient 加载)
 	rcCert := genClientCert(t, dir, "reload-client", caCert, caKey)
 	certPath := filepath.Join(dir, "reload.crt")
 	keyPath := filepath.Join(dir, "reload.key")
@@ -252,9 +253,9 @@ func TestReloadClientTriggerHandshake(t *testing.T) {
 	cfgOK.CA = caPath
 	cfgOK.ReloadCert = certPath
 	cfgOK.ReloadKey = keyPath
-	rcOK, err := newReloadClient(cfgOK)
+	rcOK, err := httpshared.NewReloadClient(cfgOK.GatewayReloadAddr, cfgOK.ReloadCert, cfgOK.ReloadKey, cfgOK.CA)
 	if err != nil {
-		t.Fatalf("newReloadClient: %v", err)
+		t.Fatalf("NewReloadClient: %v", err)
 	}
 	if !rcOK.Trigger() {
 		t.Fatal("200 握手应返回 true")
@@ -264,7 +265,7 @@ func TestReloadClientTriggerHandshake(t *testing.T) {
 	defer srvDeny.Close()
 	cfgDeny := cfgOK
 	cfgDeny.GatewayReloadAddr = strings.TrimPrefix(srvDeny.URL, "https://")
-	rcDeny, err := newReloadClient(cfgDeny)
+	rcDeny, err := httpshared.NewReloadClient(cfgDeny.GatewayReloadAddr, cfgDeny.ReloadCert, cfgDeny.ReloadKey, cfgDeny.CA)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -274,7 +275,7 @@ func TestReloadClientTriggerHandshake(t *testing.T) {
 	// 网络失败(未监听) → false
 	cfgBad := cfgOK
 	cfgBad.GatewayReloadAddr = "127.0.0.1:1"
-	rcBad, err := newReloadClient(cfgBad)
+	rcBad, err := httpshared.NewReloadClient(cfgBad.GatewayReloadAddr, cfgBad.ReloadCert, cfgBad.ReloadKey, cfgBad.CA)
 	if err != nil {
 		t.Fatal(err)
 	}

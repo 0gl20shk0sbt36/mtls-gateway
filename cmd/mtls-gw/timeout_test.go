@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"testing"
 	"time"
+
+	"mtls-gateway/internal/httpshared"
 )
 
 // TestWriteTimeoutCutsStreaming 复现 DSH 首次发送超时的根因机制:
@@ -65,10 +67,10 @@ func TestWriteTimeoutCutsStreaming(t *testing.T) {
 // TestGatewayTimeoutConstants 防回归: 服务端转发超时参数必须保持
 // WriteTimeout=0(不切长流式) + IdleTimeout>=300s(keep-alive 对齐浏览器)。
 func TestGatewayTimeoutConstants(t *testing.T) {
-	if gwWriteTimeout != 0 {
-		t.Fatalf("gwWriteTimeout = %v, want 0 — 绝对时限会切断 LLM/SSE 长流式响应(DSH 首次发送超时根因)", gwWriteTimeout)
+	if httpshared.WriteTimeout != 0 {
+		t.Fatalf("httpshared.WriteTimeout = %v, want 0 — 绝对时限会切断 LLM/SSE 长流式响应(DSH 首次发送超时根因)", httpshared.WriteTimeout)
 	}
-	if gwIdleTimeout < 300*time.Second {
-		t.Fatalf("gwIdleTimeout = %v, want >= 300s — 过短会让浏览器复用已被关闭的死连接", gwIdleTimeout)
+	if httpshared.IdleTimeout < 300*time.Second {
+		t.Fatalf("httpshared.IdleTimeout = %v, want >= 300s — 过短会让浏览器复用已被关闭的死连接", httpshared.IdleTimeout)
 	}
 }

@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"mtls-gateway/internal/db"
+	"mtls-gateway/internal/httpshared"
 	"mtls-gateway/internal/types"
 )
 
@@ -54,9 +55,6 @@ func (t *CertTemplate) ApplyDefaults() {
 		t.AdminDays = 30
 	}
 }
-
-// maxBodyBytes 管理 API 请求体上限(防内存耗尽)
-const maxBodyBytes = 4 << 20
 
 // Manager 管理 API 服务
 type Manager struct {
@@ -416,7 +414,7 @@ func (m *Manager) handler(isLocal bool) http.Handler {
 			}
 		}
 		var req IssueRequest
-		r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+		r.Body = http.MaxBytesReader(w, r.Body, httpshared.MaxBodyBytes)
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
 			return
@@ -440,7 +438,7 @@ func (m *Manager) handler(isLocal bool) http.Handler {
 		var req struct {
 			Serial string `json:"serial"`
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+		r.Body = http.MaxBytesReader(w, r.Body, httpshared.MaxBodyBytes)
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
