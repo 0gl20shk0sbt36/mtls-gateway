@@ -25,39 +25,70 @@ const (
 	ModeImmutable = "immutable"
 )
 
-// Config 配置文件结构 (TOML)
+// Config 配置文件结构 (TOML)。
+//
+// 【TOML 格式契约 — 不可拆子表】本结构是 config.toml 的平坦镜像: 每个字段对应
+// 一个顶层 TOML 键。mtls-gw 与 mtls-admin 双进程读同一文件, 平坦结构是既有
+// 部署格式的兼容契约 — 不得改造成嵌套子表(如 mappings = [[mappings]] 变
+// [[route.mappings]]), 否则现网配置全部失效。新增字段只能追加顶层键。
+//
+// 【子结构三表联动】配置的业务模型由三个子结构协同(校验见 Parse / proxy.NewRouter
+// / configmgr, 三处对称):
+//   - Roles []string: 角色声明列表。服务 roles 与签发 purposes 必须在此声明;
+//     禁止出现保留字(any/null)与 admin_role(提权风险)。
+//   - Mappings []types.Mapping: 通道, 唯一路由实体; id 唯一 + listen(:port[/path])
+//     唯一(判重靠 listen, 规范化后比较); target 为后端 loopback 地址。
+//   - Services []types.ServiceCfg: 服务注册, channels 引用 mapping id(须存在),
+//     roles 引用声明角色(或 any 对任意证书开放)。
+//     授权 = 证书 roles 与引用该映射的所有服务 roles 并集有交集(或含 any)。
+//
+// 【双进程字段归属】字段按读取方分组(注释标注), 两进程各自忽略无关字段:
+//   - 共享: bind_host / db / config_mode / lang / admin_role / ca / 日志
+//   - 网关读: server_cert / server_key / info_listen / reload_listen / mappings / services / roles
+//   - 管理写: ca_key / cert_dir / sock_path / 签发参数 / admin_listen / roles / mappings / services
+//   - 管理专属: gateway_reload_addr / reload_cert / reload_key(网关忽略)
+//     注意: roles/mappings/services 由管理进程改写落盘、网关热重载读取, 是
+//     "共享但单写者"的字段 — 网关启动时只读, 运行中经 /admin/reload 重读。
 type Config struct {
-	BindHost      string             `toml:"bind_host"`       // 全局绑定地址 (默认 0.0.0.0)
-	DB            string             `toml:"db"`              // SQLite 数据库路径
-	ConfigMode    string             `toml:"config_mode"`     // mutable | ephemeral | immutable
-	Lang          string             `toml:"lang"`            // 错误消息语言: zh | en (默认 zh)
-	AdminRole     string             `toml:"admin_role"`      // 内置管理角色名 (默认 mtls-superadmin)
-	PwdLength     int                `toml:"pwd_length"`      // 自动生成 p12 密码长度
-	KeyType       string             `toml:"key_type"`        // 签发密钥: rsa | ecdsa
-	KeyBits       int                `toml:"key_bits"`        // rsa:2048/3072/4096; ecdsa:256/384/521
-	TLSMinVersion string             `toml:"tls_min_version"` // "1.2" | "1.3"
-	AdminListen   string             `toml:"admin_listen"`    // 管理 API TCP (mtls-admin 进程; 需 admin_role 证书)
-	InfoListen    string             `toml:"info_listen"`     // /info 发现端口(网关); 空=关
-	ReloadListen  string             `toml:"reload_listen"`   // 网关 /admin/reload 端口(管理进程调用); 空=与 info 同端口合并
-	CA            string             `toml:"ca"`
-	CAKey         string             `toml:"ca_key"`
-	ServerCert    string             `toml:"server_cert"`
-	ServerKey     string             `toml:"server_key"`
-	CertDir       string             `toml:"cert_dir"`
-	SockPath      string             `toml:"sock_path"`
-	Org           string             `toml:"org"`          // 证书 O 字段
-	OU            string             `toml:"ou"`           // 证书 OU 字段
-	DefaultDays   int                `toml:"default_days"` // 普通证书默认天数
-	AdminDays     int                `toml:"admin_days"`   // 管理角色证书默认天数
-	RequireIPBind *bool              `toml:"require_ip_bind"`
-	LogFile       string             `toml:"log_file"`        // 事件日志(系统/配置/证书操作); 空=默认分平台路径
-	AccessLogFile string             `toml:"access_log_file"` // 访问日志(大量, 单独文件); 空=默认分平台路径
-	StdoutLogFile string             `toml:"stdout_log_file"` // 标准日志(终端+文件双写: 认证/隧道/错误等 log.Printf); 空=默认分平台路径
-	LogMaxSizeMB  int                `toml:"log_max_size"`    // 单文件上限 MB (默认 10)
-	LogMaxFiles   int                `toml:"log_max_files"`   // 保留历史份数 (默认 5)
-	Roles         []string           `toml:"roles"`           // 角色声明列表(服务 roles / 签发 purposes 必须在此声明)
-	Mappings      []types.Mapping    `toml:"mappings"`        // 通道: id + listen(:port[/path]) + target
-	Services      []types.ServiceCfg `toml:"services"`        // 服务注册: name + channels + roles
+	// —— 共享字段(两进程都读) ——
+	BindHost      string `toml:"bind_host"`       // 全局绑定地址 (默认 0.0.0.0)
+	DB            string `toml:"db"`              // SQLite 数据库路径
+	ConfigMode    string `toml:"config_mode"`     // mutable | ephemeral | immutable
+	Lang          string `toml:"lang"`            // 错误消息语言: zh | en (默认 zh)
+	AdminRole     string `toml:"admin_role"`      // 内置管理角色名 (默认 mtls-superadmin)
+	CA            string `toml:"ca"`              // 网关 CA(认证 + reload 客户端校验用)
+	LogFile       string `toml:"log_file"`        // 事件日志(系统/配置/证书操作); 空=默认分平台路径
+	AccessLogFile string `toml:"access_log_file"` // 访问日志(大量, 单独文件); 空=默认分平台路径
+	StdoutLogFile string `toml:"stdout_log_file"` // 标准日志(终端+文件双写: 认证/隧道/错误等 log.Printf); 空=默认分平台路径
+	LogMaxSizeMB  int    `toml:"log_max_size"`    // 单文件上限 MB (默认 10)
+	LogMaxFiles   int    `toml:"log_max_files"`   // 保留历史份数 (默认 5)
+
+	// —— 网关读字段(mtls-gw) ——
+	ServerCert   string `toml:"server_cert"`
+	ServerKey    string `toml:"server_key"`
+	InfoListen   string `toml:"info_listen"`   // /info 发现端口(网关); 空=关
+	ReloadListen string `toml:"reload_listen"` // 网关 /admin/reload 端口(管理进程调用); 空=与 info 同端口合并
+
+	// —— 管理进程字段(mtls-admin: 写者) ——
+	PwdLength     int    `toml:"pwd_length"`      // 自动生成 p12 密码长度
+	KeyType       string `toml:"key_type"`        // 签发密钥: rsa | ecdsa
+	KeyBits       int    `toml:"key_bits"`        // rsa:2048/3072/4096; ecdsa:256/384/521
+	TLSMinVersion string `toml:"tls_min_version"` // "1.2" | "1.3"
+	AdminListen   string `toml:"admin_listen"`    // 管理 API TCP (mtls-admin 进程; 需 admin_role 证书)
+	CAKey         string `toml:"ca_key"`
+	CertDir       string `toml:"cert_dir"`
+	SockPath      string `toml:"sock_path"`
+	Org           string `toml:"org"`          // 证书 O 字段
+	OU            string `toml:"ou"`           // 证书 OU 字段
+	DefaultDays   int    `toml:"default_days"` // 普通证书默认天数
+	AdminDays     int    `toml:"admin_days"`   // 管理角色证书默认天数
+	RequireIPBind *bool  `toml:"require_ip_bind"`
+
+	// —— 三表联动子结构(共享; 管理进程改写落盘, 网关启动读 + /admin/reload 重读) ——
+	Roles    []string           `toml:"roles"`    // 角色声明列表(服务 roles / 签发 purposes 必须在此声明)
+	Mappings []types.Mapping    `toml:"mappings"` // 通道: id + listen(:port[/path]) + target
+	Services []types.ServiceCfg `toml:"services"` // 服务注册: name + channels + roles
+
 	// —— 管理进程专属(mtls-admin; 网关忽略) ——
 	GatewayReloadAddr string `toml:"gateway_reload_addr"` // 网关 /admin/reload 地址(如 100.104.135.63:9444); 空=变更后不自动 reload
 	ReloadCert        string `toml:"reload_cert"`         // 调网关 reload 的 admin 客户端证书(pem)
