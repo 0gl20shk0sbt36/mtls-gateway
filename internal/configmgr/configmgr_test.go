@@ -1,4 +1,4 @@
-package main
+package configmgr
 
 import (
 	"os"
@@ -23,7 +23,7 @@ func testConfigManager(t *testing.T, mode string) (*ConfigManager, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cm := NewConfigManager(path, cfg, router)
+	cm := New(path, cfg, router)
 	// 写一份初始配置文件 (mutable 落盘测试用)
 	_ = os.WriteFile(path, []byte("bind_host = \"127.0.0.1\"\n"), 0o600)
 	return cm, path
@@ -113,7 +113,7 @@ func TestConfigManagerPersistFailureRollback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cm := NewConfigManager(path, cfg, router)
+	cm := New(path, cfg, router)
 
 	// 22:18 场景: 批量保存提交空 services(ReplaceAll) → 落盘失败 → 必须整体回滚
 	err = cm.ReplaceAll(
@@ -195,7 +195,7 @@ func TestConfigManagerReloadFromDisk(t *testing.T) {
 
 	// 配置文件缺失 → 报错(不得静默用默认值清空路由)
 	missing := filepath.Join(t.TempDir(), "nope.toml")
-	cm2 := NewConfigManager(missing, config.DefaultConfig(), nil)
+	cm2 := New(missing, config.DefaultConfig(), nil)
 	if err := cm2.ReloadFromDisk(); err == nil {
 		t.Fatal("配置文件缺失 reload 应报错")
 	}

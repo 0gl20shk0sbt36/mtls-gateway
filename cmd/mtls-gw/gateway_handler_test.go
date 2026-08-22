@@ -22,6 +22,7 @@ import (
 	"golang.org/x/net/websocket"
 	"mtls-gateway/internal/auth"
 	"mtls-gateway/internal/config"
+	"mtls-gateway/internal/configmgr"
 	"mtls-gateway/internal/db"
 	"mtls-gateway/internal/eventlog"
 	"mtls-gateway/internal/proxy"
@@ -36,7 +37,7 @@ type gwTestEnv struct {
 	accPath  string
 	store    *db.Store
 	gw       *auth.Gateway
-	cm       *ConfigManager
+	cm       *configmgr.ConfigManager
 }
 
 // genCA 生成 CA 并写文件
@@ -144,7 +145,7 @@ func newGWTestEnv(t *testing.T, backends map[string]*httptest.Server) (*gwTestEn
 	if err != nil {
 		t.Fatalf("router: %v", err)
 	}
-	cm := NewConfigManager(filepath.Join(dir, "cfg.toml"), cfg, router)
+	cm := configmgr.New(filepath.Join(dir, "cfg.toml"), cfg, router)
 
 	accPath := filepath.Join(dir, "access.log")
 	acc, err := eventlog.New(accPath, 5, 2)
@@ -349,7 +350,7 @@ func TestGatewayHandler_NoRoute(t *testing.T) {
 	cfg.Mappings = []proxy.Mapping{{ID: "m1x", Listen: ":9601/admin", Target: back.URL}}
 	cfg.Services = []proxy.ServiceCfg{{Name: "svc-a", Channels: []string{"m1x"}, Roles: []string{"svc-a"}}}
 	router, _ := proxy.NewRouter(cfg.Mappings, cfg.Services, cfg.Roles)
-	cm := NewConfigManager(filepath.Join(dir, "c.toml"), cfg, router)
+	cm := configmgr.New(filepath.Join(dir, "c.toml"), cfg, router)
 	accPath := filepath.Join(dir, "a.log")
 	acc, _ := eventlog.New(accPath, 5, 2)
 	defer acc.Close()
@@ -431,7 +432,7 @@ func TestInfoHandler_FiltersByRole(t *testing.T) {
 	cfg.Mappings = []proxy.Mapping{{ID: "m1", Listen: ":9601", Target: "http://127.0.0.1:1"}, {ID: "m2", Listen: ":9602", Target: "http://127.0.0.1:1"}}
 	cfg.Services = []proxy.ServiceCfg{{Name: "svc-a", Channels: []string{"m1"}, Roles: []string{"svc-a"}}, {Name: "any-svc", Channels: []string{"m2"}, Roles: []string{"any"}}}
 	router, _ := proxy.NewRouter(cfg.Mappings, cfg.Services, cfg.Roles)
-	cm := NewConfigManager(filepath.Join(dir, "c.toml"), cfg, router)
+	cm := configmgr.New(filepath.Join(dir, "c.toml"), cfg, router)
 	accPath := filepath.Join(dir, "a.log")
 	acc, _ := eventlog.New(accPath, 5, 2)
 	defer acc.Close()

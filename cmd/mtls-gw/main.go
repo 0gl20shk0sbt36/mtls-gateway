@@ -27,6 +27,7 @@ import (
 	"mtls-gateway/internal/api"
 	"mtls-gateway/internal/auth"
 	"mtls-gateway/internal/config"
+	"mtls-gateway/internal/configmgr"
 	"mtls-gateway/internal/db"
 	"mtls-gateway/internal/eventlog"
 	"mtls-gateway/internal/i18n"
@@ -109,7 +110,7 @@ func main() {
 	log.Printf("mappings: %d services: %d on ports %v", len(cfg.Mappings), len(cfg.Services), router.Listens())
 
 	// 配置管理器 (模式 + CRUD + 热重载 + 落盘)
-	cm := NewConfigManager(*cfgPath, cfg, router)
+	cm := configmgr.New(*cfgPath, cfg, router)
 	log.Printf("config mode: %s", cm.Mode())
 
 	// 事件日志(系统) + 访问日志(大量, 单独文件); 各自滚动
@@ -371,7 +372,7 @@ func accessEvent(rec *db.CertRecord, channel, method, path string, status int, i
 
 // gatewayHandler 网关主 handler: 认证 → 按路径选映射(最长匹配) → 按引用服务的 roles 授权 → 转发
 // 路由器每次从 ConfigManager 取(支持热重载); 访问/拒绝事件写 accLog
-func gatewayHandler(gw *auth.Gateway, cm *ConfigManager, port string, acc *eventlog.Logger) http.Handler {
+func gatewayHandler(gw *auth.Gateway, cm *configmgr.ConfigManager, port string, acc *eventlog.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sw := &statusWriter{ResponseWriter: w}
 
@@ -443,7 +444,7 @@ func gatewayHandler(gw *auth.Gateway, cm *ConfigManager, port string, acc *event
 
 // infoHandler /info: 无需 admin; 已登记证书即可; 返回该证书可访问的服务(按角色过滤)
 // infoHandler /info: 匿名引导(null)或已登记证书; 无证书时返回 CA(供客户端过滤证书源), 有证书时附带可访问服务列表
-func infoHandler(gw *auth.Gateway, cm *ConfigManager, acc *eventlog.Logger) http.Handler {
+func infoHandler(gw *auth.Gateway, cm *configmgr.ConfigManager, acc *eventlog.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sw := &statusWriter{ResponseWriter: w}
 		rec, err := gw.Authorize(r)
@@ -501,7 +502,7 @@ func gwErr(w http.ResponseWriter, r *http.Request, err error) {
 }
 
 // 提供: 证书签发/吊销 (mgr) + 通道/服务/角色 CRUD (cm, 尊重 config_mode)
-func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *ConfigManager, ev *eventlog.Logger) http.Handler {
+func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *configmgr.ConfigManager, ev *eventlog.Logger) http.Handler {
 	mux := http.NewServeMux()
 
 	// 记配置变更事件

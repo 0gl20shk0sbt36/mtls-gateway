@@ -1,4 +1,4 @@
-package main
+package configmgr
 
 import (
 	"fmt"
@@ -14,12 +14,15 @@ import (
 // 重新加载配置(模拟重启) — 测试用
 func reloadConfigManager(t *testing.T, path string) (*ConfigManager, error) {
 	t.Helper()
-	cfg := loadConfig(path)
+	cfg, err := config.Parse(path)
+	if err != nil {
+		return nil, err
+	}
 	router, err := proxy.NewRouter(cfg.Mappings, cfg.Services, cfg.Roles)
 	if err != nil {
 		return nil, err
 	}
-	return NewConfigManager(path, cfg, router), nil
+	return New(path, cfg, router), nil
 }
 
 // M3: UpdateMapping 成功 + 不存在报错
@@ -218,7 +221,7 @@ func TestConfigManagerEphemeralNoBackup(t *testing.T) {
 func TestConfigManagerPersistAtomic(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "gw.toml")
-	cm := NewConfigManager(path, config.Config{ConfigMode: "mutable"}, nil)
+	cm := New(path, config.Config{ConfigMode: "mutable"}, nil)
 	if err := cm.AddRole("svc-x"); err != nil {
 		t.Fatal(err)
 	}

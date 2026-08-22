@@ -1,5 +1,6 @@
-// 服务端配置管理: 模式(mutable/ephemeral/immutable) + 通道/服务 CRUD + 热重载 + TOML 落盘(带备份)
-package main
+// Package configmgr 配置管理: 模式 + 通道/服务 CRUD + 热重载 + TOML 落盘(带备份)。
+// 网关与 mtls-admin 管理进程共用: 网关用 ReloadFromDisk(重读文件); 管理进程用 CRUD(改内存+落盘)。
+package configmgr
 
 import (
 	"bytes"
@@ -28,7 +29,7 @@ type ConfigManager struct {
 	L      *i18n.L // 错误消息语言(zh/en, 默认 zh)
 }
 
-func NewConfigManager(path string, cfg config.Config, router *proxy.Router) *ConfigManager {
+func New(path string, cfg config.Config, router *proxy.Router) *ConfigManager {
 	return &ConfigManager{path: path, mode: cfg.ConfigMode, cfg: cfg, router: router, L: i18n.New(cfg.Lang)}
 }
 

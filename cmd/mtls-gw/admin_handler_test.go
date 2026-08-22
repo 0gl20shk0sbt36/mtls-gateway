@@ -17,6 +17,7 @@ import (
 
 	"mtls-gateway/internal/api"
 	"mtls-gateway/internal/auth"
+	"mtls-gateway/internal/configmgr"
 	"mtls-gateway/internal/config"
 	"mtls-gateway/internal/db"
 	"mtls-gateway/internal/eventlog"
@@ -27,7 +28,7 @@ import (
 type adminEnv struct {
 	store    *db.Store
 	gw       *auth.Gateway
-	cm       *ConfigManager
+	cm       *configmgr.ConfigManager
 	mgr      *api.Manager
 	ev       *eventlog.Logger
 	evPath   string
@@ -55,7 +56,7 @@ func newAdminEnv(t *testing.T) *adminEnv {
 	cfg.Mappings = []proxy.Mapping{{ID: "m1", Listen: ":9601", Target: "http://127.0.0.1:1"}}
 	cfg.Services = []proxy.ServiceCfg{{Name: "svc-a", Channels: []string{"m1"}, Roles: []string{"svc-a"}}}
 	router, _ := proxy.NewRouter(cfg.Mappings, cfg.Services, cfg.Roles)
-	cm := NewConfigManager(filepath.Join(dir, "c.toml"), cfg, router)
+	cm := configmgr.New(filepath.Join(dir, "c.toml"), cfg, router)
 
 	mgr, err := api.NewManager(store, caPath, caKeyPath, filepath.Join(dir, "issued"), filepath.Join(dir, "gw.sock"), api.CertTemplate{Org: "e2e", OU: "e2e", AdminDays: 7, DefaultDays: 100}, "mtls-superadmin", "rsa", 2048, 16, []string{"svc-a"})
 	if err != nil {

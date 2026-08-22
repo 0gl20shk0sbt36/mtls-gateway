@@ -2,15 +2,26 @@ package main
 
 import (
 	"fmt"
+	"path/filepath"
 	"sync"
 	"testing"
 
+	"mtls-gateway/internal/config"
+	"mtls-gateway/internal/configmgr"
 	"mtls-gateway/internal/proxy"
 )
 
 // MH-2/M-3: configmgr 并发 CRUD 不崩 + 最终一致(-race 下运行)
 func TestConfigManagerConcurrent(t *testing.T) {
-	cm, _ := testConfigManager(t, "ephemeral")
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	cfg := config.DefaultConfig()
+	cfg.ConfigMode = "ephemeral"
+	cfg.Roles = []string{"x"}
+	cfg.Mappings = []proxy.Mapping{{ID: "m1", Listen: ":9601", Target: "http://127.0.0.1:1"}}
+	cfg.Services = []proxy.ServiceCfg{{Name: "s1", Channels: []string{"m1"}, Roles: []string{"x"}}}
+	router, _ := proxy.NewRouter(cfg.Mappings, cfg.Services, cfg.Roles)
+	cm := configmgr.New(path, cfg, router)
 	var wg sync.WaitGroup
 	for i := 0; i < 8; i++ {
 		wg.Add(1)
