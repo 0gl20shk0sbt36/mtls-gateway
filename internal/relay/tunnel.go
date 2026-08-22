@@ -251,9 +251,11 @@ func (rt *tunnelRuntime) acceptLoop() {
 					backoff *= 2
 				}
 				log.Printf("tunnel[%s] accept: %v (retry in %v)", rt.key, err, backoff)
+				timer := time.NewTimer(backoff) // Stop 掉: 不残留定时器(L3 债)
 				select {
-				case <-time.After(backoff):
+				case <-timer.C:
 				case <-rt.ctx.Done():
+					timer.Stop()
 					return
 				}
 				continue
@@ -352,17 +354,22 @@ func (rt *tunnelRuntime) handleConn(local net.Conn) {
 		<-done
 		return
 	}
+	// 单一定时器 + Reset: 此前每轮 select 新建 time.After, 活跃连接上残留大量
+	// 未触发的 idle 定时器(L3 债; idle 默认 12h, 残留即 12h 内存占用)
+	timer := time.NewTimer(idle)
+	defer timer.Stop()
 	for {
 		select {
 		case <-done:
 			return
-		case <-time.After(idle):
+		case <-timer.C:
 			if time.Since(time.Unix(0, lastActive.Load())) >= idle {
 				local.Close()
 				upstream.Close()
 				<-done
 				return
 			}
+			timer.Reset(idle) // 有流动: 重置计时器再等一个 idle
 		}
 	}
 }

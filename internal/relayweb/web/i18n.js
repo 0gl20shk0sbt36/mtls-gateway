@@ -1,4 +1,8 @@
 // i18n: 轻量中英双语 (zh/en)。检测顺序: localStorage.lang → 浏览器语言 → zh。
+// esc 全局唯一(HTML 转义): i18n.js 最先加载, app.js 复用同一实现(flash 低危: esc 去重)
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
 (function () {
   const L = {
     zh: {
@@ -273,9 +277,7 @@
     try { localStorage.setItem("lang", l); } catch (e) { /* ignore */ }
   }
   // t(key, vars): 取值 + 替换 {var}(变量值 HTML 转义, 防 data-i18n-html 注入)
-  function esc(s) {
-    return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-  }
+  // esc 用文件顶部全局定义(i18n.js 最先加载, app.js 复用 — esc 去重)
   function t(key, vars) {
     let s = (L[lang] && L[lang][key]) || (L.zh && L.zh[key]) || key;
     if (vars) {

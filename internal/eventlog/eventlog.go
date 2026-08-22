@@ -94,7 +94,11 @@ func (l *Logger) rotate() {
 	if err := os.Rename(l.path, l.path+".1"); err != nil && !os.IsNotExist(err) {
 		log.Printf("eventlog rotate rename %s: %v", l.path, err)
 	}
-	l.open()
+	if err := l.open(); err != nil {
+		// 滚动后重开失败: 置 nil 让 appendLine 下次写入重试(不再永久静默 — L3 债)
+		log.Printf("eventlog rotate open %s: %v (日志暂停, 下次写入重试)", l.path, err)
+		l.f = nil
+	}
 }
 
 // Event 一条事件记录

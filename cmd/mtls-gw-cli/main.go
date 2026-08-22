@@ -30,12 +30,16 @@ var sockPath = "/run/mtls-gw.sock"
 var lang = i18n.Detect() // 系统语言检测 (LC_ALL > LC_MESSAGES > LANG > zh)
 
 func main() {
-	// 全局 --sock 参数 (必须在子命令前)
+	// 全局 --sock 参数 (必须在子命令前; 支持 --sock=<path> 形式 — flash 低危项)
 	newArgs := []string{}
 	for i := 0; i < len(os.Args); i++ {
-		if os.Args[i] == "--sock" && i+1 < len(os.Args) {
+		switch {
+		case os.Args[i] == "--sock" && i+1 < len(os.Args):
 			sockPath = os.Args[i+1]
 			i++ // 跳过值
+			continue
+		case strings.HasPrefix(os.Args[i], "--sock="):
+			sockPath = strings.TrimPrefix(os.Args[i], "--sock=")
 			continue
 		}
 		newArgs = append(newArgs, os.Args[i])

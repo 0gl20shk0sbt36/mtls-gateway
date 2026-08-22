@@ -31,12 +31,16 @@ var version = "dev"
 var adminAddr = "127.0.0.1:18081"
 
 func main() {
-	// 全局 --admin (须在子命令前)
+	// 全局 --admin (须在子命令前; 支持 --admin=<addr> 形式 — flash 低危项)
 	args := []string{}
 	for i := 0; i < len(os.Args); i++ {
-		if os.Args[i] == "--admin" && i+1 < len(os.Args) {
+		switch {
+		case os.Args[i] == "--admin" && i+1 < len(os.Args):
 			adminAddr = os.Args[i+1]
 			i++
+			continue
+		case strings.HasPrefix(os.Args[i], "--admin="):
+			adminAddr = strings.TrimPrefix(os.Args[i], "--admin=")
 			continue
 		}
 		args = append(args, os.Args[i])

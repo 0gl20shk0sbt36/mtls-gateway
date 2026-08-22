@@ -281,12 +281,6 @@ async function loadTunnels() {
   }
 }
 
-function esc(s) {
-  return String(s).replace(/[&<>"']/g, (c) => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
-  }[c]));
-}
-
 // 渲染选中服务的通道行: 每通道一行 [通道(只读) | 本地路由输入(默认=通道)]
 function renderSvcChannels(svc) {
   const box = $("svcChannelRows");

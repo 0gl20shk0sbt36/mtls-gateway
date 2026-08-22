@@ -297,13 +297,28 @@ func (m *Manager) adminClientFor(certID, password string) (*AdminClient, error) 
 	return NewAdminClient(addr, cert, m.relay.rootCAsCopy()), nil
 }
 
-func (m *Manager) AdminVerify(certID, password string) error {
+// withAdmin 建立 admin 客户端并执行 fn(管理桥样板收敛 M3)。
+// 失败(无 admin_addr/证书加载失败)返回零值+err; 成功后关闭客户端。
+func withAdmin[T any](m *Manager, certID, password string, fn func(*AdminClient) (T, error)) (T, error) {
+	var zero T
 	ac, err := m.adminClientFor(certID, password)
 	if err != nil {
-		return err
+		return zero, err
 	}
 	defer ac.Close()
-	return ac.Verify()
+	return fn(ac)
+}
+
+// withAdminErr 同 withAdmin, 供只返回 error 的管理桥操作使用。
+func withAdminErr(m *Manager, certID, password string, fn func(*AdminClient) error) error {
+	_, err := withAdmin(m, certID, password, func(ac *AdminClient) (struct{}, error) {
+		return struct{}{}, fn(ac)
+	})
+	return err
+}
+
+func (m *Manager) AdminVerify(certID, password string) error {
+	return withAdminErr(m, certID, password, func(ac *AdminClient) error { return ac.Verify() })
 }
 
 // VerifyResult 验证结果: 用所选证书调 /info 拿服务 + 探测是否 admin
@@ -333,80 +348,40 @@ func (m *Manager) Verify(certID, password string) (*VerifyResult, error) {
 	return res, nil
 }
 func (m *Manager) AdminIssue(certID, password string, req IssueRequest) (*IssueResponse, error) {
-	ac, err := m.adminClientFor(certID, password)
-	if err != nil {
-		return nil, err
-	}
-	defer ac.Close()
-	return ac.Issue(req)
+	return withAdmin(m, certID, password, func(ac *AdminClient) (*IssueResponse, error) { return ac.Issue(req) })
 }
 func (m *Manager) AdminRevoke(certID, password, serial string) error {
-	ac, err := m.adminClientFor(certID, password)
-	if err != nil {
-		return err
-	}
-	defer ac.Close()
-	return ac.Revoke(serial)
+	return withAdminErr(m, certID, password, func(ac *AdminClient) error { return ac.Revoke(serial) })
 }
 
 // AdminConfig 服务端配置总览 (mode + mappings + services)
 func (m *Manager) AdminConfig(certID, password string) (json.RawMessage, error) {
-	ac, err := m.adminClientFor(certID, password)
-	if err != nil {
-		return nil, err
-	}
-	defer ac.Close()
-	return ac.Cfg()
+	return withAdmin(m, certID, password, func(ac *AdminClient) (json.RawMessage, error) { return ac.Cfg() })
 }
 
 // AdminSetConfig 整体替换服务端配置
 func (m *Manager) AdminSetConfig(certID, password string, body json.RawMessage) (json.RawMessage, error) {
-	ac, err := m.adminClientFor(certID, password)
-	if err != nil {
-		return nil, err
-	}
-	defer ac.Close()
-	return ac.SetConfig(body)
+	return withAdmin(m, certID, password, func(ac *AdminClient) (json.RawMessage, error) { return ac.SetConfig(body) })
 }
 
 // AdminMapping 通道 CRUD 透传 (method: POST/PUT/DELETE)
 func (m *Manager) AdminMapping(certID, password, method, id string, body json.RawMessage) (json.RawMessage, error) {
-	ac, err := m.adminClientFor(certID, password)
-	if err != nil {
-		return nil, err
-	}
-	defer ac.Close()
-	return ac.Mapping(method, id, body)
+	return withAdmin(m, certID, password, func(ac *AdminClient) (json.RawMessage, error) { return ac.Mapping(method, id, body) })
 }
 
 // AdminService 服务 CRUD 透传 (method: POST/PUT/DELETE)
 func (m *Manager) AdminService(certID, password, method, name string, body json.RawMessage) (json.RawMessage, error) {
-	ac, err := m.adminClientFor(certID, password)
-	if err != nil {
-		return nil, err
-	}
-	defer ac.Close()
-	return ac.Service(method, name, body)
+	return withAdmin(m, certID, password, func(ac *AdminClient) (json.RawMessage, error) { return ac.Service(method, name, body) })
 }
 
 // AdminListCerts 拉取服务端全部证书(供吊销下拉)
 func (m *Manager) AdminListCerts(certID, password string) (json.RawMessage, error) {
-	ac, err := m.adminClientFor(certID, password)
-	if err != nil {
-		return nil, err
-	}
-	defer ac.Close()
-	return ac.List()
+	return withAdmin(m, certID, password, func(ac *AdminClient) (json.RawMessage, error) { return ac.List() })
 }
 
 // AdminMappings 拉取服务端全部映射(供签发时选用途)
 func (m *Manager) AdminMappings(certID, password string) ([]MappingInfo, error) {
-	ac, err := m.adminClientFor(certID, password)
-	if err != nil {
-		return nil, err
-	}
-	defer ac.Close()
-	return ac.ListMappings()
+	return withAdmin(m, certID, password, func(ac *AdminClient) ([]MappingInfo, error) { return ac.ListMappings() })
 }
 
 // BuildServiceTunnels 依据服务端服务定义生成一条服务级隧道(含全部通道的本地路由)。

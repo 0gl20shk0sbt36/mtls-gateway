@@ -33,6 +33,11 @@ func NewHandler(mgr *relay.Manager, allowRemote bool) http.Handler {
 	apiHandler := mgr.Handler()
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 安全响应头(WebUI 无内联脚本; 样式内联所以 style-src 需 unsafe-inline; flash 低危项)
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Content-Security-Policy",
+			"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'")
 		// DNS rebinding / CSRF 防护: Host 非 loopback(默认)或浏览器跨源请求(Origin ≠ Host)拒绝
 		if !sameOrigin(r, allowRemote) {
 			http.Error(w, "cross-origin request rejected", http.StatusForbidden)

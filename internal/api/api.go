@@ -538,13 +538,14 @@ func (m *Manager) handler(isLocal bool) http.Handler {
 // HTTPHandler 返回可挂到 TCP mTLS 服务器的管理 handler
 // 外层认证通过后设置 X-Auth-Purpose 头, 这里按用途放行
 func (m *Manager) HTTPHandler() http.Handler {
+	inner := m.handler(false) // 构建一次: 此前每请求 new ServeMux(L3 债; 路由读 Manager 状态均持锁, 缓存安全)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// 管理路径只允许 admin 用途(端点均为 /admin/*)
 		if r.Header.Get("X-Auth-Purpose") != m.AdminRole {
 			http.Error(w, "admin required", http.StatusForbidden)
 			return
 		}
-		m.handler(false).ServeHTTP(w, r)
+		inner.ServeHTTP(w, r)
 	})
 }
 
