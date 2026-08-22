@@ -24,11 +24,11 @@
 重复代码型债, 跨包抽取收益递减风险递增, 建议配一次 pro 深挖设计后再动:
 
 - [ ] `cmd/mtls-gw/main.go` http.Server 三段复制 → 抽 `startServer(addr, handler, name)` 助手
-- [ ] `cmd/mtls-gw/configmgr.go` 9 个 CRUD 模板 → 抽 `mutate(func() error)` 助手
+- [x] ~~`cmd/mtls-gw/configmgr.go` 9 个 CRUD 模板 → 抽 `mutate(func() error)` 助手~~ — 已做(mutate 已抽, 包已迁 internal/configmgr)
 - [ ] `internal/relay/admin.go` 复制 `api.IssueRequest/IssueResponse` + `proxy.Mapping` → 抽共享 types 包
 - [ ] 角色名校验 4 份(proxy.ValidRoleName / api.validName / configmgr 内联 / 前端 RE_NAME)规则微差 → 统一
 - [ ] 路径拼接两包(proxy.substitute/joinURLPath vs relay.joinSlash)→ 统一
-- [ ] ResponseWriter 包装器两份(main.go statusWriter vs eventlog.StatusWriter)→ 共用
+- [x] ~~ResponseWriter 包装器两份(main.go statusWriter vs eventlog.StatusWriter)→ 共用~~ — 已做(第一轮删 statusWriter 改用 eventlog.StatusWriter)
 - [ ] 原子写文件两处(configmgr.persist vs relay.SaveConfig)→ 抽 helper
 - [ ] 跨端 tunnel key 格式耦合(Go 拼 service@channel@local, 前端 app.js 再拼一遍)→ 前端读 status 的 id 字段
 
@@ -96,9 +96,10 @@
 - **b629c0f(复审发现收尾)**: configmgr 落盘污染 — mtls-admin 日志路径替换后的 cfg 传入 configmgr, persist 整份 Encode 会把 admin 组件路径写回共享 config.toml, 网关下次启动日志重新合流; 改传原始 cfg(origCfg), 替换只影响本进程; 另修 warnSymlinkEscape 新引入的文本日志注入面(文件名可含 \n) + sanitizeLogPath 单测
 
 ## 文档一致性(第 8 大类, 2026-08-22)— 一次性收尾完成(本提交)
-- README: 2.2 端口表补 reload_listen; 安全模型补 ModeRestrict 权衡(0640 放行, 要"仅属主"用 0600); Windows 日志路径陈旧描述修正; 测试计数 194→514
+- README: 2.2 端口表补 reload_listen; 安全模型补 ModeRestrict 权衡(0640 放行, 要"仅属主"用 0600); Windows 日志路径陈旧描述修正; 测试计数 →235(实测)
 - config.example.toml: 日志段说明 mtls-admin 强制组件路径(替换不落盘); 安全段补私钥权限预检说明; Windows 默认路径描述修正
 - internal/relay/config.go + internal/logging 注释陈旧修正(组件子目录, 命名空间补 mtls-admin)
-- CHANGELOG: 补三轮审计收敛与关键修复; 测试基线 178→514
+- CHANGELOG: 补三轮审计收敛与关键修复; 测试基线 →235(实测)
 - docs/arch-management-split.md: log_* 行注明强制组件路径不落盘
 - i18n 占位符一致性: 后端 39 键 + 前端 115 键 zh/en 全量比对 0 错配(静态检查, 无需修)
+- README.en.md 全量对齐 v4 双进程架构(6995416)
