@@ -123,7 +123,9 @@ func (c *myCert) close() {
 
 // enumMyCerts 枚举 CurrentUser\My 存储的全部证书。
 // CertEnumCertificatesInStore 会在每次调用时释放传入的 pPrevCertContext,
-// 因此只需管理"当前返回"的 context(进 out 由 close 释放 / parse 失败立即释放)。
+// 因此返回的 ctx 归调用方(进 out 由 close 释放); 解析失败跳过即可 —
+// 不能手动释放后把悬垂指针当 prev 传入下一轮(MSDN 契约 + double-free/UAF,
+// flash 横向审计抓出), 下一次枚举调用会释放该失败的 prev context。
 func enumMyCerts() ([]myCert, error) {
 	storeName, _ := windows.UTF16PtrFromString("MY")
 	store, err := windows.CertOpenStore(windows.CERT_STORE_PROV_SYSTEM_W, 0, 0,
@@ -143,8 +145,7 @@ func enumMyCerts() ([]myCert, error) {
 		prev = ctx
 		cert, perr := x509.ParseCertificate(unsafe.Slice(ctx.EncodedCert, int(ctx.Length)))
 		if perr != nil {
-			windows.CertFreeCertificateContext(ctx)
-			continue
+			continue // 损坏条目跳过; 下一次枚举调用会释放该 ctx(不得手动释放)
 		}
 		out = append(out, myCert{cert: cert, ctx: ctx})
 	}

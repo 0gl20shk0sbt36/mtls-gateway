@@ -33,7 +33,8 @@
 - **客户端管理台**: relay WebUI"证书管理"默认锁定; 选 admin 证书(可带密码)→ 验证解锁后经 `admin_addr` 调服务端 `/admin/certs/issue|revoke`; 服务端是唯一真闸(非 admin → 403)。
 - **通用组件要求**: 证书内容/路径/模板全可配置, 不写死; 公开发布代码/文档不含任何个人内容(IP/用户名/证书)。证书私钥 → 本地 600 文件或 Vaultwarden, 不进仓库。
 - **证书 SAN 绑定设备 IP**(TS IP), 私钥复制到别的设备会因 IP 不匹配被拒。
-- **Windows 注意**: `mtls-gw-cli` 走 Unix socket 仅 Linux; Windows 上签发走 TCP admin API(admin 证书)。`-db` 是 flag 不是 config 字段。
+- **Windows 注意**: `mtls-gw-cli` 走 Unix socket 仅 Linux; Windows 上签发走 TCP admin API(admin 证书, admin_addr 指向 mtls-admin)。
+- **热重载范围**: `/admin/reload` 只重载 DB + mappings/services; `admin_role`/`require_ip_bind`/`tls_min_version` 等安全字段改后需重启两个进程。
 - **错误消息由后端按语言返回**: 前端 `api()` 注入 `X-Lang` 头, 后端在错误出口按 X-Lang 兜底翻译; 未收录错误原样返回。
 
 ## 构建 / 测试 / CI

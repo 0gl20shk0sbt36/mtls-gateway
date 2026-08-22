@@ -190,7 +190,8 @@ func issue(args []string) {
 	fmt.Println(i18n.T(lang, "serial", out.Serial))
 	fmt.Println(i18n.T(lang, "p12_password", out.P12Password))
 	fmt.Println(i18n.T(lang, "expires", out.Expires))
-	fmt.Println(i18n.T(lang, "cert_dir", "/var/lib/mtls-gw/certs/"+name+"/"))
+	// 证书产物在服务端 cert_dir 下的 <name>/ 子目录(路径以服务端配置为准, 不硬编码)
+	fmt.Println(i18n.T(lang, "cert_dir", name+"/ (服务端 cert_dir 下)"))
 }
 
 func revoke(args []string) {

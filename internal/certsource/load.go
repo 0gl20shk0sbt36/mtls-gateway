@@ -181,7 +181,7 @@ func loadFilePEMOrP12(path string) (tls.Certificate, error) {
 		if c, err := tlsFromP12(path, data, ""); err == nil {
 			return c, nil
 		}
-		return tls.Certificate{}, fmt.Errorf("p12 needs password (unsupported in V1); use pem instead: %s", path)
+		return tls.Certificate{}, fmt.Errorf("p12 needs password (加密 p12 需密码, 请用密码加载或改用 pem): %s", path)
 	default:
 		return tlsFromPEM(path, data)
 	}

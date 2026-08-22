@@ -89,7 +89,7 @@ func (r *Relay) startTunnel(rt *tunnelRuntime) error {
 		// 同端口多路径: 本隧道组已有 route(整口优先)占用同端口,
 		// 路径 route 复用该 listener(整口 TCP 透传兜底该端口流量), 不算错误。
 		// 只对"本隧道组内部"的端口复用放行; 端口被外部进程占用仍报错上报。
-		if isAddrInUse(err) && r.hasLocalPort(rt.route.LocalPort()) {
+		if isAddrInUse(err) && r.hasLocalPort(rt.service, rt.route.LocalPort()) {
 			rt.listener = nil // 复用: 不独立监听, stop 时跳过 Close
 			ctx, cancel := context.WithCancel(r.runCtx)
 			rt.ctx = ctx
@@ -121,10 +121,13 @@ func (r *Relay) startTunnel(rt *tunnelRuntime) error {
 	return nil
 }
 
-// hasLocalPort 本隧道组是否已有 route 监听该本地端口(整口覆盖路径的复用判定)
-func (r *Relay) hasLocalPort(port string) bool {
+// hasLocalPort 本隧道组内是否已有**整口**(LocalPath="")route 监听该本地端口。
+// 复用语义: 整口 TCP 透传兜底该端口全部流量(路径路由经服务端通道再路由), 故仅整口可作复用目标。
+// 只放行同 service(隧道组)内部: 跨隧道组同端口必须报错, 否则静默错配
+// (A 的路径 HTTP 监听吞掉 B 的整口流量 / 反向字节错送) — flash 横向审计抓出。
+func (r *Relay) hasLocalPort(group, port string) bool {
 	for _, rt := range r.tunnels {
-		if rt.listener != nil && rt.route.LocalPort() == port {
+		if rt.service == group && rt.listener != nil && rt.route.LocalPort() == port && rt.route.LocalPath() == "" {
 			return true
 		}
 	}
@@ -148,7 +151,7 @@ func (rt *tunnelRuntime) localHTTPHandler(localPath string) http.Handler {
 		defer mu.Unlock()
 		host := rt.r.serverHost()
 		// 重建条件: 未构建 / serverAddr 主机变化 / 超过证书轮换窗口(certCacheTTL)
-		if rp != nil && builtHost == host && time.Since(builtAt) < rt.r.certCacheTTL {
+		if rp != nil && builtHost == host && time.Since(builtAt) < rt.r.certTTL() {
 			return
 		}
 		up, err := url.Parse("https://" + net.JoinHostPort(host, rt.route.ChannelPort()) + rt.route.ChannelPath())
@@ -201,7 +204,7 @@ func (rt *tunnelRuntime) localHTTPHandler(localPath string) http.Handler {
 		}
 		// double-checked locking: 快路径只读锁判断是否需重建(serverAddr 变化/证书轮换窗口)
 		mu.RLock()
-		need := rp == nil || builtHost != rt.r.serverHost() || time.Since(builtAt) >= rt.r.certCacheTTL
+		need := rp == nil || builtHost != rt.r.serverHost() || time.Since(builtAt) >= rt.r.certTTL()
 		r := rp
 		mu.RUnlock()
 		if need {

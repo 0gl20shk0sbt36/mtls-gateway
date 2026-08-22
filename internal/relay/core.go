@@ -85,6 +85,13 @@ func New(src certsource.Source) *Relay {
 	}
 }
 
+// certTTL 锁内读证书缓存有效期(测试可注入缩短; 并发读纪律 — flash 审计抓出锁外读)
+func (r *Relay) certTTL() time.Duration {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.certCacheTTL
+}
+
 // localizeLoadErr 证书加载错误本地化(私钥需密码/证书不存在), 按给定语言
 func localizeLoadErr(l *i18n.L, certID string, err error) error {
 	s := err.Error()
@@ -111,7 +118,7 @@ func (r *Relay) loadCertLang(certID, lang string) (tls.Certificate, error) {
 	e, ok := r.certCache[certID]
 	src := r.src
 	r.mu.Unlock()
-	if ok && time.Since(e.loadedAt) < r.certCacheTTL {
+	if ok && time.Since(e.loadedAt) < r.certTTL() {
 		return e.cert, nil
 	}
 	c, err := src.Load(certID)
@@ -201,7 +208,9 @@ func (r *Relay) SetSource(src certsource.Source) {
 }
 
 // fetchCAAndFilter 匿名调服务端 /info(不需要客户端证书, 服务端 null 路由),
-// 用返回的 CA 过滤系统证书源; 失败(旧服务端/不可达)静默降级。
+// 用返回的 CA 过滤系统证书源; **仅在 server_ca 已配置(roots 非 nil)时运行** —
+// 作为 applyServerCA 之后的兜底重过滤(服务端 CA 轮换时刷新 issuer 过滤);
+// server_ca 未配置时 roots==nil 直接返回, 不做过滤(无信任锚可依据)。
 func (r *Relay) fetchCAAndFilter() {
 	r.mu.Lock()
 	addr, caFile, roots, src := r.serverAddr, r.serverCA, r.rootCAs, r.src

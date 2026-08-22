@@ -11,6 +11,7 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
@@ -138,7 +139,13 @@ func main() {
 
 	// 配置管理(改内存 + TOML 落盘; router 仅校验用, 不 Serve)
 	// 用原始 cfg(日志路径未被替换): 落盘不污染共享配置
-	cm := configmgr.New(*configPath, origCfg, nil)
+	// 启动即构建 router(与网关一致): 坏映射(重复 listen/坏引用/角色未声明)两进程同样拒绝启动
+	// — 此前 mtls-admin 不校验, 网关拒启而管理进程照常启动, 两进程不对称(flash 审计抓出)
+	router, err := proxy.NewRouter(origCfg.Mappings, origCfg.Services, origCfg.Roles)
+	if err != nil {
+		log.Fatalf("config 路由校验: %v (与网关一致, 拒绝启动)", err)
+	}
+	cm := configmgr.New(*configPath, origCfg, router)
 
 	// 管理 API(签发/吊销/列表/p12)
 	mgr, err := api.NewManager(store, cfg.CA, cfg.CAKey, cfg.CertDir, cfg.SockPath, api.CertTemplate{
@@ -197,6 +204,7 @@ func main() {
 	}()
 
 	// ===== 管理 API TCP (Web 面板/远程, 需 admin_role 证书) =====
+	var srv *http.Server
 	adminListen := config.ResolveListen(cfg.BindHost, cfg.AdminListen)
 	if adminListen != "" {
 		ln, err := net.Listen("tcp", adminListen)
@@ -204,7 +212,7 @@ func main() {
 			log.Fatalf("admin listen %s: %v", adminListen, err)
 		}
 		log.Printf("admin api listening on %s (mTLS, admin cert required)", adminListen)
-		srv := &http.Server{
+		srv = &http.Server{
 			Handler:           h,
 			ReadHeaderTimeout: 10 * time.Second,
 			ReadTimeout:       30 * time.Second,
@@ -218,13 +226,19 @@ func main() {
 		}()
 	}
 
-	// 优雅退出
+	// 优雅退出: SIGINT/SIGTERM → 关闭 TCP admin server(5s 内等进行中的签发/p12 请求完成,
+	// 与网关一致; unix socket 随进程退出关闭, CLI 操作短平快不受影响) — flash 审计抓出此前无优雅退出
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 	log.Println("shutting down...")
 	if evLog != nil {
 		evLog.Write(eventlog.Event{Type: "stop", Msg: "mtls-admin 停止"})
+	}
+	if srv != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		srv.Shutdown(ctx)
 	}
 }
 

@@ -25,6 +25,9 @@ default_days = 365                    # 普通证书默认有效期
 admin_days = 30                       # 含管理角色证书的默认有效期
 
 # ---- 安全 ----
+# ⚠ 热重载范围: 管理 API 的 /admin/reload 只重载 DB 与 mappings/services;
+#   admin_role / require_ip_bind / tls_min_version 等安全字段修改后需重启两个进程生效
+#   (mtls-gw 与 mtls-admin), 否则新旧角色证书判定不一致(flash 审计提示的管理事故陷阱)。
 require_ip_bind = true                # 证书是否必须绑定来源 IP(建议保持 true)
 # 私钥权限预检(仅 Linux): ca_key/server_key/reload_key 要求 mode&0o007==0(禁 world 可读/写);
 # 0640(group 可读)放行(单用户/可信组部署常见); 若要"仅属主可读"请用 0600
@@ -32,6 +35,7 @@ admin_role = "mtls-superadmin"        # ★ 内置管理角色名(别用常用�
                                       #   禁止出现在业务服务 roles 里, 否则加载报错)
 tls_min_version = "1.2"               # TLS 最低版本: "1.2" 或 "1.3"
 config_mode = "mutable"               # 配置模式: mutable(落盘,默认) | ephemeral(仅内存) | immutable(只读)
+# 注: 管理 API 的配置保存会整份重写本文件(格式归一化, 注释/顺序会重排) — 手改前先备份
 lang = "zh"                           # 错误消息语言: zh | en
 
 # ---- 日志(事件型, 不记录数据内容) ----

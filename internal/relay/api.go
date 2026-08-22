@@ -174,7 +174,9 @@ func (m *Manager) UpdateSettings(p SettingsPatch) error {
 	}
 	if !np {
 		if err := SaveConfig(m.cfgPath, cfg); err != nil {
-			return fmt.Errorf("persist config: %w", err)
+			// 落盘失败: 内存已应用 + relay 已生效 — 与 AddTunnel/DelTunnel 同策略
+			// (内存即权威, 记日志警告重启丢失); 返回错误反而与已生效状态矛盾(flash 审计抓出反向半提交)
+			log.Printf("配置已应用但落盘失败: %v (重启将丢失设置)", err)
 		}
 	}
 	// server_addr / listen_host / server_ca / cert_dir 变更 → Reload 重建隧道(热生效)

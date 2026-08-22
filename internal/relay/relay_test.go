@@ -615,3 +615,39 @@ func TestRelay_StartRollbackOnFailure(t *testing.T) {
 	}
 	ln2.Close()
 }
+
+// flash 审计补: startTunnel 端口复用只放行本隧道组整口
+// ① 同服务 整口+路径 → 路径复用整口 listener(设计行为, 不报错)
+// ② 跨服务 同端口 → 必须报错(此前 hasLocalPort 遍历全部隧道 → 静默错配, A 的 HTTP
+//
+//	监听吞掉 B 的整口流量 / 字节错送 — flash 横向审计抓出, 补回归护栏)
+func TestRelay_PortReuseScoping(t *testing.T) {
+	h := newHarness(t)
+	defer h.close()
+	src := h.buildSrc(t)
+	ch := ":" + gwPortOf(h.gwAddr)
+
+	// ① 同服务: 整口 + 同端口路径 → 复用放行, Start 成功
+	p := freePort(t)
+	r := New(src)
+	cfg := RelayConfig{ListenHost: "127.0.0.1", ServerAddr: h.gwAddr, ServerCAFile: h.caPath, Tunnels: []Tunnel{
+		{Service: "s1", Routes: []TunnelRoute{{Channel: ch, Local: ":" + fmt.Sprintf("%d", p)}}, CertID: h.clientPairPath, Enabled: true},
+		{Service: "s1", Routes: []TunnelRoute{{Channel: ch, Local: ":" + fmt.Sprintf("%d", p) + "/admin"}}, CertID: h.clientPairPath, Enabled: true},
+	}}
+	if err := r.Start(cfg); err != nil {
+		t.Fatalf("同服务整口+路径应复用放行: %v", err)
+	}
+	r.Close()
+
+	// ② 跨服务同端口 → 报错(不再静默复用)
+	p2 := freePort(t)
+	r2 := New(src)
+	defer r2.Close()
+	cfg2 := RelayConfig{ListenHost: "127.0.0.1", ServerAddr: h.gwAddr, ServerCAFile: h.caPath, Tunnels: []Tunnel{
+		{Service: "s1", Routes: []TunnelRoute{{Channel: ch, Local: ":" + fmt.Sprintf("%d", p2)}}, CertID: h.clientPairPath, Enabled: true},
+		{Service: "s2", Routes: []TunnelRoute{{Channel: ch, Local: ":" + fmt.Sprintf("%d", p2)}}, CertID: h.clientPairPath, Enabled: true},
+	}}
+	if err := r2.Start(cfg2); err == nil {
+		t.Fatal("跨服务同端口应报错(不再静默错配)")
+	}
+}
