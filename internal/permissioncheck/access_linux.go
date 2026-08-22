@@ -1,5 +1,7 @@
 //go:build linux
 
+// access_linux.go: Linux 权限检查实现(unix.Access; 禁 world 读密钥)。
+
 package permissioncheck
 
 import (

@@ -1,3 +1,5 @@
+// tunnel.go: 隧道实现 — TCP 透传(整口)与本地 HTTP 反代(路径路由), 双向 copyLoop。
+
 package relay
 
 import (

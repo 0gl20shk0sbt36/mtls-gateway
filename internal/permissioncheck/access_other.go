@@ -1,5 +1,7 @@
 //go:build !linux
 
+// access_other.go: 非 Linux 权限检查桩(Windows 无 POSIX 权限语义, 恒放行)。
+
 package permissioncheck
 
 import "os"

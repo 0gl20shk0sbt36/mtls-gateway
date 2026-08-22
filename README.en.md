@@ -78,6 +78,27 @@ reload (the gateway's in-memory copy is read-only and atomically swapped).
 
 The CLI and Web panel are **peer shells** of the management API; the Web panel never calls the CLI directly. Both connect to mtls-admin.
 
+### 1.6 Glossary (quick reference)
+
+| Term | Meaning |
+|---|---|
+| **mTLS gateway** | The server side as a whole: device-level cert authentication + role-based routing, not tied to any specific app |
+| **mtls-gw / mtls-admin** | Server-side **two processes**: gateway = pure data plane (auth + routing + forwarding); admin process = sole writer (issue/revoke/change config). Both read the same config.toml and ignore irrelevant fields |
+| **Cert = identity, SQLite = permissions** | Certs only prove who you are (CA-signed + SAN-bound IP); permissions (roles) live entirely in the DB; changing roles/revoking never requires re-issuing |
+| **roles vs purposes** | **Two names for the same concept**: config calls it `roles` (service declarations / issue validation), the DB column calls it `purposes` (the cert's role list). Same role system, not two things |
+| **role** | Role name `[A-Za-z0-9_-]+`; service roles and issued purposes must both be declared in the config `roles` list |
+| **`any` role** | Writing `any` in a service declaration = any **registered** cert may access (still passes mTLS + registration checks); forbidden as a declared role or issued to a cert |
+| **`null` route** | Writing `null` in a service's roles = **anonymous access** (no cert required, anyone can reach it); the deployer owns the port exposure |
+| **`admin_role`** | Built-in admin role (default `mtls-superadmin`): a cert holding it gets management rights; forbidden in service roles / the roles declaration list (privilege-escalation guard) |
+| **TS IP** | The device IP written into the cert SAN (`--ts-ip`; typically a Tailscale 100.x address); with `require_ip_bind=true` the source IP must match, preventing private-key copying to other devices |
+| **mapping / service** | Channel (the only routing entity, uniqueness by `listen`) / service declaration (`channels` reference mapping ids + `roles` for authorization); access = cert roles intersect the union of roles of all services referencing that mapping |
+| **whole-port vs path routing** | `listen` without a path = whole-port fallback (client relay uses TCP passthrough); with a path = prefix matching (HTTP reverse proxy, nginx proxy_pass semantics); multiple path routes share one listener |
+| **relay (client)** | **relay is a client**: it actively dials out to the gateway (server) with a device cert and maps gateway services to local ports. Topology is "client → gateway" — don't misread the package name `relay` as a server |
+| **`/info` discovery** | Anonymous gateway endpoint: no cert → returns the CA (clients filter their cert sources); with a cert → returns the services that cert may access; relay only needs one `server_addr` |
+| **config_mode (3 states)** | `mutable` (persist + backup, default) / `ephemeral` (memory only, testing/temporary) / `immutable` (read-only, config CRUD rejected); changes require restarting both processes |
+| **X-Auth-Purpose** | Internal **trusted header** for the admin API: set by mtls-admin only after outer mTLS auth + admin_role checks pass; the inner layer trusts it — client forgery is blocked by the outer layer first |
+| **Standalone gateway** | mtls-gw does not depend on mtls-admin: a minimal config (data-plane fields only) starts and serves fully (auth/routing/forwarding/logs); it just cannot issue certs or change config online (pair with `immutable`) |
+
 ---
 
 ## 2. Quick Start

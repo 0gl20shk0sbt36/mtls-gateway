@@ -1,3 +1,5 @@
+// certsource_dir.go: dir 证书源 — 扫描证书目录为"证书库", 带过滤与 symlink 逃逸防护。
+
 package certsource
 
 import (

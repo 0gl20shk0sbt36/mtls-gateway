@@ -1,5 +1,7 @@
 //go:build windows
 
+// addr_in_use_windows.go: Windows 端口占用错误识别(WSAEADDRINUSE)。
+
 package relay
 
 import (

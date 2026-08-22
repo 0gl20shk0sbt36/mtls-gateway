@@ -1,3 +1,5 @@
+// reloadclient.go: ReloadClient — 调网关 POST /admin/reload(admin 证书 mTLS)触发全量热重载。
+
 package httpshared
 
 import (

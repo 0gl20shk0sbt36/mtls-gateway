@@ -1,5 +1,7 @@
 //go:build linux && !android
 
+// certsource_linux.go: Linux system 源 — 统一证书目录作为"证书库"(Linux 无系统身份库)。
+
 package certsource
 
 import (

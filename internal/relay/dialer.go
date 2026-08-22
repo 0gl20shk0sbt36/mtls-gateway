@@ -1,3 +1,5 @@
+// dialer.go: 上行 mTLS 拨号器(网关 ServerName + 服务器 CA 校验)。
+
 package relay
 
 import (

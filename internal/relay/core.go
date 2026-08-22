@@ -1,3 +1,5 @@
+// core.go: Relay 核心 — 证书源生命周期/隧道状态/启动停止/热重载。
+
 package relay
 
 import (

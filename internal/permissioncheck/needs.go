@@ -1,3 +1,5 @@
+// needs.go: 启动权限检查项定义(GatewayNeeds 数据面 / AdminNeeds 管理面)。
+
 package permissioncheck
 
 import (

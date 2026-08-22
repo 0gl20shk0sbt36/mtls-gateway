@@ -1,3 +1,5 @@
+// load.go: pem/p12 加载与加密私钥密码处理(密码加载/错误归一)。
+
 package certsource
 
 import (

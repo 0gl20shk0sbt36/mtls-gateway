@@ -32,6 +32,8 @@ type ConfigManager struct {
 	L      *i18n.L // 错误消息语言(zh/en, 默认 zh)
 }
 
+// New 创建配置管理器: 持有配置 + 路由器, 模式与错误语言跟随 cfg。
+// path=配置文件路径(落盘与 ReloadFromDisk 用); router=初始路由器(启动时构建)。
 func New(path string, cfg config.Config, router *proxy.Router) *ConfigManager {
 	return &ConfigManager{path: path, mode: cfg.ConfigMode, cfg: cfg, router: router, L: i18n.New(cfg.Lang)}
 }

@@ -1,3 +1,5 @@
+// status.go: 隧道状态快照与状态汇总(供外壳/管理 API/WebUI 展示)。
+
 package relay
 
 // TunnelStatus 一条隧道的状态快照 (供外壳/管理 API 展示)

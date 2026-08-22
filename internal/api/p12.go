@@ -1,3 +1,5 @@
+// p12.go: 证书导出 p12 格式(go-pkcs12; 供管理 API 签发返回, 明文私钥不回传)。
+
 package api
 
 import (

@@ -1,3 +1,5 @@
+// api.go: 中继管理业务方法(设置/隧道 CRUD/管理桥/验证/签发) — 路由层在 handler.go, 错误出口在 httperr.go。
+
 package relay
 
 import (

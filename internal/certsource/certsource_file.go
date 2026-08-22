@@ -1,3 +1,5 @@
+// certsource_file.go: file 证书源 — 单文件 pem/p12 证书(显式路径)。
+
 package certsource
 
 import "crypto/tls"

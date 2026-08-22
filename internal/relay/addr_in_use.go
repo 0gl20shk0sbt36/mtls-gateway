@@ -1,5 +1,7 @@
 //go:build !windows
 
+// addr_in_use.go: 端口占用错误识别(非 Windows; EADDRINUSE/WSAEADDRINUSE 归一)。
+
 package relay
 
 import (
