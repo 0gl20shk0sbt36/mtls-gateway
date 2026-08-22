@@ -23,31 +23,31 @@
 
 重复代码型债, 跨包抽取收益递减风险递增, 建议配一次 pro 深挖设计后再动:
 
-- [ ] `cmd/mtls-gw/main.go` http.Server 三段复制 → 抽 `startServer(addr, handler, name)` 助手
+- [ ] - [x] ~~`cmd/mtls-gw/main.go` http.Server 三段复制 → 抽 `startServer(addr, handler, name)` 助手~~ — 已做(0fc0bcf 闭包收敛 4 段构造)
 - [x] ~~`cmd/mtls-gw/configmgr.go` 9 个 CRUD 模板 → 抽 `mutate(func() error)` 助手~~ — 已做(mutate 已抽, 包已迁 internal/configmgr)
-- [ ] `internal/relay/admin.go` 复制 `api.IssueRequest/IssueResponse` + `proxy.Mapping` → 抽共享 types 包
-- [ ] 角色名校验 4 份(proxy.ValidRoleName / api.validName / configmgr 内联 / 前端 RE_NAME)规则微差 → 统一
-- [ ] 路径拼接两包(proxy.substitute/joinURLPath vs relay.joinSlash)→ 统一
+- [ ] - [ ] `internal/relay/admin.go` 复制 `api.IssueRequest/IssueResponse` + `proxy.Mapping` → 抽共享 types 包(仍待)
+- [ ] - [x] ~~角色名校验 Go 侧统一~~ — api.validName 委托 proxy.ValidRoleName(0fc0bcf); 前端 RE_NAME 为 JS 侧独立, 字符集一致
+- [ ] - [ ] ~~路径拼接两包统一~~ — 刻意不做: proxy 折叠斜杠 vs relay 保留 // 与尾斜杠, 语义不同, 合并有回归风险(记录)
 - [x] ~~ResponseWriter 包装器两份(main.go statusWriter vs eventlog.StatusWriter)→ 共用~~ — 已做(第一轮删 statusWriter 改用 eventlog.StatusWriter)
-- [ ] 原子写文件两处(configmgr.persist vs relay.SaveConfig)→ 抽 helper
-- [ ] 跨端 tunnel key 格式耦合(Go 拼 service@channel@local, 前端 app.js 再拼一遍)→ 前端读 status 的 id 字段
+- [ ] - [x] ~~原子写文件两处~~ — 抽 internal/atomicfile(0fc0bcf), configmgr/relay 共用
+- [ ] - [x] ~~跨端 tunnel key 格式耦合~~ — 前端按 status 自身字段建索引, 不再拼 Go 复合 key(0fc0bcf)
 
 ## 低优先级(并发 L3 — 健壮性, 不影响正确性)
 
 - [ ] Reload/Start 持大锁执行隧道启停(锁粒度偏大, 可只保护 tunnels map)
-- [ ] 循环内 `time.After` 未 Stop(每连接退出残留 1 timer)
+- [ ] - [x] ~~循环内 time.After 未 Stop~~ — NewTimer + Stop/Reset(8dd5d4b)
 - [ ] db.Store 持写锁执行 SQLite IO(可内存先行 + 锁外落库)
 - [ ] 优雅退出不彻底(单 5s ctx 顺序 Shutdown; relay 用 Close 非 Shutdown)
 - [ ] ConfigManager.persist 持锁做备份+落盘 IO
-- [ ] 每请求重建 ServeMux(mgr.HTTPHandler 每次 new ServeMux)
-- [ ] eventlog rotate 后 open 失败永久静默(应重试或回退 stderr)
+- [ ] - [x] ~~每请求重建 ServeMux~~ — HTTPHandler 构建一次缓存(8dd5d4b)
+- [ ] - [x] ~~eventlog rotate 后 open 失败永久静默~~ — 置 nil + 下次写入重试(8dd5d4b)
 - [ ] HTTP 反代模式每 60s 重建 Transport(可复用 Transport 仅重建 TLSClientConfig)
 
 ## 低优先级(flash 报的其他低危, 已记录未修)
 
-- [ ] CLI 手写 flag 解析(mtls-gw-cli issue 的 needValue 表 + 不支持 `--sock=x` 形式)
-- [ ] WebUI 无 CSP / X-Frame-Options 头(已修 Google Fonts 外链, CSP 未加)
-- [ ] `go:embed` 已修, 但前端 `esc()` 双份(app.js + i18n.js)、`style="..."` 内联 CSS 混写
+- [ ] - [ ] CLI 手写 flag 解析(mtls-gw-cli issue 的 needValue 表; `--sock=`/`--admin=` 等号形式已支持)
+- [ ] - [x] ~~WebUI 无 CSP / X-Frame-Options 头~~ — 已加 CSP/X-Frame-Options/X-Content-Type-Options(8dd5d4b)
+- [ ] - [ ] `go:embed` 已修; esc() 双份已去重(8dd5d4b), 内联 CSS 混写仍待
 - [x] ~~`4<<20` 等魔法数字无常量(3 文件 10 处)~~ — 第二轮已抽 maxBodyBytes/maxInfoBody 常量
 
 ## 已决策不做(用户明确)
