@@ -415,3 +415,21 @@ func TestExpandVars(t *testing.T) {
 		t.Fatalf("expandVars = %q, want %q", got, want)
 	}
 }
+
+// sanitizeLogPath: 删除 C0 控制字符(CR/LF 防日志注入伪造行, ANSI ESC 防污染), 保留正常字符
+func TestSanitizeLogPath(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"/a/b", "/a/b"},
+		{"/a\r\nb", "/ab"},         // CR/LF 删除(伪造日志行)
+		{"/a\x1b[31mb", "/a[31mb"}, // ANSI ESC 删除(外观污染)
+		{"/a\x00b\x1fc", "/abc"},   // 其余 C0 删除
+		{"/a\x7fb", "/ab"},         // DEL 删除
+		{"/中文/路径", "/中文/路径"},       // 非 ASCII 保留
+		{"", ""},                   // 空串
+	}
+	for _, c := range cases {
+		if got := sanitizeLogPath(c.in); got != c.want {
+			t.Errorf("sanitizeLogPath(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}

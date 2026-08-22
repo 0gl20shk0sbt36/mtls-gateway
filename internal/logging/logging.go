@@ -1,7 +1,8 @@
 // Package logging 日志路径的平台分派(跨平台默认位置)。
 //
 // 平台默认:
-//   - Windows: 可执行文件同目录(便携式, 与 relay 配置一致, 不写用户文件夹)
+//   - Windows: 可执行文件同目录下的组件子目录(便携式, 与 relay 配置一致, 不写用户文件夹;
+//     子目录保证同目录多进程 mtls-gw/mtls-admin 日志互不污染)
 //   - Linux/其他: 用户缓存目录 $XDG_CACHE_HOME/<component> 或 ~/.cache/<component>
 //     (用户级无需特权; 生产部署可显式配置 /var/log/<component>/...)
 //

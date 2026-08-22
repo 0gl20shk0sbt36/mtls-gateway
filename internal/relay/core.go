@@ -18,6 +18,7 @@ import (
 
 	"mtls-gateway/internal/certsource"
 	"mtls-gateway/internal/i18n"
+	"mtls-gateway/internal/pathutil"
 )
 
 // Relay 客户端中继核心: 单实例, 同时服务多条隧道(端口)。
@@ -216,7 +217,7 @@ func (r *Relay) fetchCAAndFilter() {
 	}
 	resp, err := cli.Get("https://" + addr + "/info")
 	if err != nil {
-		log.Printf("anonymous /info 引导: %v (降级: 用本地 server_ca %s 过滤)", err, caFile)
+		log.Printf("anonymous /info 引导: %v (降级: 用本地 server_ca %s 过滤)", pathutil.SanitizeForLog(err.Error()), pathutil.SanitizeForLog(caFile))
 		return
 	}
 	defer resp.Body.Close()
@@ -229,7 +230,8 @@ func (r *Relay) fetchCAAndFilter() {
 	}
 	if caCert := firstCert([]byte(info.CA)); caCert != nil {
 		certsource.ApplyIssuerFilter(src, caCert.Subject.String())
-		log.Printf("anonymous /info 引导: 已用服务端 CA 过滤证书源 (%s)", caCert.Subject.String())
+		// subject 来自服务端 /info 响应(TLS 验证后), 失陷服务端可用 CN 注入文本日志 — 清洗
+		log.Printf("anonymous /info 引导: 已用服务端 CA 过滤证书源 (%s)", pathutil.SanitizeForLog(caCert.Subject.String()))
 	}
 }
 

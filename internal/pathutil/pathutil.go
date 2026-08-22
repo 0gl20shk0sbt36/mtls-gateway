@@ -1,7 +1,19 @@
-// Package pathutil 路径工具: dot-segment 清理(防 .. 穿透前缀)
+// Package pathutil 路径工具: dot-segment 清理(防 .. 穿透前缀) + 日志输出清洗
 package pathutil
 
 import "strings"
+
+// SanitizeForLog 清洗字符串用于文本日志: 删除 C0 控制字符(\x00-\x1F)与 DEL(0x7F)。
+// 防日志注入伪造行(CWE-117): 路径/文件名可含 CR/LF/ANSI ESC(Linux 文件名几乎任意字节);
+// 写入文本日志前统一清洗。JSON 事件日志由 json.Marshal 转义, 不受影响。
+func SanitizeForLog(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, s)
+}
 
 // CleanDotSegments 移除 .. 段与 . 段(保留 // 与尾斜杠语义; .. 钳制在根, 不丢失前导斜杠)。
 // 反斜杠视为分隔符一并处理(防 Windows 后端把 \..\ 归一化为路径分隔符导致逃逸)。

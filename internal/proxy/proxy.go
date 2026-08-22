@@ -437,7 +437,7 @@ func newReverseProxy(target *url.URL) *httputil.ReverseProxy {
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			// 脱敏: 后端错误细节(内部 IP/端口/DNS)只写日志, 对外统一 502
-			// 路径先清洗 CR/LF: 已认证客户端可把 %0d%0a 编进 URL 伪造文本日志行
+			// 路径先清洗 C0 控制字符: 已认证客户端可把 %0d%0a 编进 URL 伪造文本日志行
 			// (CWE-117; JSON 事件日志由 json.Marshal 转义不受影响)
 			log.Printf("proxy %s -> %s: %v", sanitizeLogPath(r.URL.Path), target.Host, err)
 			http.Error(w, "bad gateway", http.StatusBadGateway)
@@ -459,16 +459,11 @@ func SanitizeHeader(r *http.Request) {
 	r.Header.Del("Via")
 }
 
-// sanitizeLogPath 清洗日志输出的路径: 删除 CR/LF 及其余 C0 控制字符(\x00-\x1F, 含 ANSI ESC)。
+// sanitizeLogPath 清洗日志输出的路径: 删除 CR/LF 及其余 C0 控制字符(含 ANSI ESC)。
 // 已认证客户端可把 %0d%0a 编进 URL 伪造文本日志行(CWE-117); ANSI 转义只能污染外观、
 // 不能伪造日志行, 一并滤除; JSON 事件日志由 json.Marshal 转义不受影响。
 func sanitizeLogPath(p string) string {
-	return strings.Map(func(r rune) rune {
-		if r < 0x20 || r == 0x7f {
-			return -1
-		}
-		return r
-	}, p)
+	return pathutil.SanitizeForLog(p)
 }
 
 // ApplyHeaders 转发前应用请求头改写: 先执行默认防伪造基线(SanitizeHeader),

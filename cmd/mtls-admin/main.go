@@ -57,6 +57,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("config %s: %v (配置文件错误, 拒绝启动)", *configPath, err)
 	}
+	// 保留原始 cfg 供 configmgr 使用: 下方日志路径替换只影响本进程日志 —
+	// 若替换后的路径进 configmgr, persist() 会把 admin 组件路径写回共享 config.toml,
+	// 网关下次启动继承该路径 → 日志重新合流(滚动竞态回归 + 用户配置被污染)。
+	origCfg := cfg
 	// 日志路径与网关分离(同一 config 的 log_file 等字段指向网关路径时 —
 	// 双进程各自滚动同一文件会 rename 竞态互相覆盖; 强制改用 mtls-admin 组件路径)。
 	// 注意: 显式配置的共享路径同样被替换 — 双进程共享一份 config, 该字段无法表达
@@ -126,7 +130,8 @@ func main() {
 	}
 
 	// 配置管理(改内存 + TOML 落盘; router 仅校验用, 不 Serve)
-	cm := configmgr.New(*configPath, cfg, nil)
+	// 用原始 cfg(日志路径未被替换): 落盘不污染共享配置
+	cm := configmgr.New(*configPath, origCfg, nil)
 
 	// 管理 API(签发/吊销/列表/p12)
 	mgr, err := api.NewManager(store, cfg.CA, cfg.CAKey, cfg.CertDir, cfg.SockPath, api.CertTemplate{

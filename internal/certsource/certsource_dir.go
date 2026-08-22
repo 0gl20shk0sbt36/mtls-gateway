@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"mtls-gateway/internal/pathutil"
 )
 
 // dirSource 目录扫描源: 每子目录一个证书 (<name>/cert.pem + <name>/key.pem),
@@ -151,10 +153,12 @@ func (d *dirSource) Load(id string) (tls.Certificate, error) {
 }
 
 // warnSymlinkEscape 逃逸符号链接一次性告警: 目录被污染(攻击者写入逃逸链接)时留痕,
-// 只告警一次避免 List 高频轮询刷屏。
+// 只告警一次避免 List 高频轮询刷屏。路径先清洗控制字符 — Linux 文件名可含 \n/ESC,
+// 攻击者命名带控制字符的逃逸链接可在文本日志注入伪行(CWE-117, 与 proxy 同款防护)。
 func (d *dirSource) warnSymlinkEscape(err error) {
 	d.warnOnce.Do(func() {
-		log.Printf("cert source %s: 检测到逃逸符号链接, 已跳过该身份: %v (请检查证书目录是否被污染)", d.root, err)
+		log.Printf("cert source %s: 检测到逃逸符号链接, 已跳过该身份: %v (请检查证书目录是否被污染)",
+			pathutil.SanitizeForLog(d.root), pathutil.SanitizeForLog(err.Error()))
 	})
 }
 

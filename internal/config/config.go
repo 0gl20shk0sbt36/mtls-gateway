@@ -86,7 +86,7 @@ func DefaultConfig() Config {
 		OU:            "device",
 		DefaultDays:   365,
 		AdminDays:     30,
-		LogFile:       logging.DefaultPath("mtls-gw", "events.log"), // 事件日志: 分平台默认(Windows=exe 目录 / Linux=用户缓存)
+		LogFile:       logging.DefaultPath("mtls-gw", "events.log"), // 事件日志: 分平台默认(Windows=exe 目录/mtls-gw / Linux=用户缓存)
 		AccessLogFile: logging.DefaultPath("mtls-gw", "access.log"), // 访问日志: 分平台默认
 		StdoutLogFile: logging.DefaultPath("mtls-gw", "stdout.log"), // 标准日志(终端+文件双写): 分平台默认
 		LogMaxSizeMB:  10,
