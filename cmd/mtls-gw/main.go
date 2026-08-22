@@ -60,6 +60,13 @@ func main() {
 	if err := os.MkdirAll(filepath.Dir(cfg.DB), 0o700); err != nil {
 		log.Fatalf("mkdir db dir: %v", err)
 	}
+	// 预检前创建日志目录(与 DB 目录一致): 默认分平台路径目录可能不存在(新机器),
+	// 不创建则权限预检对缺失目录报 ENOENT → 网关无法首次启动。
+	for _, p := range []string{cfg.LogFile, cfg.AccessLogFile, cfg.StdoutLogFile} {
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			log.Fatalf("mkdir log dir: %v", err)
+		}
+	}
 
 	// 启动前权限预检(Linux): 网关读路径(CA/服务器证书/私钥/DB/日志)权限不足 → 拒绝启动。
 	// 防 2026-08-21 22:18 类事件带病运行; 密钥文件要求 mode&0o007==0(禁 world 可读)。

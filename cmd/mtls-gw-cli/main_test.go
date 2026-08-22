@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -24,6 +25,9 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	binPath = filepath.Join(dir, "mtls-gw-cli")
+	if runtime.GOOS == "windows" {
+		binPath += ".exe" // go build -o 在 Windows 自动追加 .exe, exec 路径须带扩展名(windows-test 抓出)
+	}
 	cmd := exec.Command("go", "build", "-o", binPath, ".")
 	cmd.Dir = "." // 在 cmd/mtls-gw-cli 包目录编译
 	if out, err := cmd.CombinedOutput(); err != nil {

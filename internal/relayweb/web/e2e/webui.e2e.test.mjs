@@ -1,6 +1,6 @@
 // WebUI E2E 测试 — 操作真实网页(playwright) + 转发/mTLS/签发闭环实测, CI 可跑
 // 用法: 先跑 e2e/setup.sh(每次全新环境), 再 node --test e2e/webui.e2e.test.mjs
-// 环境变量: E2E_URL(默认 http://127.0.0.1:46990/), E2E_ADMIN_PWD(默认 ci-admin-pw), E2E_DIR(默认 /tmp/mtls-e2e-ci)
+// 环境变量: E2E_URL(默认 http://127.0.0.1:57090/), E2E_ADMIN_PWD(默认 ci-admin-pw), E2E_DIR(默认 /tmp/mtls-e2e-ci)
 import { test, before, after } from "node:test";
 import assert from "node:assert";
 import { chromium } from "playwright-core";
@@ -8,11 +8,11 @@ import fs from "node:fs";
 import http from "node:http";
 import https from "node:https";
 
-const URL = process.env.E2E_URL || "http://127.0.0.1:46990/";
+const URL = process.env.E2E_URL || "http://127.0.0.1:57090/";
 const ADMIN_PWD = process.env.E2E_ADMIN_PWD || "ci-admin-pw";
 const E2E_DIR = process.env.E2E_DIR || "/tmp/mtls-e2e-ci";
-const GW_PORT = 46991;     // svc-a 整口通道(映射 echo 46987)
-const LOCAL_PORT = 47991;  // 隧道本地路由(避开 gw 同端口)
+const GW_PORT = 57091;     // svc-a 整口通道(映射 echo 57087)
+const LOCAL_PORT = 57991;  // 隧道本地路由(避开 gw 同端口)
 
 let browser, page, errors;
 
@@ -140,9 +140,9 @@ test("3. 配置区: target 联动 + 非法 listen 红框 + 保存拦截", async 
   await page.evaluate((i) => { const l = [...document.querySelectorAll('#cfgMappings input[data-cfg="m-listen"]')][i]; l.value = "29994"; l.dispatchEvent(new Event("input", { bubbles: true })); }, n);
   await page.waitForTimeout(150);
   assert.equal(await page.evaluate((i) => [...document.querySelectorAll('#cfgMappings input[data-cfg="m-listen"]')][i].classList.contains("err"), n), true);
-  await page.evaluate((i) => { const l = [...document.querySelectorAll('#cfgMappings input[data-cfg="m-listen"]')][i]; l.value = ":46994"; l.dispatchEvent(new Event("input", { bubbles: true })); }, n);
+  await page.evaluate((i) => { const l = [...document.querySelectorAll('#cfgMappings input[data-cfg="m-listen"]')][i]; l.value = ":57094"; l.dispatchEvent(new Event("input", { bubbles: true })); }, n);
   await page.waitForTimeout(150);
-  assert.equal(await page.evaluate((i) => [...document.querySelectorAll('#cfgMappings input[data-cfg="m-target"]')][i].value, n), "http://127.0.0.1:46994");
+  assert.equal(await page.evaluate((i) => [...document.querySelectorAll('#cfgMappings input[data-cfg="m-target"]')][i].value, n), "http://127.0.0.1:57094");
   await page.click("#cfgSave");
   await page.waitForTimeout(300);
   const msg = await page.evaluate(() => document.getElementById("cfgResult").textContent);
@@ -170,7 +170,7 @@ test("4. 多选 any 互斥(选 any → 其他禁选)", async () => {
   await page.waitForTimeout(150);
 });
 
-test("5. e2e-a 验证 → 添加隧道(本地路由 47991 避开 gw 同端口)", async () => {
+test("5. e2e-a 验证 → 添加隧道(本地路由 57991 避开 gw 同端口)", async () => {
   await page.reload();
   await page.waitForTimeout(600);
   await verifyWith("e2e-a", "");
@@ -211,7 +211,7 @@ test("7. ★转发真的转发: 隧道本地路由 → 网关 → echo 后端(�
   const r = await httpGet(LOCAL_PORT, "/");
   assert.equal(r.status, 200, `转发状态码: ${JSON.stringify(r)}`);
   assert.ok(r.body.includes("Directory listing") || r.body.includes("<title>"), `应返回 echo 后端内容: ${r.body.slice(0, 80)}`);
-  // 路径通道(:47991/admin → 网关 :46991/admin → 后端)
+  // 路径通道(:57991/admin → 网关 :57091/admin → 后端)
   const rp = await httpGet(LOCAL_PORT, "/admin/");
   assert.ok(rp.status === 200 || rp.status === 404, `路径通道应有后端响应(200/404 都证明链路通): ${JSON.stringify(rp).slice(0, 100)}`);
   if (rp.status === 200) {
@@ -230,7 +230,7 @@ test("8. ★mTLS 壳真的套上: 无证书/坏证书被拒, 带证书通过(直
   const withCert = await httpsGet(GW_PORT, { withCert: true });
   assert.equal(withCert.status, 200, `带证书应通过: ${JSON.stringify(withCert).slice(0, 120)}`);
   // admin 管理端口同样无证书被拒(应用层 403)
-  const admBare = await httpsGet(46999);
+  const admBare = await httpsGet(57099);
   assert.ok(admBare.status === 403, `admin 端口无证书应 403: ${JSON.stringify(admBare)}`);
 });
 
@@ -363,14 +363,14 @@ test("15. 连接设置: 读取 → 修改保存 → 热重载生效", async () =
   const adminAddr = await page.inputValue("#setAdminAddr");
   assert.ok(adminAddr.includes(":"), `应显示 admin_addr(当前: ${adminAddr})`);
   // 修改 server_addr → 保存(热重载)
-  await page.fill("#setServerAddr", "127.0.0.1:46999");
+  await page.fill("#setServerAddr", "127.0.0.1:57099");
   await page.click("#btnSaveSettings");
   await page.waitForTimeout(900);
   const hint = await page.textContent("#settingsHint");
   assert.ok(hint && hint.trim(), "保存后应有成功提示(热重载)");
   // 服务端确认已落盘(经 /api/settings 读回)
   const res = await page.evaluate(() => fetch("/api/settings").then((r) => r.json()));
-  assert.ok(res.server_addr === "127.0.0.1:46999", `落盘 server_addr 应为新值, got ${res.server_addr}`);
+  assert.ok(res.server_addr === "127.0.0.1:57099", `落盘 server_addr 应为新值, got ${res.server_addr}`);
   // 恢复原值(避免影响环境)
   await page.fill("#setServerAddr", sa);
   await page.click("#btnSaveSettings");

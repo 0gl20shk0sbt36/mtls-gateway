@@ -80,6 +80,13 @@ func main() {
 		log.Printf("日志: stdout %q → %q (mtls-admin 组件路径)", cfg.StdoutLogFile, adminStdout)
 		cfg.StdoutLogFile = adminStdout
 	}
+	// 预检前创建日志目录(与 DB 目录一致): 组件路径目录可能不存在(新机器),
+	// 不创建则权限预检对缺失目录报 ENOENT → 管理进程无法首次启动。
+	for _, p := range []string{cfg.LogFile, cfg.AccessLogFile, cfg.StdoutLogFile} {
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			log.Fatalf("mkdir log dir: %v", err)
+		}
+	}
 	if err := os.MkdirAll(filepath.Dir(cfg.DB), 0o700); err != nil {
 		log.Fatalf("mkdir db dir: %v", err)
 	}
@@ -165,6 +172,16 @@ func main() {
 			log.Printf("gateway reload: %s (变更后自动热重载)", cfg.GatewayReloadAddr)
 		}
 	}
+	// 证书变更(签发/吊销)后触发网关 reload: 网关是只读消费者, 不自动感知 DB 变更 —
+	// 不 reload 则新签发证书对网关不可见、吊销仍放行(管理拆分数据流的必接环节)。
+	mgr.SetPostChange(func() {
+		if rc != nil && !rc.Trigger() {
+			log.Printf("⚠️ 证书变更后网关 reload 失败(网关仍用旧内存副本, 请检查 gateway_reload_addr/reload 证书)")
+			if evLog != nil {
+				evLog.Write(eventlog.Event{Type: "config_change", Msg: "⚠️ 证书变更后网关 reload 失败(网关仍用旧内存副本)"})
+			}
+		}
+	})
 
 	if evLog != nil {
 		evLog.Write(eventlog.Event{Type: "start", Msg: "mtls-admin 启动"})

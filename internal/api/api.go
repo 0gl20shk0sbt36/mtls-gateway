@@ -59,19 +59,20 @@ const maxBodyBytes = 4 << 20
 
 // Manager 管理 API 服务
 type Manager struct {
-	store     *db.Store
-	caCert    *x509.Certificate
-	caKey     *rsa.PrivateKey
-	certDir   string          // 已签发证书输出目录
-	sockPath  string          // Unix socket 路径
-	tmpl      CertTemplate    // 证书模板 (可配置)
-	AdminRole string          // 内置管理角色名 (config admin_role)
-	KeyType   string          // 签发密钥类型: rsa | ecdsa
-	KeyBits   int             // rsa: 2048/3072/4096; ecdsa: 256/384/521
-	PwdLength int             // 自动生成 p12 密码长度
-	rolesMu   sync.RWMutex    // 保护 roles(热更新与签发并发)
-	roles     map[string]bool // 声明角色集合 (签发 purposes 校验用)
-	audit     AuditFunc       // 审计回调(签发/吊销成功后调用; nil=不记录)
+	store      *db.Store
+	caCert     *x509.Certificate
+	caKey      *rsa.PrivateKey
+	certDir    string          // 已签发证书输出目录
+	sockPath   string          // Unix socket 路径
+	tmpl       CertTemplate    // 证书模板 (可配置)
+	AdminRole  string          // 内置管理角色名 (config admin_role)
+	KeyType    string          // 签发密钥类型: rsa | ecdsa
+	KeyBits    int             // rsa: 2048/3072/4096; ecdsa: 256/384/521
+	PwdLength  int             // 自动生成 p12 密码长度
+	rolesMu    sync.RWMutex    // 保护 roles(热更新与签发并发)
+	roles      map[string]bool // 声明角色集合 (签发 purposes 校验用)
+	audit      AuditFunc       // 审计回调(签发/吊销成功后调用; nil=不记录)
+	postChange func()          // 证书变更回调(签发/吊销成功后调用; nil=不调用)
 }
 
 // AuditFunc 审计事件回调: 签发/吊销成功后调用, kind 为 "cert_issue"/"cert_revoke"。
@@ -81,6 +82,11 @@ type AuditFunc func(kind, msg string)
 
 // SetAudit 注册审计回调(mtls-admin 接 eventlog; 双通道统一留痕)
 func (m *Manager) SetAudit(fn AuditFunc) { m.audit = fn }
+
+// SetPostChange 注册证书变更回调(签发/吊销成功后调用)。
+// mtls-admin 用它触发网关 /admin/reload — 管理拆分后网关是只读消费者,
+// 不自动感知 DB 变更; 不注册则网关内存永远停留在旧证书集(新签发不可用/吊销仍放行)。
+func (m *Manager) SetPostChange(fn func()) { m.postChange = fn }
 
 // orgName 返回证书 O 字段
 func (m *Manager) orgName() []string { return []string{m.tmpl.Org} }
@@ -392,6 +398,10 @@ func (m *Manager) IssueCert(req IssueRequest) (*IssueResponse, error) {
 	if m.audit != nil {
 		m.audit("cert_issue", fmt.Sprintf("签发证书 name=%s purposes=%v serial=%s", req.Name, req.Purposes, serial.String()))
 	}
+	// 变更回调: 网关是只读消费者, 需通知其 reload(否则新证书对网关不可见)
+	if m.postChange != nil {
+		m.postChange()
+	}
 	return &IssueResponse{
 		Name:        req.Name,
 		Serial:      serial.String(),
@@ -502,6 +512,9 @@ func (m *Manager) handler(isLocal bool) http.Handler {
 		}
 		if m.audit != nil {
 			m.audit("cert_revoke", fmt.Sprintf("吊销证书 serial=%s", req.Serial))
+		}
+		if m.postChange != nil {
+			m.postChange() // 网关 reload, 否则吊销对网关不生效(仍放行)
 		}
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		json.NewEncoder(w).Encode(map[string]bool{"ok": true})
