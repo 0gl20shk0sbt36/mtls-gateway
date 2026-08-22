@@ -651,3 +651,67 @@ func TestRelay_PortReuseScoping(t *testing.T) {
 		t.Fatal("跨服务同端口应报错(不再静默错配)")
 	}
 }
+
+// flash 复审补: 同服务两个整口同端口必须报错(复用条件要求新 route 为路径 route;
+// 否则第二个整口变惰性条目静默吞配置错误 — flash 复审抓出)
+func TestRelay_PortReuseWholePortConflict(t *testing.T) {
+	h := newHarness(t)
+	defer h.close()
+	src := h.buildSrc(t)
+	ch := ":" + gwPortOf(h.gwAddr)
+	p := freePort(t)
+	r := New(src)
+	defer r.Close()
+	cfg := RelayConfig{ListenHost: "127.0.0.1", ServerAddr: h.gwAddr, ServerCAFile: h.caPath, Tunnels: []Tunnel{
+		{Service: "s1", Routes: []TunnelRoute{{Channel: ch, Local: ":" + fmt.Sprintf("%d", p)}}, CertID: h.clientPairPath, Enabled: true},
+		{Service: "s1", Routes: []TunnelRoute{{Channel: ch, Local: ":" + fmt.Sprintf("%d", p)}}, CertID: h.clientPairPath, Enabled: true},
+	}}
+	if err := r.Start(cfg); err == nil {
+		t.Fatal("同服务两个整口同端口应报错")
+	}
+}
+
+// flash 复审补: Reload 删除宿主整口后, 复用的路径 route 应重建独立监听
+// (hasWholePortRuntime 判定路径; 否则端口永久变暗)
+func TestRelay_PortReuseRebuildAfterHostDeleted(t *testing.T) {
+	h := newHarness(t)
+	defer h.close()
+	src := h.buildSrc(t)
+	ch := ":" + gwPortOf(h.gwAddr)
+	p := freePort(t)
+	local := ":" + fmt.Sprintf("%d", p)
+	pathLocal := local + "/admin"
+	r := New(src)
+	defer r.Close()
+	cfg := RelayConfig{ListenHost: "127.0.0.1", ServerAddr: h.gwAddr, ServerCAFile: h.caPath, Tunnels: []Tunnel{
+		{Service: "s1", Routes: []TunnelRoute{{Channel: ch, Local: local}}, CertID: h.clientPairPath, Enabled: true},
+		{Service: "s1", Routes: []TunnelRoute{{Channel: ch, Local: pathLocal}}, CertID: h.clientPairPath, Enabled: true},
+	}}
+	if err := r.Start(cfg); err != nil {
+		t.Fatalf("同服务整口+路径应复用放行: %v", err)
+	}
+	// 初始: 路径 route 复用整口 listener → Running=false(状态不虚报)
+	key := "s1@" + ch + "@" + pathLocal
+	find := func() (TunnelStatus, bool) {
+		for _, s := range r.Status() {
+			if s.ID == key {
+				return s, true
+			}
+		}
+		return TunnelStatus{}, false
+	}
+	if s, ok := find(); !ok || s.Running {
+		t.Fatalf("初始路径 route 应复用(非 Running): %+v ok=%v", s, ok)
+	}
+	// Reload 删除整口宿主 → 路径 route 应重建独立监听并 Running
+	cfg2 := RelayConfig{ListenHost: "127.0.0.1", ServerAddr: h.gwAddr, ServerCAFile: h.caPath, Tunnels: []Tunnel{
+		{Service: "s1", Routes: []TunnelRoute{{Channel: ch, Local: pathLocal}}, CertID: h.clientPairPath, Enabled: true},
+	}}
+	if err := r.Reload(cfg2); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	s, ok := find()
+	if !ok || !s.Running {
+		t.Fatalf("宿主整口删除后路径 route 应重建独立监听并 Running: %+v ok=%v", s, ok)
+	}
+}

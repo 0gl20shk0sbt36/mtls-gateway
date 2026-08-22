@@ -86,10 +86,11 @@ func (r *Relay) startTunnel(rt *tunnelRuntime) error {
 	addr := net.JoinHostPort(host, rt.route.LocalPort())
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
-		// 同端口多路径: 本隧道组已有 route(整口优先)占用同端口,
-		// 路径 route 复用该 listener(整口 TCP 透传兜底该端口流量), 不算错误。
-		// 只对"本隧道组内部"的端口复用放行; 端口被外部进程占用仍报错上报。
-		if isAddrInUse(err) && r.hasLocalPort(rt.service, rt.route.LocalPort()) {
+		// 同端口多路径: 本隧道组已有整口 route 占用同端口时, **路径** route 复用该
+		// listener(整口 TCP 透传兜底该端口流量), 不算错误。
+		// 只放行: ① 本隧道组内部(跨服务同端口必报错) ② 新 route 是路径 route
+		// (整口对整口同端口 → 报错, 否则第二个整口变惰性条目静默吞配置错误 — flash 复审抓出)
+		if isAddrInUse(err) && rt.route.LocalPath() != "" && r.hasLocalPort(rt.service, rt.route.LocalPort()) {
 			rt.listener = nil // 复用: 不独立监听, stop 时跳过 Close
 			ctx, cancel := context.WithCancel(r.runCtx)
 			rt.ctx = ctx
