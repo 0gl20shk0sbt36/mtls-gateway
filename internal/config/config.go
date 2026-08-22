@@ -15,7 +15,7 @@ import (
 
 	"mtls-gateway/internal/auth"
 	"mtls-gateway/internal/logging"
-	"mtls-gateway/internal/proxy"
+	"mtls-gateway/internal/types"
 )
 
 // 配置模式常量(哨兵, 防拼写漂移 — 可读性审计)
@@ -56,8 +56,8 @@ type Config struct {
 	LogMaxSizeMB  int                `toml:"log_max_size"`    // 单文件上限 MB (默认 10)
 	LogMaxFiles   int                `toml:"log_max_files"`   // 保留历史份数 (默认 5)
 	Roles         []string           `toml:"roles"`           // 角色声明列表(服务 roles / 签发 purposes 必须在此声明)
-	Mappings      []proxy.Mapping    `toml:"mappings"`        // 通道: id + listen(:port[/path]) + target
-	Services      []proxy.ServiceCfg `toml:"services"`        // 服务注册: name + channels + roles
+	Mappings      []types.Mapping    `toml:"mappings"`        // 通道: id + listen(:port[/path]) + target
+	Services      []types.ServiceCfg `toml:"services"`        // 服务注册: name + channels + roles
 	// —— 管理进程专属(mtls-admin; 网关忽略) ——
 	GatewayReloadAddr string `toml:"gateway_reload_addr"` // 网关 /admin/reload 地址(如 100.104.135.63:9444); 空=变更后不自动 reload
 	ReloadCert        string `toml:"reload_cert"`         // 调网关 reload 的 admin 客户端证书(pem)
@@ -99,8 +99,8 @@ func DefaultConfig() Config {
 		LogMaxSizeMB:  10,
 		LogMaxFiles:   5,
 		Roles:         []string{},
-		Mappings:      []proxy.Mapping{},
-		Services:      []proxy.ServiceCfg{},
+		Mappings:      []types.Mapping{},
+		Services:      []types.ServiceCfg{},
 	}
 }
 
@@ -120,7 +120,7 @@ func Parse(path string) (Config, error) {
 	if cfg.AdminRole == "null" {
 		return cfg, fmt.Errorf("admin_role 不能是保留字 \"null\"(匿名访问哨兵, 语义冲突)")
 	}
-	if !proxy.ValidRoleName(cfg.AdminRole) {
+	if !types.ValidRoleName(cfg.AdminRole) {
 		return cfg, fmt.Errorf("bad admin_role %q (只允许字母/数字/下划线/连字符)", cfg.AdminRole)
 	}
 	// admin_role 不得出现在 roles 声明列表: 该角色证书自动获得管理权限(IsAdmin 字符串相等),
@@ -168,7 +168,7 @@ func Parse(path string) (Config, error) {
 		if r == "any" {
 			return cfg, fmt.Errorf("角色 %q 是内置保留字(服务声明里直接写 any 即对任意证书开放), 禁止在 roles 声明列表中声明", r)
 		}
-		if !proxy.ValidRoleName(r) {
+		if !types.ValidRoleName(r) {
 			return cfg, fmt.Errorf("bad role name %q (只允许字母/数字/下划线/连字符)", r)
 		}
 		if seen[r] {

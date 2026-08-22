@@ -14,26 +14,18 @@ import (
 	"net/http"
 	"net/url"
 	"time"
+
+	"mtls-gateway/internal/types"
+)
+
+// 与 internal/types 对齐的类型别名 (管理 API DTO)
+type (
+	IssueRequest  = types.IssueRequest
+	IssueResponse = types.IssueResponse
+	MappingInfo   = types.MappingInfo
 )
 
 // 管理操作请求/响应 (与服务端 internal/api 的 IssueRequest/IssueResponse 对齐)
-type IssueRequest struct {
-	Name       string   `json:"name"`
-	Purposes   []string `json:"purposes"`
-	TSIP       string   `json:"ts_ip,omitempty"`
-	Days       int      `json:"days,omitempty"`
-	Password   string   `json:"password,omitempty"`
-	NoPassword bool     `json:"no_password,omitempty"` // true=无密码
-}
-
-type IssueResponse struct {
-	Name        string `json:"name"`
-	Serial      string `json:"serial"`
-	CertPEM     string `json:"cert_pem"`
-	KeyPEM      string `json:"key_pem,omitempty"`
-	P12Password string `json:"p12_password,omitempty"`
-}
-
 // AdminClient 服务端管理 API 客户端 (mTLS, 需 admin 证书)
 type AdminClient struct {
 	addr   string // 服务端 admin 端点 host:port
@@ -125,12 +117,6 @@ func (a *AdminClient) ListMappings() ([]MappingInfo, error) {
 }
 
 // MappingInfo 服务端映射条目(与 internal/proxy.Mapping JSON 键对齐)
-type MappingInfo struct {
-	ID     string `json:"id"`
-	Listen string `json:"listen"`
-	Target string `json:"target"`
-}
-
 // Cfg 拉取服务端配置总览 (mode + mappings + services)
 func (a *AdminClient) Cfg() (json.RawMessage, error) {
 	var raw json.RawMessage

@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"mtls-gateway/internal/types"
 )
 
 func newEcho() *httptest.Server {
@@ -408,7 +410,7 @@ func TestApplyHeadersAnonymous(t *testing.T) {
 
 // TestExpandVars 变量模板替换 + 未识别占位原样保留
 func TestExpandVars(t *testing.T) {
-	got := expandVars("cert={cert_name} serial={cert_serial} roles={cert_roles} ip={remote_ip} x={unknown}",
+	got := types.ExpandVars("cert={cert_name} serial={cert_serial} roles={cert_roles} ip={remote_ip} x={unknown}",
 		HeaderVars{CertName: "a", CertSerial: "b", CertRoles: "c", RemoteIP: "d"})
 	want := "cert=a serial=b roles=c ip=d x={unknown}"
 	if got != want {

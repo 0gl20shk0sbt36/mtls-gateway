@@ -18,6 +18,7 @@ import (
 	"mtls-gateway/internal/config"
 	"mtls-gateway/internal/i18n"
 	"mtls-gateway/internal/proxy"
+	"mtls-gateway/internal/types"
 )
 
 // ConfigManager 持有可变的配置 + 路由器; 所有读写都过它(管理 API / 热重载)
@@ -238,7 +239,7 @@ func (m *ConfigManager) AddRole(name string) error {
 		if name == m.cfg.AdminRole {
 			return fmt.Errorf("内置管理角色 %q 禁止声明为普通角色", name)
 		}
-		if !proxy.ValidRoleName(name) {
+		if !types.ValidRoleName(name) {
 			return fmt.Errorf("bad role name %q (只允许字母/数字/下划线/连字符)", name)
 		}
 		for _, r := range m.cfg.Roles {

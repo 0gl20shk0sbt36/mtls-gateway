@@ -215,7 +215,7 @@ func TestIssueCertAdminNotFirst(t *testing.T) {
 // TestNormalizePurposesComma 兼容逗号分隔字符串
 func TestNormalizePurposesComma(t *testing.T) {
 	req := IssueRequest{Purposes: []string{"dsh, vaultwarden"}}
-	req.normalizePurposes("mtls-superadmin")
+	req.NormalizePurposes("mtls-superadmin")
 	if len(req.Purposes) != 2 || req.Purposes[0] != "dsh" || req.Purposes[1] != "vaultwarden" {
 		t.Fatalf("comma split failed: %v", req.Purposes)
 	}

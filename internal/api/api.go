@@ -28,7 +28,7 @@ import (
 	"time"
 
 	"mtls-gateway/internal/db"
-	"mtls-gateway/internal/proxy"
+	"mtls-gateway/internal/types"
 )
 
 // CertTemplate 证书模板配置 (来自配置文件, 部署级)
@@ -180,72 +180,16 @@ func (m *Manager) hasRole(p string) bool {
 }
 
 // IssueRequest 签发请求
-type IssueRequest struct {
-	Name       string   `json:"name"`        // 设备名
-	Purposes   []string `json:"purposes"`    // 可访问的用途列表: admin | dsh | vaultwarden | ...
-	TSIP       string   `json:"ts_ip"`       // 绑定 TS IP (写入 SAN)
-	Days       int      `json:"days"`        // 有效期天数 (默认 365)
-	Password   string   `json:"password"`    // p12 密码; 留空且未设 NoPassword 时自动生成
-	NoPassword bool     `json:"no_password"` // true = 无密码(留空=真的没密码)
-}
-
-// normalizePurposes 规范化用途列表, 返回警告列表(不终止); adminRole 为内置管理角色名(可配置)
-func (r *IssueRequest) normalizePurposes(adminRole string) (warnings []string) {
-	if len(r.Purposes) == 0 {
-		return nil
-	}
-	// 兼容旧请求: purposes 可能是逗号分隔字符串
-	if len(r.Purposes) == 1 && strings.Contains(r.Purposes[0], ",") {
-		parts := []string{}
-		for _, p := range strings.Split(r.Purposes[0], ",") {
-			if p = strings.TrimSpace(p); p != "" {
-				parts = append(parts, p)
-			}
-		}
-		r.Purposes = parts
-	}
-	// admin 规则 (admin_role 可配置)
-	for i, p := range r.Purposes {
-		if p == adminRole {
-			if i == 0 {
-				// admin_role 在首位: 若还有其他, 剔除其他
-				if len(r.Purposes) > 1 {
-					warnings = append(warnings, "admin 与其他用途混用, 已忽略其他用途, 仅保留 admin")
-					r.Purposes = []string{adminRole}
-				}
-			} else {
-				// admin_role 不在首位: 剔除, 保留其他
-				warnings = append(warnings, "admin 不在首位, 已剔除 admin, 保留其他用途")
-				others := []string{}
-				for _, x := range r.Purposes {
-					if x != adminRole {
-						others = append(others, x)
-					}
-				}
-				r.Purposes = others
-			}
-			return warnings
-		}
-	}
-	return warnings
-}
-
-// IssueResponse 签发结果
-type IssueResponse struct {
-	Name        string   `json:"name"` // 证书名(回显)
-	Serial      string   `json:"serial"`
-	CertPEM     string   `json:"cert_pem"`
-	KeyPEM      string   `json:"key_pem,omitempty"` // 仅本机返回(远程通道置空); 生产建议只给 p12
-	P12Password string   `json:"p12_password,omitempty"`
-	Expires     string   `json:"expires"`
-	Fingerprint string   `json:"fingerprint"`
-	Warnings    []string `json:"warnings,omitempty"` // 规范化警告 (如 admin 混用)
-}
+// 类型别名: 签发 DTO 实体在 internal/types(admin 桥与服务端共用, 字段漂移即编译错误)
+type (
+	IssueRequest  = types.IssueRequest
+	IssueResponse = types.IssueResponse
+)
 
 // IssueCert 签发客户端证书并登记数据库
 // SAN: 绑定 TS IP (设备绑定); 不写用途字段 (权限在数据库)
 func (m *Manager) IssueCert(req IssueRequest) (*IssueResponse, error) {
-	warnings := req.normalizePurposes(m.AdminRole)
+	warnings := req.NormalizePurposes(m.AdminRole)
 	if req.Name == "" || len(req.Purposes) == 0 {
 		return nil, fmt.Errorf("name and purposes required")
 	}
@@ -544,10 +488,10 @@ func (m *Manager) HTTPHandler() http.Handler {
 }
 
 // 工具函数
-// validName 设备名/证书名合法性: 与角色名校验同字符集(委托 proxy.ValidRoleName),
+// validName 设备名/证书名合法性: 与角色名校验同字符集(委托 types.ValidRoleName),
 // 附加 64 长度上限(防 ENAMETOOLONG: 输出目录/CN)。统一消除规则微差(P2 债)。
 func validName(s string) bool {
-	return proxy.ValidRoleName(s) && len(s) <= 64
+	return types.ValidRoleName(s) && len(s) <= 64
 }
 
 // newClientKey 按 key_type/key_bits 生成客户端密钥 (rsa 2048/3072/4096; ecdsa 256/384/521)

@@ -21,57 +21,22 @@ import (
 	"time"
 
 	"mtls-gateway/internal/pathutil"
+	"mtls-gateway/internal/types"
 )
 
-// 内置角色保留字(哨兵常量, 防拼写漂移 — 可读性审计)
+// 类型别名: DTO 实体在 internal/types(消除 config→proxy 反向依赖 + 跨包复制)。
+type (
+	Mapping    = types.Mapping
+	HeaderRule = types.HeaderRule
+	HeaderVars = types.HeaderVars
+	ServiceCfg = types.ServiceCfg
+)
+
+// 哨兵常量/校验: 实体在 internal/types(proxy 内部沿用短名)
 const (
-	RoleAny  = "any"  // 服务声明: 任一已登记证书可访问
-	RoleNull = "null" // 服务声明: 匿名可访问(无需证书)
+	RoleAny  = types.RoleAny
+	RoleNull = types.RoleNull
 )
-
-// Mapping 一条映射(通道)配置 (TOML [[mappings]] 直接对应)
-type Mapping struct {
-	ID      string       `toml:"id" json:"id"`           // 助记符(唯一; 判重仍靠 listen)
-	Listen  string       `toml:"listen" json:"listen"`   // 入口 :port[/path]
-	Target  string       `toml:"target" json:"target"`   // 后端 URL(带路径=前缀替换)
-	Headers []HeaderRule `toml:"headers" json:"headers"` // 请求头改写规则(认证后求值); 空=仅默认防伪造基线
-}
-
-// HeaderRule 一条请求头改写规则。
-//   - Op: "set" | "del"
-//   - Value 支持动态变量(认证后求值): {cert_name} {cert_serial} {cert_roles}(逗号分隔) {remote_ip}
-//   - set 时变量为空(匿名/null 路由) → 删除该头, 不注入空值
-//   - 防伪造: 所有 set 先删后设(客户端自带同名头被覆盖), 且默认基线先删 9 个转发头
-type HeaderRule struct {
-	Op    string `toml:"op" json:"op"`
-	Name  string `toml:"name" json:"name"`
-	Value string `toml:"value" json:"value"`
-}
-
-// HeaderVars 头规则动态变量(认证后由网关填充)
-type HeaderVars struct {
-	CertName   string // {cert_name}   证书登记名(匿名=空)
-	CertSerial string // {cert_serial} 证书序列号(匿名=空)
-	CertRoles  string // {cert_roles}  角色列表, 逗号分隔(匿名=空)
-	RemoteIP   string // {remote_ip}   来源 IP
-}
-
-// expandVars 模板替换 {cert_*}/{remote_ip}
-func expandVars(s string, v HeaderVars) string {
-	return strings.NewReplacer(
-		"{cert_name}", v.CertName,
-		"{cert_serial}", v.CertSerial,
-		"{cert_roles}", v.CertRoles,
-		"{remote_ip}", v.RemoteIP,
-	).Replace(s)
-}
-
-// ServiceCfg 服务注册条目 (TOML [[services]] 直接对应)
-type ServiceCfg struct {
-	Name     string   `toml:"name" json:"name"`         // 服务名(唯一)
-	Channels []string `toml:"channels" json:"channels"` // 通道: mapping id 或索引(不建议)
-	Roles    []string `toml:"roles" json:"roles"`       // 允许访问本服务的证书角色; "any"=任一已登记
-}
 
 // ChannelInfo /info 返回的通道信息
 type ChannelInfo struct {
@@ -242,18 +207,8 @@ func mergeRoles(a, b []string) []string {
 	return out
 }
 
-// ValidRoleName 角色名合法性: 字母/数字/下划线/连字符 (无特殊符号, 无通配符)
-func ValidRoleName(s string) bool {
-	if s == "" {
-		return false
-	}
-	for _, c := range s {
-		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-') {
-			return false
-		}
-	}
-	return true
-}
+// ValidRoleName 委托 internal/types(实体单点, 防校验规则漂移)
+func ValidRoleName(s string) bool { return types.ValidRoleName(s) }
 
 // parseListen 解析 ":9443" / ":9445/admin" → (port, path)
 func parseListen(l string) (string, string, error) {
@@ -481,7 +436,7 @@ func (rt *route) ApplyHeaders(req *http.Request, v HeaderVars) {
 		case "del":
 			req.Header.Del(h.Name)
 		case "set":
-			val := expandVars(h.Value, v)
+			val := types.ExpandVars(h.Value, v)
 			if val == "" {
 				req.Header.Del(h.Name) // 变量为空(匿名路由): 不注入空头
 				continue
