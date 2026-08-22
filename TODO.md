@@ -12,7 +12,7 @@
 - [ ] **服务端内存 Router 与磁盘不一致(22:18 事件, 代码已修)** — 根因: configmgr CRUD 在 `persist()` 失败(目录不可写)时**不回滚内存 cfg**(router 已 rebuild 成新状态, 磁盘没写成) → 内存/磁盘分叉直到重启。已抽 `mutate(apply, rollback)` 统一 9 个 CRUD, persist/rebuild 失败整体回滚 + 重建旧 router; 新增 `TestConfigManagerPersistFailureRollback` 复现 22:18 场景(ReplaceAll 空 services + 落盘失败 → 内存/路由保持原状)。**待部署新二进制生效**
 - [ ] **DSH 首次发送超时(根因已定位+代码已修, 待部署验证)** — **实为 relay TCP 透传 120s 空闲杀连接**切断空闲 WebSocket 长连接: dsh 回复经 WS downlink(events/mux+host, 无心跳帧)推送, 走 mTLS 时 WS 经 relay TCP 透传(:9443 无路径), 看回复/思考 >120s 即被 relay 切断 → 前端重连窗口内第一次发消息超时(重连后流式正常); SSH 直连无 relay 层则不超时。已修: `defaultTCPIdle 120s→12h`(frp 对照: frp 不杀空闲连接, 死连接靠 TCP keepalive) + Dialer 显式 KeepAlive 15s(防 NAT 静默回收); 另服务端 4 个 http.Server `WriteTimeout:60s→0`(绝对时限会切 LLM 长流式) + `IdleTimeout:60s→300s`。**待部署新二进制验证**
 - [ ] **admin 证书到期重签** — admin/gw-admin 证书 2026-09-16 前后到期, 到期前用 mtls-gw-cli 重签(admin_days=30)
-- [ ] **推送代码到云端** — 150+ 提交全本地未推(用户纪律: 不主动推送, 等指示)
+- [x] ~~**推送代码到云端**~~ — 2026-08-22 已推 origin master(90a2efa..d10a3f2), CI 首跑验证中
 - [ ] **部署最新二进制到 Windows** — win2 常驻进程(mtls-e2e/mtls-gw2/mtls-echo)仍是旧版
 - [ ] **生产 mtls-gw.service 重部署** — v4 TOML 重写后未部署(当前 DSH 9443 下线)
 - [ ] **README.en.md 同步** — 英文版仍是 v3 旧模型(README.md 已 v4)
