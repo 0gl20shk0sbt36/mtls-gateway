@@ -49,6 +49,10 @@ type Config struct {
 	Roles         []string           `toml:"roles"`           // 角色声明列表(服务 roles / 签发 purposes 必须在此声明)
 	Mappings      []proxy.Mapping    `toml:"mappings"`        // 通道: id + listen(:port[/path]) + target
 	Services      []proxy.ServiceCfg `toml:"services"`        // 服务注册: name + channels + roles
+	// —— 管理进程专属(mtls-admin; 网关忽略) ——
+	GatewayReloadAddr string `toml:"gateway_reload_addr"` // 网关 /admin/reload 地址(如 100.104.135.63:9444); 空=变更后不自动 reload
+	ReloadCert        string `toml:"reload_cert"`         // 调网关 reload 的 admin 客户端证书(pem)
+	ReloadKey         string `toml:"reload_key"`          // 调网关 reload 的 admin 客户端私钥(pem)
 }
 
 // RequireIPBindResolved 返回实际 IP 绑定要求 (默认 true)

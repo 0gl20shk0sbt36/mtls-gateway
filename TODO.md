@@ -59,5 +59,5 @@
 
 - [x] **阶段 0: 请求头改写配置化 + 证书身份注入** — mapping.headers + {cert_*} 变量(04d04d9)
 - [x] **阶段 1: 网关 reload API** — POST /admin/reload(admin 证书): db.Store.Reload(全量重读重建 map, 原子替换) + ConfigManager.ReloadFromDisk(重读配置+新 router, 失败保持旧) + auth.Gateway.Reload; parseConfig 抽离(启动 fatal/reload 返回 error)
-- [ ] **阶段 2: mtls-admin 独立进程** — 搬 api.Manager + 配置写(TOML) + 变更后调网关 /admin/reload; 共享 config.toml(字段划分见方案)
+- [x] **阶段 2: mtls-admin 独立进程** — cmd/mtls-admin(读同一 config.toml): db 写者 + CA 签发(api.Manager) + 配置 CRUD(configmgr 共用, 已抽 internal/configmgr) + Unix socket/TCP admin(mTLS) + 变更后调网关 /admin/reload(reloadClient, gateway_reload_addr/reload_cert/reload_key); internal/config 加管理字段
 - [ ] **阶段 3: CLI/Web/relay 适配** — admin_addr 指向管理进程; config_mode 三态迁移到管理进程

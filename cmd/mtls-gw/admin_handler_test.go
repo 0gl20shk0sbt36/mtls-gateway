@@ -17,8 +17,8 @@ import (
 
 	"mtls-gateway/internal/api"
 	"mtls-gateway/internal/auth"
-	"mtls-gateway/internal/configmgr"
 	"mtls-gateway/internal/config"
+	"mtls-gateway/internal/configmgr"
 	"mtls-gateway/internal/db"
 	"mtls-gateway/internal/eventlog"
 	"mtls-gateway/internal/proxy"
