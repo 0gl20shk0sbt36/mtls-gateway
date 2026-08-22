@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -275,10 +276,11 @@ func TestRelay_BadUpstream(t *testing.T) {
 		t.Fatal(err)
 	}
 	// pro 深度审计补: 坏上游下读应得 EOF/错误(连接被 relay 关闭), 而非悬挂
+	// 收紧为显式 EOF/closed: 排除"relay 挂起→3s 超时"的假阴性窗口(pro 复审建议)
 	conn.SetReadDeadline(time.Now().Add(3 * time.Second))
 	buf := make([]byte, 16)
-	if _, err := conn.Read(buf); err == nil {
-		t.Fatal("坏上游: 本地连接应被关闭(读应 EOF/错误)")
+	if _, err := conn.Read(buf); !(errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed)) {
+		t.Fatalf("坏上游: 本地连接应被关闭(EOF/closed), got %v", err)
 	}
 
 	// 确认隧道仍注册
