@@ -194,9 +194,14 @@ func TestManagerAdminBridgeIssueHTTP(t *testing.T) {
 	h := m.Handler()
 
 	// 签发(经管理桥 → stub /admin/certs/issue)
-	body := `{"cert_id":"` + clientPair + `","name":"bridge-dev","purposes":["svc-a"],"no_password":true}`
+	// 用 json.Marshal 构造 body: clientPair 是平台路径, Windows 含反斜杠,
+	// 字符串拼接会产出非法 JSON 转义(\U) — windows-test 真机抓出的测试 bug
+	bodyBytes, err := json.Marshal(map[string]any{"cert_id": clientPair, "name": "bridge-dev", "purposes": []string{"svc-a"}, "no_password": true})
+	if err != nil {
+		t.Fatal(err)
+	}
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", "/api/admin/issue", strings.NewReader(body))
+	req := httptest.NewRequest("POST", "/api/admin/issue", strings.NewReader(string(bodyBytes)))
 	req.Header.Set("Content-Type", "application/json")
 	h.ServeHTTP(rec, req)
 	if rec.Code != 200 {
@@ -208,8 +213,12 @@ func TestManagerAdminBridgeIssueHTTP(t *testing.T) {
 		t.Fatalf("issue response: %v", resp)
 	}
 	// 吊销(经管理桥)
+	bodyBytes2, err := json.Marshal(map[string]any{"cert_id": clientPair, "serial": "test-serial-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	rec2 := httptest.NewRecorder()
-	req2 := httptest.NewRequest("POST", "/api/admin/revoke", strings.NewReader(`{"cert_id":"`+clientPair+`","serial":"test-serial-1"}`))
+	req2 := httptest.NewRequest("POST", "/api/admin/revoke", strings.NewReader(string(bodyBytes2)))
 	req2.Header.Set("Content-Type", "application/json")
 	h.ServeHTTP(rec2, req2)
 	if rec2.Code != 200 {
