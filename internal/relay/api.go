@@ -17,6 +17,9 @@ import (
 	"mtls-gateway/internal/i18n"
 )
 
+// maxBodyBytes 管理 API 请求体上限(防内存耗尽)
+const maxBodyBytes = 4 << 20
+
 // Manager 中继管理入口: 外壳(CLI/WebUI/GUI)唯一接口。
 // 持有当前 RelayConfig 并持久化到磁盘; 提供 HTTP 管理 API 及便捷方法。
 type Manager struct {
@@ -24,9 +27,9 @@ type Manager struct {
 	cfgPath        string
 	mu             sync.Mutex
 	cfg            RelayConfig
-	noPersist      bool   // 只改内存、不落盘 (临时会话)
-	serverOverride string // --server 覆盖的发现端点(Config()/reloadTunnels 应用; 不落盘, adminAddr 不用)
-	webUIOnce      sync.Once
+	noPersist      bool             // 只改内存、不落盘 (临时会话)
+	serverOverride string           // --server 覆盖的发现端点(Config()/reloadTunnels 应用; 不落盘, adminAddr 不用)
+	webUIMu        sync.Mutex       // 保护 webUI 懒创建(失败不缓存: 下次请求重试)
 	webUI          *eventlog.Logger // WebUI 界面事件日志(客户端侧, 单独文件)
 }
 
@@ -439,28 +442,32 @@ func (m *Manager) reqL(r *http.Request) *i18n.L {
 	return m.relay.lang()
 }
 
-// webUILogger 懒创建 WebUI 事件日志(从配置 webui_log_file; 空=禁用)
+// webUILogger 懒创建 WebUI 事件日志(从配置 webui_log_file; 空=禁用)。
+// 创建失败不永久禁用(sync.Once 毒化): 配置文件写权限修复后下次请求重试。
 func (m *Manager) webUILogger() *eventlog.Logger {
 	cfg := m.Config()
 	if cfg.WebUILogFile == "" {
 		return nil
 	}
-	m.webUIOnce.Do(func() {
-		maxSize := cfg.WebUILogMaxSizeMB
-		if maxSize <= 0 {
-			maxSize = 10
-		}
-		maxFiles := cfg.WebUILogMaxFiles
-		if maxFiles < 0 {
-			maxFiles = 5
-		}
-		l, err := eventlog.New(cfg.WebUILogFile, maxSize, maxFiles)
-		if err != nil {
-			log.Printf("webui log: %v (禁用)", err)
-			return
-		}
-		m.webUI = l
-	})
+	m.webUIMu.Lock()
+	defer m.webUIMu.Unlock()
+	if m.webUI != nil {
+		return m.webUI
+	}
+	maxSize := cfg.WebUILogMaxSizeMB
+	if maxSize <= 0 {
+		maxSize = 10
+	}
+	maxFiles := cfg.WebUILogMaxFiles
+	if maxFiles < 0 {
+		maxFiles = 5
+	}
+	l, err := eventlog.New(cfg.WebUILogFile, maxSize, maxFiles)
+	if err != nil {
+		log.Printf("webui log: %v (本次不记录, 下次请求重试)", err)
+		return nil
+	}
+	m.webUI = l
 	return m.webUI
 }
 
@@ -816,7 +823,7 @@ func writeErr(w http.ResponseWriter, r *http.Request, err error) {
 
 // decodeJSON 解码请求体; 失败写 400 并返回 false
 func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
-	r.Body = http.MaxBytesReader(w, r.Body, 4<<20) // 4MB 上限
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes) // 4MB 上限
 	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
 		writeErr(w, r, fmt.Errorf("bad request: %v", err))
 		return false

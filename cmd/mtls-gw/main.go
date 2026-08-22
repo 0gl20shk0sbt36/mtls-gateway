@@ -62,7 +62,7 @@ func main() {
 	}
 
 	// 启动前权限预检(Linux): 网关读路径(CA/服务器证书/私钥/DB/日志)权限不足 → 拒绝启动。
-	// 防 2026-08-21 22:18 类事件带病运行; 密钥文件要求 mode&0o077==0(禁 world 可读)。
+	// 防 2026-08-21 22:18 类事件带病运行; 密钥文件要求 mode&0o007==0(禁 world 可读)。
 	// 失败时 stderr 必有输出; 尝试写事件日志(日志无权限则跳过)。
 	if permissioncheck.Report(permissioncheck.Check(permissioncheck.GatewayNeeds(cfg)), cfg.LogFile) {
 		os.Exit(1)

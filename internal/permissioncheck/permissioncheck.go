@@ -4,7 +4,9 @@
 // 预检在启动时暴露"目录不可写/密钥权限过宽带病运行", 不足拒绝启动。
 //
 // 平台分派: Linux 用 unix.Access(按当前 uid/gid, 含 root 特判); 其余平台跳过
-// (用户要求仅 Linux 检查)。
+// (用户要求仅 Linux 检查)。mode 检查同样仅 Linux(access_linux.go 的 modePerm):
+// Windows 上 os.Stat 的 Perm() 恒为 0666, 在平台无关层做 mode 检查会把全部
+// 密钥文件误判"权限过宽"拒绝启动(2026-08-22 复审发现, 已收口到 Linux)。
 package permissioncheck
 
 import (
@@ -19,15 +21,16 @@ const (
 	Write             // 可写
 )
 
-// ModeRestrict 组合进 Need.Mode: 要求文件 mode & 0o077 == 0(拒绝 world 可读/可写)。
-// 用于密钥/配置类敏感文件 — 世界可读的 CA 私钥/配置是提权面。
-const ModeRestrict = 0o077
+// ModeRestrict 组合进 Need.Mode: 要求文件 mode & 0o007 == 0(拒绝 world/other 可读/可写)。
+// 用于密钥/配置类敏感文件 — world 可读的 CA 私钥/配置是提权面。
+// 注意只禁 other 位(0o007)不禁 group 位: 0640(group 可读)是常见合法部署, 不应误拒。
+const ModeRestrict = 0o007
 
 // Need 一条路径的权限要求
 type Need struct {
 	Path string // 空 = 跳过(可空配置字段)
 	Perm int    // permissioncheck.Read / Write / 组合
-	Mode int    // 0=不检查; 0o077=要求 mode&0o077==0
+	Mode int    // 0=不检查; ModeRestrict=要求 mode&0o007==0(禁 world; 仅 Linux)
 	Desc string // 用途描述(错误输出用)
 }
 
@@ -44,8 +47,8 @@ func Check(needs []Need) []string {
 			continue
 		}
 		if n.Mode != 0 {
-			if st, err := os.Stat(n.Path); err == nil && st.Mode().Perm()&os.FileMode(n.Mode) != 0 {
-				fails = append(fails, fmt.Sprintf("%s (%s): 权限过宽 mode=%v(要求 mode&0o077==0)", n.Path, n.Desc, st.Mode().Perm()))
+			if p := modePerm(n.Path); p&os.FileMode(n.Mode) != 0 {
+				fails = append(fails, fmt.Sprintf("%s (%s): 权限过宽 mode=%v(要求 mode&0o007==0 禁 world 可读/写)", n.Path, n.Desc, p))
 			}
 		}
 	}

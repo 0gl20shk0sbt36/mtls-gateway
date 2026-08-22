@@ -33,6 +33,8 @@ func TestParseValidation(t *testing.T) {
 		{"bad key_bits 拒绝", "key_type = \"rsa\"\nkey_bits = 1024\n", "key_bits"},
 		{"重复角色拒绝", "roles = [\"x\", \"x\"]\n", "duplicate role"},
 		{"角色非法名拒绝", "roles = [\"x y\"]\n", "bad role name"},
+		{"角色 any 声明拒绝(保留字)", "roles = [\"any\"]\n", "any"},
+		{"角色 null 声明拒绝(保留字)", "roles = [\"null\"]\n", "null"},
 		{"合法配置通过", "admin_role = \"mtls-superadmin\"\nroles = [\"x\"]\n", ""},
 	}
 	for _, c := range cases {
@@ -96,5 +98,9 @@ func TestResolveListen(t *testing.T) {
 	}
 	if got := ResolveListen("0.0.0.0", ""); got != "" {
 		t.Fatalf("空串: %q", got)
+	}
+	// IPv6 回归用例: 修复动机场景 — 字符串拼接产出非法 ":::9444", JoinHostPort 产出 "[::]:9444"
+	if got := ResolveListen("::", ":9444"); got != "[::]:9444" {
+		t.Fatalf("IPv6 bind_host=%q: got %q, want \"[::]:9444\"", "::", got)
 	}
 }

@@ -152,11 +152,14 @@ func Parse(path string) (Config, error) {
 	default:
 		return cfg, fmt.Errorf("bad key_type %q (rsa|ecdsa)", cfg.KeyType)
 	}
-	// 角色声明列表校验: 命名合法 + 去重 (服务 roles 校验在 NewRouter)
+	// 角色声明列表校验: 命名合法 + 去重 + 内置保留字 (服务 roles 校验在 NewRouter)
 	seen := map[string]bool{}
 	for _, r := range cfg.Roles {
 		if r == "null" {
 			return cfg, fmt.Errorf("角色 %q 是内置保留字(匿名路由哨兵), 禁止在 roles 声明列表中声明", r)
+		}
+		if r == "any" {
+			return cfg, fmt.Errorf("角色 %q 是内置保留字(服务声明里直接写 any 即对任意证书开放), 禁止在 roles 声明列表中声明", r)
 		}
 		if !proxy.ValidRoleName(r) {
 			return cfg, fmt.Errorf("bad role name %q (只允许字母/数字/下划线/连字符)", r)

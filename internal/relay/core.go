@@ -223,7 +223,8 @@ func (r *Relay) fetchCAAndFilter() {
 	var info struct {
 		CA string `json:"ca"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil || info.CA == "" {
+	// 限流: 与 /info 成功路径一致, 防 MITM/误配服务端超大 JSON 耗尽内存
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxInfoBody)).Decode(&info); err != nil || info.CA == "" {
 		return
 	}
 	if caCert := firstCert([]byte(info.CA)); caCert != nil {

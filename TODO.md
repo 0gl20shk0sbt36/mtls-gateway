@@ -48,7 +48,7 @@
 - [ ] CLI 手写 flag 解析(mtls-gw-cli issue 的 needValue 表 + 不支持 `--sock=x` 形式)
 - [ ] WebUI 无 CSP / X-Frame-Options 头(已修 Google Fonts 外链, CSP 未加)
 - [ ] `go:embed` 已修, 但前端 `esc()` 双份(app.js + i18n.js)、`style="..."` 内联 CSS 混写
-- [ ] `4<<20` 等魔法数字无常量(3 文件 10 处)
+- [x] ~~`4<<20` 等魔法数字无常量(3 文件 10 处)~~ — 第二轮已抽 maxBodyBytes/maxInfoBody 常量
 
 ## 已决策不做(用户明确)
 
@@ -68,7 +68,19 @@
 🟢 部分: 死代码/误导注释/rotate 修正/数字索引警告/symlink 防护//info ReadAll 上限/日期缓存/ResponseWriter 去重
 
 ## 审计第一轮未修(记录, 第二轮复审评估)
-- [ ] 错误本地化 M1 三处碎片化(结构化 error 重构, 大改高风险)
-- [ ] relay 管理桥 9 函数样板(M3) / HTTP mTLS client 构造重复(M4) / listen 解析两套(M5) / main 包 handler 拆分(M8)
-- [ ] 前端 app.js 单测 / i18n 占位符一致性 / webUILogger sync.Once
-- [ ] 热重载动态起停监听(当前仅告警) / p12 密码 stdin / 魔法数字常量 / 日志 CRLF 清洗 / 过期 RFC3339 统一
+- [ ] 错误本地化 M1 三处碎片化(结构化 error 重构, 大改高风险 — 第二轮复审判定"可缓": 状态码映射已统一为 api.StatusFromKeywords 单一权威表, 剩余碎片漂移方向 fail-closed)
+- [ ] relay 管理桥 9 函数样板(M3) / HTTP mTLS client 构造重复(M4) / listen 解析两套(M5) / main 包 handler 拆分(M8) — 第二轮复审全部判定"可缓/长期搁置"
+- [ ] 前端 app.js 单测(靠 E2E 兜底) / i18n 占位符一致性(键集合测试抓不到占位符取值差异, 建议 logic.test.js 加占位符静态检查)
+- [ ] 热重载动态起停监听(当前显式告警已防呆, 需求出现再实现) / p12 密码 stdin(威胁面≈0, 改 stdin 破坏脚本化, 不值) / 过期 RFC3339 统一(格式与比较逻辑自洽, 建议注释写明语义)
+
+## 审计第二轮(4 个复审子代理, 2026-08-22)已修复(本提交)
+🔴 高: permissioncheck mode 检查**平台门控回归** — mode&0o077 检查原在平台无关层, Windows 上 os.Stat 的 Perm() 恒 0666 → 双进程一旦有密钥文件就拒绝启动; 已收口到 access_linux.go 的 modePerm(非 Linux 恒 0) + 新增 `!linux` 测试断言(随 CI windows-test 执行防再漏) + ModeRestrict 0o077→0o007(0640 group 可读不再误拒, 新增 TestKeyModeGroupReadableOK)
+🟡 中: loadFirstCert 无锁读 r.src 数据竞争(SetSource 热替换并发) / LoadWithPassword+子目录 cert.pem/key.pem symlink 逃逸(含 List 一致性: 逃逸身份不展示) / /info 成功路径 + fetchCAAndFilter 无界 JSON 解码(限流补齐, maxInfoBody=1MB) / 审计事件下沉 api.Manager(SetAudit, unix socket 与 TCP 双通道统一 cert_issue|cert_revoke, CLI 签发/吊销不再漏记) / mtls-admin 日志分离强制组件路径(显式共享路径也替换 — 共享=滚动竞态源, config.example 部署场景生效)
+🟢 低: config.Parse roles 拒 "any"(与 NewRouter/configmgr 一致) / TestResolveListen IPv6 回归用例("::"→"[::]:9444") / certsource_other.go 注释措辞(android 走真实检查) / proxy ErrorHandler 日志路径 CRLF 清洗(CWE-117) / 魔法数字抽常量(maxBodyBytes 3 文件 + maxInfoBody) / webUILogger sync.Once 毒化 → mutex 失败重试
+
+## 审计第二轮未修(记录, 均为复审判定可缓/低危)
+- [ ] UpdateSettings 三个边缘: SetLang 失败不回滚 / 并发回滚覆盖 / SaveConfig 失败内存已应用(反向半提交) — 单用户本地 API 概率极低
+- [ ] eventlog maxFile=0 仍保留 .1 一份历史(既有行为, 与"0=不留历史"语义不符)
+- [ ] README 2.2 端口表漏 reload_listen 一行 + 存量合并端口配置升级需迁移(并入文档一致性收尾)
+- [ ] 存量重名库打开报原始 SQLite 错误(UNIQUE 索引在 db.Open 失败; 功能仍正确拒绝, 提示不友好)
+- [ ] windows-test job 首次真实 runner 观察(AF_UNIX 黑盒测试依赖 Windows AF_UNIX 支持, 预期可过)

@@ -93,11 +93,12 @@ func (r *Relay) DiscoverWithCert(cert tls.Certificate) ([]ServiceInfo, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 限 1MB: 防误配/MITM 内存耗尽
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, maxInfoBody)) // 限 1MB: 防误配/MITM 内存耗尽
 		return nil, fmt.Errorf("relay: /info HTTP %d: %s", resp.StatusCode, firstLine(string(b)))
 	}
 	var out DiscoverResult
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	// 成功路径同样限流: 200 大响应此前无界解码, MITM/误配服务端可耗尽 relay 内存
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxInfoBody)).Decode(&out); err != nil {
 		return nil, fmt.Errorf("relay: parse /info: %w", err)
 	}
 	return out.Services, nil
@@ -113,10 +114,16 @@ func (r *Relay) DiscoverWithCertOf(certID, lang string) ([]ServiceInfo, error) {
 	return r.DiscoverWithCert(cert)
 }
 
+// maxInfoBody /info 响应体读取上限(防误配/MITM 超大 JSON 耗尽内存; 错误路径与成功路径一致)
+const maxInfoBody = 1 << 20
+
 // loadFirstCert 取来源里第一枚可用证书(用于发现/默认)
 func (r *Relay) loadFirstCert() (tls.Certificate, error) {
-	// src 构造期注入不可变, 无需持锁; List 是磁盘/证书库 IO, 锁外执行
-	metas, err := r.src.List()
+	// src 可被 SetSource 热替换(WebUI 改 cert_dir), 锁内拷贝指针再锁外执行磁盘/证书库 IO
+	r.mu.Lock()
+	src := r.src
+	r.mu.Unlock()
+	metas, err := src.List()
 	if err != nil {
 		return tls.Certificate{}, err
 	}

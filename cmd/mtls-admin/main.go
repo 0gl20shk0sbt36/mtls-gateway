@@ -11,7 +11,6 @@
 package main
 
 import (
-	"bytes"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
@@ -46,6 +45,8 @@ var version = "dev"
 const (
 	gwWriteTimeout = 0 * time.Second
 	gwIdleTimeout  = 300 * time.Second
+	// maxBodyBytes 管理 API 请求体上限(防内存耗尽)
+	maxBodyBytes = 4 << 20
 )
 
 func main() {
@@ -56,26 +57,29 @@ func main() {
 	if err != nil {
 		log.Fatalf("config %s: %v (配置文件错误, 拒绝启动)", *configPath, err)
 	}
-	// 日志路径与网关分离(同一 config 的 log_file 若未被显式配置, 落为网关默认路径 —
-	// 双进程各自滚动同一文件会 rename 竞态互相覆盖; 换成 mtls-admin 组件路径)。
-	{
-		def := config.DefaultConfig()
-		if cfg.LogFile == def.LogFile {
-			cfg.LogFile = logging.DefaultPath("mtls-admin", "events.log")
-		}
-		if cfg.AccessLogFile == def.AccessLogFile {
-			cfg.AccessLogFile = logging.DefaultPath("mtls-admin", "access.log")
-		}
-		if cfg.StdoutLogFile == def.StdoutLogFile {
-			cfg.StdoutLogFile = logging.DefaultPath("mtls-admin", "stdout.log")
-		}
+	// 日志路径与网关分离(同一 config 的 log_file 等字段指向网关路径时 —
+	// 双进程各自滚动同一文件会 rename 竞态互相覆盖; 强制改用 mtls-admin 组件路径)。
+	// 注意: 显式配置的共享路径同样被替换 — 双进程共享一份 config, 该字段无法表达
+	// 每进程路径, 共享路径本身就是滚动竞态源, 组件化分离是安全默认。
+	adminLog := logging.DefaultPath("mtls-admin", "events.log")
+	if cfg.LogFile != adminLog {
+		log.Printf("日志: events %q → %q (mtls-admin 组件路径, 与网关分离避免滚动竞态)", cfg.LogFile, adminLog)
+		cfg.LogFile = adminLog
+	}
+	adminAccess := logging.DefaultPath("mtls-admin", "access.log")
+	if cfg.AccessLogFile != adminAccess {
+		cfg.AccessLogFile = adminAccess
+	}
+	adminStdout := logging.DefaultPath("mtls-admin", "stdout.log")
+	if cfg.StdoutLogFile != adminStdout {
+		cfg.StdoutLogFile = adminStdout
 	}
 	if err := os.MkdirAll(filepath.Dir(cfg.DB), 0o700); err != nil {
 		log.Fatalf("mkdir db dir: %v", err)
 	}
 
 	// 启动前权限预检(Linux): 管理进程是唯一写者(DB/CA 签发/配置落盘) —
-	// 检查 CA 私钥/reload 客户端证书(mode&0o077==0 禁 world)/DB/签发目录/socket/配置目录。
+	// 检查 CA 私钥/reload 客户端证书(mode&0o007==0 禁 world)/DB/签发目录/socket/配置目录。
 	// 防 22:18 类"目录不可写带病运行"(签发目录只读 → 临时目录创建失败、配置落盘失败)。
 	if permissioncheck.Report(permissioncheck.Check(permissioncheck.AdminNeeds(cfg, *configPath)), cfg.LogFile) {
 		os.Exit(1)
@@ -133,6 +137,13 @@ func main() {
 		log.Fatalf("manager: %v", err)
 	}
 	mgr.SetDeclaredRoles(cfg.Roles)
+	// 审计事件在 Manager 内部触发(签发/吊销成功), 双通道(unix socket/TCP)统一留痕 —
+	// 证书操作是最高价值审计项, 不能只靠 TCP wrapper(CLI 走 unix socket 会绕过)
+	mgr.SetAudit(func(kind, msg string) {
+		if evLog != nil {
+			evLog.Write(eventlog.Event{Type: kind, Msg: msg})
+		}
+	})
 
 	// 网关 reload 客户端(可选): 变更后调网关 /admin/reload 热重载。
 	// 配置错误(缺 reload_cert/key 等)降级为警告并禁用自动 reload —
@@ -283,7 +294,7 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *configmgr.ConfigManage
 			Services []proxy.ServiceCfg `json:"services"`
 			Roles    []string           `json:"roles"`
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, 4<<20)
+		r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 		if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
 			gwErr(w, r, err)
 			return
@@ -301,7 +312,7 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *configmgr.ConfigManage
 		var b struct {
 			Name string `json:"name"`
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, 4<<20)
+		r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 		if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
 			gwErr(w, r, err)
 			return
@@ -329,7 +340,7 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *configmgr.ConfigManage
 	})
 	mux.HandleFunc("POST /admin/mappings", func(w http.ResponseWriter, r *http.Request) {
 		var m proxy.Mapping
-		r.Body = http.MaxBytesReader(w, r.Body, 4<<20)
+		r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 		if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
 			gwErr(w, r, err)
 			return
@@ -343,7 +354,7 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *configmgr.ConfigManage
 	})
 	mux.HandleFunc("PUT /admin/mappings", func(w http.ResponseWriter, r *http.Request) {
 		var m proxy.Mapping
-		r.Body = http.MaxBytesReader(w, r.Body, 4<<20)
+		r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 		if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
 			gwErr(w, r, err)
 			return
@@ -371,7 +382,7 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *configmgr.ConfigManage
 	})
 	mux.HandleFunc("POST /admin/services", func(w http.ResponseWriter, r *http.Request) {
 		var s proxy.ServiceCfg
-		r.Body = http.MaxBytesReader(w, r.Body, 4<<20)
+		r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 		if err := json.NewDecoder(r.Body).Decode(&s); err != nil {
 			gwErr(w, r, err)
 			return
@@ -385,7 +396,7 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *configmgr.ConfigManage
 	})
 	mux.HandleFunc("PUT /admin/services", func(w http.ResponseWriter, r *http.Request) {
 		var s proxy.ServiceCfg
-		r.Body = http.MaxBytesReader(w, r.Body, 4<<20)
+		r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 		if err := json.NewDecoder(r.Body).Decode(&s); err != nil {
 			gwErr(w, r, err)
 			return
@@ -407,45 +418,9 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *configmgr.ConfigManage
 		writeJSON(w, map[string]any{"ok": true})
 	})
 
-	// 证书管理(api.Manager 现成): 包装记录 cert_issue/cert_revoke 审计事件
-	// (证书签发/吊销是最高价值审计事件, 必须可追溯; 网关瘦身后本进程是唯一写入点)
-	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		msg := ""
-		if r.URL.Path == "/admin/certs/revoke" || r.URL.Path == "/admin/certs/issue" {
-			if b, err := io.ReadAll(io.LimitReader(r.Body, 4<<20)); err == nil {
-				r.Body = io.NopCloser(bytes.NewReader(b)) // 恢复 body 供下游解析
-				var rb struct {
-					Serial   string   `json:"serial"`
-					Name     string   `json:"name"`
-					Purposes []string `json:"purposes"`
-				}
-				if json.Unmarshal(b, &rb) == nil {
-					if r.URL.Path == "/admin/certs/revoke" && rb.Serial != "" {
-						msg = "吊销证书 serial=" + rb.Serial
-					}
-					if r.URL.Path == "/admin/certs/issue" {
-						msg = fmt.Sprintf("签发证书 name=%s purposes=%v", rb.Name, rb.Purposes)
-					}
-				}
-			}
-		}
-		sw := eventlog.NewStatusWriter(w)
-		mgr.HTTPHandler().ServeHTTP(sw, r)
-		if ev != nil && sw.Status() >= 200 && sw.Status() < 400 {
-			switch r.URL.Path {
-			case "/admin/certs/issue":
-				if msg == "" {
-					msg = "签发证书"
-				}
-				ev.Write(eventlog.Event{Type: "cert_issue", Msg: msg})
-			case "/admin/certs/revoke":
-				if msg == "" {
-					msg = "吊销证书"
-				}
-				ev.Write(eventlog.Event{Type: "cert_revoke", Msg: msg})
-			}
-		}
-	}))
+	// 证书管理(api.Manager 现成): 审计事件(cert_issue/cert_revoke)已下沉到 Manager 内部
+	// (SetAudit), unix socket 与 TCP 双通道统一留痕, 这里直接挂载即可。
+	mux.Handle("/", mgr.HTTPHandler())
 
 	// 外层: admin 证书授权(认证失败留痕 — 管理面不能是日志盲区)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

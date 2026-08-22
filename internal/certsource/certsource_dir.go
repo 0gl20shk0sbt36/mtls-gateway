@@ -59,13 +59,21 @@ func (d *dirSource) List() ([]IdentityMeta, error) {
 		full := filepath.Join(d.root, name)
 		if e.IsDir() {
 			// 子目录: cert.pem + key.pem
-			if _, err := os.Stat(filepath.Join(full, "cert.pem")); err != nil {
+			certPath, keyPath := filepath.Join(full, "cert.pem"), filepath.Join(full, "key.pem")
+			if _, err := os.Stat(certPath); err != nil {
 				continue
 			}
-			if _, err := os.Stat(filepath.Join(full, "key.pem")); err != nil {
+			if _, err := os.Stat(keyPath); err != nil {
 				continue
 			}
-			data, err := os.ReadFile(filepath.Join(full, "cert.pem"))
+			// 符号链接防护: 与 Load/LoadWithPassword 一致 — 逃逸 root 的身份不展示(否则列出却加载失败)
+			if err := d.checkWithinRoot(certPath); err != nil {
+				continue
+			}
+			if err := d.checkWithinRoot(keyPath); err != nil {
+				continue
+			}
+			data, err := os.ReadFile(certPath)
 			if err != nil {
 				continue
 			}
@@ -78,6 +86,9 @@ func (d *dirSource) List() ([]IdentityMeta, error) {
 			}
 			metas = append(metas, metaFromCert(cert, name, "dir:"+d.root))
 		} else if strings.EqualFold(filepath.Ext(name), ".p12") {
+			if err := d.checkWithinRoot(full); err != nil {
+				continue // 顶层 p12 符号链接逃逸 root: 不展示
+			}
 			data, err := os.ReadFile(full)
 			if err != nil {
 				continue
@@ -107,16 +118,24 @@ func (d *dirSource) Load(id string) (tls.Certificate, error) {
 	if err != nil {
 		return tls.Certificate{}, fmt.Errorf("cert %s not found: %w", id, err)
 	}
-	// 符号链接防护: 目录内 symlink 可把读取指向目录外任意文件 — 解析后校验仍在 root 内
-	if real, rerr := filepath.EvalSymlinks(full); rerr == nil && !withinRoot(d.root, real) {
-		return tls.Certificate{}, fmt.Errorf("cert %s resolves outside cert dir (symlink rejected)", id)
+	// 符号链接防护: 身份路径本身 + 目录内 cert.pem/key.pem 都不得解析到 root 外
+	// (目录内 symlink 可把 os.ReadFile 指向目录外任意文件)
+	if err := d.checkWithinRoot(full); err != nil {
+		return tls.Certificate{}, err
 	}
 	if st.IsDir() {
-		cert, err := os.ReadFile(filepath.Join(full, "cert.pem"))
+		certPath, keyPath := filepath.Join(full, "cert.pem"), filepath.Join(full, "key.pem")
+		if err := d.checkWithinRoot(certPath); err != nil {
+			return tls.Certificate{}, err
+		}
+		if err := d.checkWithinRoot(keyPath); err != nil {
+			return tls.Certificate{}, err
+		}
+		cert, err := os.ReadFile(certPath)
 		if err != nil {
 			return tls.Certificate{}, err
 		}
-		key, err := os.ReadFile(filepath.Join(full, "key.pem"))
+		key, err := os.ReadFile(keyPath)
 		if err != nil {
 			return tls.Certificate{}, err
 		}
@@ -124,6 +143,15 @@ func (d *dirSource) Load(id string) (tls.Certificate, error) {
 		return tlsFromPEM(id, combined)
 	}
 	return loadFilePEMOrP12(full)
+}
+
+// checkWithinRoot 符号链接防护: 解析后路径必须仍在 root 目录内。
+// EvalSymlinks 失败(路径缺失等)不在此拦截, 由调用方后续 stat/read 报错。
+func (d *dirSource) checkWithinRoot(p string) error {
+	if real, err := filepath.EvalSymlinks(p); err == nil && !withinRoot(d.root, real) {
+		return fmt.Errorf("%s resolves outside cert dir (symlink rejected)", p)
+	}
+	return nil
 }
 
 // withinRoot 判断 resolved 路径是否仍在 root 目录内(符号链接防护)
@@ -145,12 +173,23 @@ func (d *dirSource) LoadWithPassword(id, password string) (tls.Certificate, erro
 	if err != nil {
 		return tls.Certificate{}, fmt.Errorf("cert %s not found: %w", id, err)
 	}
+	// 符号链接防护: 与 Load 同一攻击面(WebUI 密码加载路径), 目录/文件 + 目录内 pem 都须在 root 内
+	if err := d.checkWithinRoot(full); err != nil {
+		return tls.Certificate{}, err
+	}
 	if st.IsDir() {
-		cert, err := os.ReadFile(filepath.Join(full, "cert.pem"))
+		certPath, keyPath := filepath.Join(full, "cert.pem"), filepath.Join(full, "key.pem")
+		if err := d.checkWithinRoot(certPath); err != nil {
+			return tls.Certificate{}, err
+		}
+		if err := d.checkWithinRoot(keyPath); err != nil {
+			return tls.Certificate{}, err
+		}
+		cert, err := os.ReadFile(certPath)
 		if err != nil {
 			return tls.Certificate{}, err
 		}
-		key, err := os.ReadFile(filepath.Join(full, "key.pem"))
+		key, err := os.ReadFile(keyPath)
 		if err != nil {
 			return tls.Certificate{}, err
 		}

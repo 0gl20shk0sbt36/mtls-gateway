@@ -54,6 +54,9 @@ func (t *CertTemplate) ApplyDefaults() {
 	}
 }
 
+// maxBodyBytes 管理 API 请求体上限(防内存耗尽)
+const maxBodyBytes = 4 << 20
+
 // Manager 管理 API 服务
 type Manager struct {
 	store     *db.Store
@@ -68,7 +71,16 @@ type Manager struct {
 	PwdLength int             // 自动生成 p12 密码长度
 	rolesMu   sync.RWMutex    // 保护 roles(热更新与签发并发)
 	roles     map[string]bool // 声明角色集合 (签发 purposes 校验用)
+	audit     AuditFunc       // 审计回调(签发/吊销成功后调用; nil=不记录)
 }
+
+// AuditFunc 审计事件回调: 签发/吊销成功后调用, kind 为 "cert_issue"/"cert_revoke"。
+// 由宿主进程(mtls-admin)接入 eventlog; 在 Manager 内部触发使两条通道
+// (unix socket 本机 CLI / TCP 远程)统一留痕 — 证书操作是最高价值审计项。
+type AuditFunc func(kind, msg string)
+
+// SetAudit 注册审计回调(mtls-admin 接 eventlog; 双通道统一留痕)
+func (m *Manager) SetAudit(fn AuditFunc) { m.audit = fn }
 
 // orgName 返回证书 O 字段
 func (m *Manager) orgName() []string { return []string{m.tmpl.Org} }
@@ -376,6 +388,10 @@ func (m *Manager) IssueCert(req IssueRequest) (*IssueResponse, error) {
 		return nil, fmt.Errorf("finalize cert dir: %w", err)
 	}
 	committed = true
+	// 审计(双通道统一): 签发成功留痕 — 证书操作是最高价值审计项, 不能只靠外层 wrapper
+	if m.audit != nil {
+		m.audit("cert_issue", fmt.Sprintf("签发证书 name=%s purposes=%v serial=%s", req.Name, req.Purposes, serial.String()))
+	}
 	return &IssueResponse{
 		Name:        req.Name,
 		Serial:      serial.String(),
@@ -451,7 +467,7 @@ func (m *Manager) handler(isLocal bool) http.Handler {
 			}
 		}
 		var req IssueRequest
-		r.Body = http.MaxBytesReader(w, r.Body, 4<<20)
+		r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
 			return
@@ -475,7 +491,7 @@ func (m *Manager) handler(isLocal bool) http.Handler {
 		var req struct {
 			Serial string `json:"serial"`
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, 4<<20)
+		r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
@@ -483,6 +499,9 @@ func (m *Manager) handler(isLocal bool) http.Handler {
 		if err := m.store.Revoke(req.Serial); err != nil {
 			http.Error(w, err.Error(), ErrStatus(err))
 			return
+		}
+		if m.audit != nil {
+			m.audit("cert_revoke", fmt.Sprintf("吊销证书 serial=%s", req.Serial))
 		}
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		json.NewEncoder(w).Encode(map[string]bool{"ok": true})

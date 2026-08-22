@@ -93,6 +93,18 @@ func TestAdminCAKeyModeRestrict(t *testing.T) {
 	}
 }
 
+// 0640(group 可读)是常见合法部署: ModeRestrict=0o007 只禁 world 位, 不应误拒
+func TestKeyModeGroupReadableOK(t *testing.T) {
+	cfg := permsOKConfig(t)
+	if err := os.Chmod(cfg.ServerKey, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(cfg.ServerKey, 0o600)
+	if fails := Check(GatewayNeeds(cfg)); len(fails) != 0 {
+		t.Fatalf("0640(group 可读)服务器私钥不应被 mode 检查拒绝: %v", fails)
+	}
+}
+
 // 只读目录场景: 签发目录/日志/socket 父目录不可写 → 报失败
 func TestAdminNeedsUnwritableDir(t *testing.T) {
 	cfg := permsOKConfig(t)
