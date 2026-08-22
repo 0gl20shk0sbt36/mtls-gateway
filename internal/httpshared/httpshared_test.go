@@ -102,3 +102,29 @@ func TestErrWriterOrder(t *testing.T) {
 		t.Fatalf("body = %q", rec.Body.String())
 	}
 }
+
+// 批次 B-4: ErrWriter 的 Kind 注入 — kind 随 JSON 信封上传(客户端结构化识别)
+func TestErrWriterKind(t *testing.T) {
+	ew := ErrWriter{
+		Status: func(err error) int { return http.StatusConflict },
+		Kind:   func(err error) string { return "conflict" },
+	}
+	rec := httptest.NewRecorder()
+	ew.Write(rec, httptest.NewRequest("GET", "/", nil), errors.New("x already exists"))
+	if !strings.Contains(rec.Body.String(), `"kind":"conflict"`) {
+		t.Fatalf("body 应含 kind: %q", rec.Body.String())
+	}
+	// Kind 返回空串 → 不含 kind 字段
+	ew2 := ErrWriter{Status: func(err error) int { return 500 }, Kind: func(err error) string { return "" }}
+	rec2 := httptest.NewRecorder()
+	ew2.Write(rec2, nil, errors.New("y"))
+	if strings.Contains(rec2.Body.String(), "kind") {
+		t.Fatalf("空 kind 不应出现在信封: %q", rec2.Body.String())
+	}
+	// Kind 为 nil → 无 kind 字段(兼容旧行为)
+	rec3 := httptest.NewRecorder()
+	(ErrWriter{Status: func(err error) int { return 500 }}).Write(rec3, nil, errors.New("z"))
+	if strings.Contains(rec3.Body.String(), "kind") {
+		t.Fatalf("nil Kind 不应出现在信封: %q", rec3.Body.String())
+	}
+}

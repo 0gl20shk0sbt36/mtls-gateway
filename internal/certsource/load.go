@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"mtls-gateway/internal/errs"
 	pkcs12 "software.sslmate.com/src/go-pkcs12"
 )
 
@@ -122,7 +123,7 @@ func tlsFromPEMWithPassword(name string, pemBytes []byte, password string) (tls.
 		return c, nil // 未加密
 	}
 	if password == "" {
-		return tls.Certificate{}, fmt.Errorf("private key needs password: %s", name)
+		return tls.Certificate{}, errs.New(errs.KindPwdNeeded, "private key needs password: %s", name)
 	}
 	rest := pemBytes
 	var all []byte
@@ -138,7 +139,7 @@ func tlsFromPEMWithPassword(name string, pemBytes []byte, password string) (tls.
 		if x509.IsEncryptedPEMBlock(b) {
 			der, err := x509.DecryptPEMBlock(b, []byte(password))
 			if err != nil {
-				return tls.Certificate{}, fmt.Errorf("decrypt key %s: %v", name, err)
+				return tls.Certificate{}, errs.WithKind(fmt.Errorf("decrypt key %s: %v", name, err), errs.KindBadPwd)
 			}
 			b = &pem.Block{Type: b.Type, Bytes: der}
 		} else if b.Type == "ENCRYPTED PRIVATE KEY" {
@@ -181,7 +182,7 @@ func loadFilePEMOrP12(path string) (tls.Certificate, error) {
 		if c, err := tlsFromP12(path, data, ""); err == nil {
 			return c, nil
 		}
-		return tls.Certificate{}, fmt.Errorf("p12 needs password (加密 p12 需密码, 请用密码加载或改用 pem): %s", path)
+		return tls.Certificate{}, errs.New(errs.KindPwdNeeded, "p12 needs password (加密 p12 需密码, 请用密码加载或改用 pem): %s", path)
 	default:
 		return tlsFromPEM(path, data)
 	}

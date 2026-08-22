@@ -16,6 +16,7 @@ import (
 
 	"mtls-gateway/internal/atomicfile"
 	"mtls-gateway/internal/config"
+	"mtls-gateway/internal/errs"
 	"mtls-gateway/internal/i18n"
 	"mtls-gateway/internal/proxy"
 	"mtls-gateway/internal/types"
@@ -82,7 +83,7 @@ func (m *ConfigManager) ConfigPath() string { return m.path }
 
 func (m *ConfigManager) checkWritable() error {
 	if m.mode == config.ModeImmutable {
-		return m.L.E("errImmutable")
+		return errs.WithKind(m.L.E("errImmutable"), errs.KindImmutable)
 	}
 	return nil
 }
@@ -93,7 +94,7 @@ func (m *ConfigManager) rebuild() error {
 	for _, s := range m.cfg.Services {
 		for _, r := range s.Roles {
 			if r == m.cfg.AdminRole {
-				return fmt.Errorf("service %s roles 里不允许出现内置管理角色 %q", s.Name, m.cfg.AdminRole)
+				return errs.New(errs.KindBadRequest, "service %s roles 里不允许出现内置管理角色 %q", s.Name, m.cfg.AdminRole)
 			}
 		}
 	}
@@ -102,7 +103,7 @@ func (m *ConfigManager) rebuild() error {
 	// 拒绝加载的配置(内存/磁盘分叉 + 网关重启拒载 + 提权不变量绕过, pro 深度审计抓出)
 	for _, r := range m.cfg.Roles {
 		if r == m.cfg.AdminRole {
-			return fmt.Errorf("admin_role %q 禁止出现在 roles 声明列表(提权风险)", m.cfg.AdminRole)
+			return errs.New(errs.KindBadRequest, "admin_role %q 禁止出现在 roles 声明列表(提权风险)", m.cfg.AdminRole)
 		}
 	}
 	old := m.router
@@ -231,20 +232,20 @@ func (m *ConfigManager) AddRole(name string) error {
 	var old []string
 	return m.mutate(func() error {
 		if name == "any" {
-			return fmt.Errorf("any 是内置保留字, 禁止声明")
+			return errs.New(errs.KindBadRequest, "any 是内置保留字, 禁止声明")
 		}
 		if name == "null" {
-			return fmt.Errorf("null 是内置保留字(匿名访问), 禁止声明")
+			return errs.New(errs.KindBadRequest, "null 是内置保留字(匿名访问), 禁止声明")
 		}
 		if name == m.cfg.AdminRole {
-			return fmt.Errorf("内置管理角色 %q 禁止声明为普通角色", name)
+			return errs.New(errs.KindBadRequest, "内置管理角色 %q 禁止声明为普通角色", name)
 		}
 		if !types.ValidRoleName(name) {
-			return fmt.Errorf("bad role name %q (只允许字母/数字/下划线/连字符)", name)
+			return errs.New(errs.KindBadRequest, "bad role name %q (只允许字母/数字/下划线/连字符)", name)
 		}
 		for _, r := range m.cfg.Roles {
 			if r == name {
-				return fmt.Errorf("role %q 已声明", name)
+				return errs.New(errs.KindConflict, "role %q 已声明", name)
 			}
 		}
 		old = m.cfg.Roles
@@ -259,13 +260,13 @@ func (m *ConfigManager) DeleteRole(name string) error {
 	var old []string
 	return m.mutate(func() error {
 		if name == "any" {
-			return fmt.Errorf("any 是内置保留字, 不可删除")
+			return errs.New(errs.KindBadRequest, "any 是内置保留字, 不可删除")
 		}
 		// 被服务引用时禁止删除
 		for _, s := range m.cfg.Services {
 			for _, r := range s.Roles {
 				if r == name {
-					return fmt.Errorf("role %q 仍被服务 %s 引用, 先改服务再删", name, s.Name)
+					return errs.New(errs.KindConflict, "role %q 仍被服务 %s 引用, 先改服务再删", name, s.Name)
 				}
 			}
 		}
@@ -277,7 +278,7 @@ func (m *ConfigManager) DeleteRole(name string) error {
 			}
 		}
 		if len(out) == len(m.cfg.Roles) {
-			return fmt.Errorf("role %q 未声明", name)
+			return errs.New(errs.KindBadRequest, "role %q 未声明", name)
 		}
 		m.cfg.Roles = out
 		return nil
@@ -310,7 +311,7 @@ func (m *ConfigManager) UpdateMapping(id string, mm proxy.Mapping) error {
 			}
 		}
 		if !found {
-			return fmt.Errorf("mapping %q not found", id)
+			return errs.New(errs.KindNotFound, "mapping %q not found", id)
 		}
 		return nil
 	}, func() {
@@ -329,7 +330,7 @@ func (m *ConfigManager) DeleteMapping(id string) error {
 			}
 		}
 		if len(out) == len(m.cfg.Mappings) {
-			return fmt.Errorf("mapping %q not found", id)
+			return errs.New(errs.KindNotFound, "mapping %q not found", id)
 		}
 		m.cfg.Mappings = out
 		return nil
@@ -362,7 +363,7 @@ func (m *ConfigManager) UpdateService(name string, s proxy.ServiceCfg) error {
 			}
 		}
 		if !found {
-			return fmt.Errorf("service %q not found", name)
+			return errs.New(errs.KindNotFound, "service %q not found", name)
 		}
 		return nil
 	}, func() {
@@ -381,7 +382,7 @@ func (m *ConfigManager) DeleteService(name string) error {
 			}
 		}
 		if len(out) == len(m.cfg.Services) {
-			return fmt.Errorf("service %q not found", name)
+			return errs.New(errs.KindNotFound, "service %q not found", name)
 		}
 		m.cfg.Services = out
 		return nil

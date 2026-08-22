@@ -16,6 +16,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"mtls-gateway/internal/errs"
 )
 
 func testPKI(t *testing.T) (*x509.CertPool, tls.Certificate, tls.Certificate) {
@@ -92,5 +94,77 @@ func TestAdminClientRoundTrip(t *testing.T) {
 
 	if err := ac.Revoke("abcd1234"); err != nil {
 		t.Fatalf("Revoke: %v", err)
+	}
+}
+
+// 批次 B-4: AdminClient 解析服务端 JSON 错误信封 {error, kind} —
+// kind 还原结构化分类, localizeKnown 直接按 kind 翻译(不再依赖消息子串)
+func TestAdminClientEnvelopeKind(t *testing.T) {
+	pool, serverCert, clientCert := testPKI(t)
+	ts := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(409)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": "certificate name dev already exists (3 record(s)), 禁止同名签发",
+			"kind":  "conflict",
+		})
+	}))
+	ts.TLS = &tls.Config{ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: pool,
+		Certificates: []tls.Certificate{serverCert}}
+	ts.StartTLS()
+	defer ts.Close()
+
+	ac := NewAdminClient(strings.TrimPrefix(ts.URL, "https://"), clientCert, pool)
+	_, err := ac.Issue(IssueRequest{Name: "dev", Purposes: []string{"dsh"}})
+	if err == nil {
+		t.Fatal("应报错")
+	}
+	if k := errs.KindOf(err); k != errs.KindConflict {
+		t.Fatalf("kind = %q, want conflict", k)
+	}
+	// errStatus: 信封还原后的错误仍能提取 HTTP 状态(权威 409)
+	if got := errStatus(err); got != 409 {
+		t.Fatalf("errStatus = %d, want 409", got)
+	}
+	// localizeKnown 按 kind 翻译(含证书名与记录数参数)
+	zh := localizeKnown("zh", err).Error()
+	if !strings.Contains(zh, "dev") || !strings.Contains(zh, "3") {
+		t.Fatalf("localizeKnown = %q, 期望含证书名与记录数", zh)
+	}
+}
+
+// 批次 B-4: localizeKnown 结构化 kind 快路径(本地 typed 错误, 无需子串匹配)
+func TestLocalizeKnownTypedKind(t *testing.T) {
+	cases := []struct {
+		err  error
+		want string // 期望中文包含词
+	}{
+		{errs.New(errs.KindPwdNeeded, "private key needs password: admin"), "私钥需要密码"},
+		{errs.New(errs.KindBadPwd, "decrypt key admin: password incorrect"), "密码错误"},
+		{errs.New(errs.KindExpired, "cert abc expired"), "过期"},
+		{errs.New(errs.KindNoCert, "no certificates in source"), "没有可用客户端证书"},
+		{errs.New(errs.KindAdminDenied, "admin cert required"), "管理权限被拒绝"},
+		{errs.New(errs.KindForbidden, "forbidden"), "拒绝"},
+		{errs.New(errs.KindNotFound, "cert ghost not found"), "未找到"},
+		{errs.New(errs.KindNotRegistered, "cert abc not registered"), "未找到"},
+		{errs.New(errs.KindRevoked, "cert abc status=revoked"), "已被吊销"},
+		{errs.New(errs.KindImmutable, "config is immutable"), "只读"},
+		{errs.New(errs.KindConflict, "certificate name dev already exists (3 record(s))"), "已存在"},
+	}
+	for _, c := range cases {
+		got := localizeKnown("zh", c.err).Error()
+		if !strings.Contains(got, c.want) {
+			t.Errorf("localizeKnown(%q) = %q, 期望含 %q", c.err.Error(), got, c.want)
+		}
+		// 未收录 kind(BadRequest 泛化)回退子串: 有专属翻译仍命中
+		br := errs.New(errs.KindBadRequest, "name and purposes required")
+		if got := localizeKnown("zh", br).Error(); !strings.Contains(got, "必填") {
+			t.Errorf("BadRequest 回退子串翻译: %q", got)
+		}
+		// 完全未知错误原样
+		raw := errs.New(errs.KindBadRequest, "some unknown error xyz")
+		if localizeKnown("zh", raw).Error() != raw.Error() {
+			t.Errorf("未收录应原样")
+		}
 	}
 }

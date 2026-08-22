@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"mtls-gateway/internal/certsource"
+	"mtls-gateway/internal/errs"
 	"mtls-gateway/internal/eventlog"
 	"mtls-gateway/internal/i18n"
 )
@@ -285,7 +286,7 @@ func (m *Manager) adminAddr() string {
 func (m *Manager) adminClientFor(certID, password string) (*AdminClient, error) {
 	addr := m.adminAddr()
 	if addr == "" {
-		return nil, fmt.Errorf("admin_addr not set in relay config")
+		return nil, errs.New(errs.KindBadRequest, "admin_addr not set in relay config")
 	}
 	cert, err := m.relay.LoadCertWithPassword(certID, password)
 	if err != nil {

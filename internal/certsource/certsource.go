@@ -9,8 +9,9 @@ package certsource
 import (
 	"crypto/tls"
 	"crypto/x509"
-	"fmt"
 	"strings"
+
+	"mtls-gateway/internal/errs"
 )
 
 // SourceType 证书来源类型
@@ -79,16 +80,16 @@ func New(typ SourceType, arg string) (Source, error) {
 		return OpenSystem()
 	case Dir:
 		if arg == "" {
-			return nil, fmt.Errorf("dir source requires a directory path")
+			return nil, errs.New(errs.KindBadRequest, "dir source requires a directory path")
 		}
 		return OpenDir(arg)
 	case File:
 		if arg == "" {
-			return nil, fmt.Errorf("file source requires a file path")
+			return nil, errs.New(errs.KindBadRequest, "file source requires a file path")
 		}
 		return OpenFile(arg)
 	default:
-		return nil, fmt.Errorf("unknown source type %q", typ)
+		return nil, errs.New(errs.KindBadRequest, "unknown source type %q", typ)
 	}
 }
 

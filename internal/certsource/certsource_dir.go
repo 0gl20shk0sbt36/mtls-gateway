@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 
+	"mtls-gateway/internal/errs"
 	"mtls-gateway/internal/pathutil"
 )
 
@@ -118,12 +119,12 @@ func (d *dirSource) List() ([]IdentityMeta, error) {
 func (d *dirSource) Load(id string) (tls.Certificate, error) {
 	// 拒绝路径穿越
 	if strings.Contains(id, "..") || filepath.IsAbs(id) {
-		return tls.Certificate{}, fmt.Errorf("invalid cert id: %s", id)
+		return tls.Certificate{}, errs.New(errs.KindBadRequest, "invalid cert id: %s", id)
 	}
 	full := filepath.Join(d.root, id)
 	st, err := os.Stat(full)
 	if err != nil {
-		return tls.Certificate{}, fmt.Errorf("cert %s not found: %w", id, err)
+		return tls.Certificate{}, errs.WithKind(fmt.Errorf("cert %s not found: %w", id, err), errs.KindNotFound)
 	}
 	// 符号链接防护: 身份路径本身 + 目录内 cert.pem/key.pem 都不得解析到 root 外
 	// (目录内 symlink 可把 os.ReadFile 指向目录外任意文件)
@@ -193,12 +194,12 @@ func withinRoot(root, resolved string) bool {
 // LoadWithPassword 带密码加载 (加密私钥/p12)
 func (d *dirSource) LoadWithPassword(id, password string) (tls.Certificate, error) {
 	if strings.Contains(id, "..") || filepath.IsAbs(id) {
-		return tls.Certificate{}, fmt.Errorf("invalid cert id: %s", id)
+		return tls.Certificate{}, errs.New(errs.KindBadRequest, "invalid cert id: %s", id)
 	}
 	full := filepath.Join(d.root, id)
 	st, err := os.Stat(full)
 	if err != nil {
-		return tls.Certificate{}, fmt.Errorf("cert %s not found: %w", id, err)
+		return tls.Certificate{}, errs.WithKind(fmt.Errorf("cert %s not found: %w", id, err), errs.KindNotFound)
 	}
 	// 符号链接防护: 与 Load 同一攻击面(WebUI 密码加载路径), 目录/文件 + 目录内 pem 都须在 root 内
 	if err := d.checkWithinRoot(full); err != nil {

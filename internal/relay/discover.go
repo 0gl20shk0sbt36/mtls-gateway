@@ -11,7 +11,9 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
+
 	"io"
+	"mtls-gateway/internal/errs"
 	"net"
 	"net/http"
 	"os"
@@ -67,7 +69,7 @@ func (r *Relay) DiscoverWithCert(cert tls.Certificate) ([]ServiceInfo, error) {
 	rootCAs := r.rootCAs
 	r.mu.Unlock()
 	if addr == "" {
-		return nil, fmt.Errorf("relay: server address not configured")
+		return nil, errs.New(errs.KindBadRequest, "relay: server address not configured")
 	}
 	// 未 Start 时 rootCAs 可能未构建; 有 serverCA 则现建根池
 	if rootCAs == nil && serverCA != "" {
@@ -128,7 +130,7 @@ func (r *Relay) loadFirstCert() (tls.Certificate, error) {
 		return tls.Certificate{}, err
 	}
 	if len(metas) == 0 {
-		return tls.Certificate{}, fmt.Errorf("no certificates in source")
+		return tls.Certificate{}, errs.New(errs.KindNoCert, "no certificates in source")
 	}
 	return r.loadCert(metas[0].ID)
 }

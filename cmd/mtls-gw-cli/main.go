@@ -164,9 +164,17 @@ func issue(args []string) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		var e map[string]any
+		// 服务端错误信封 {"error": msg, "kind": ...}(httpshared.ErrWriter 统一出口);
+		// 取 error 文本展示(旧纯文本响应/解析失败回退 HTTP 状态)。
+		var e struct {
+			Error string `json:"error"`
+		}
 		json.NewDecoder(resp.Body).Decode(&e)
-		fmt.Fprintf(os.Stderr, "%s\n", i18n.T(lang, "issue_error", e))
+		msg := e.Error
+		if msg == "" {
+			msg = fmt.Sprintf("HTTP %d", resp.StatusCode)
+		}
+		fmt.Fprintf(os.Stderr, "%s\n", i18n.T(lang, "issue_error", msg))
 		os.Exit(1)
 	}
 	var out struct {

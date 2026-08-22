@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"mtls-gateway/internal/db"
+	"mtls-gateway/internal/errs"
 )
 
 // Gateway 认证器
@@ -143,14 +144,17 @@ func (g *Gateway) Authorize(r *http.Request) (*db.CertRecord, error) {
 	serial := cert.SerialNumber.String()
 	rec, ok := g.store.Get(serial)
 	if !ok {
-		return nil, fmt.Errorf("cert %s not registered", serial)
+		return nil, errs.New(errs.KindNotRegistered, "cert %s not registered", serial)
 	}
 	if rec.Status != db.StatusEnabled {
-		return nil, fmt.Errorf("cert %s status=%s", serial, rec.Status)
+		if rec.Status == db.StatusRevoked {
+			return nil, errs.New(errs.KindRevoked, "cert %s status=%s", serial, rec.Status)
+		}
+		return nil, errs.New(errs.KindForbidden, "cert %s status=%s", serial, rec.Status)
 	}
 	// 过期检查
 	if rec.ExpiresAt != "" && rec.ExpiresAt < timeNow() {
-		return nil, fmt.Errorf("cert %s expired", serial)
+		return nil, errs.New(errs.KindExpired, "cert %s expired", serial)
 	}
 
 	// 4. 返回证书身份记录 (权限列表由数据库决定, 不读证书字段)

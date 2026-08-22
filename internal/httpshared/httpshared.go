@@ -66,9 +66,12 @@ type ErrWriter struct {
 	Status func(err error) int
 	// Localize 按请求语言翻译错误; nil 时原样输出。返回 err 本身即"不翻译"。
 	Localize func(lang string, err error) error
+	// Kind 错误结构化分类(机器可读, 如 errs.Kind); 非 nil 时随 JSON 信封上传,
+	// 客户端可还原分类而不再依赖消息子串。nil 时信封不含 kind 字段。
+	Kind func(err error) string
 }
 
-// Write 输出错误响应(先设头再 WriteHeader)。
+// Write 输出错误响应(先设头再 WriteHeader)。信封: {"error": msg[, "kind": kind]}。
 func (ew ErrWriter) Write(w http.ResponseWriter, r *http.Request, err error) {
 	msg := err.Error()
 	if ew.Localize != nil {
@@ -78,7 +81,13 @@ func (ew ErrWriter) Write(w http.ResponseWriter, r *http.Request, err error) {
 	if ew.Status != nil {
 		code = ew.Status(err)
 	}
+	body := map[string]string{"error": msg}
+	if ew.Kind != nil {
+		if k := ew.Kind(err); k != "" {
+			body["kind"] = k
+		}
+	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+	json.NewEncoder(w).Encode(body)
 }

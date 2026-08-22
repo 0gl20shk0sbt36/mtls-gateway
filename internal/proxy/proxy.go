@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"mtls-gateway/internal/errs"
 	"mtls-gateway/internal/pathutil"
 	"mtls-gateway/internal/types"
 )
@@ -80,16 +81,16 @@ func NewRouter(ms []Mapping, ss []ServiceCfg, declaredRoles []string) (*Router, 
 	declared := map[string]bool{}
 	for _, r := range declaredRoles {
 		if r == RoleAny {
-			return nil, fmt.Errorf("角色名 %q 是内置保留字(服务声明里直接写 any 即对任意证书开放), 禁止在 roles 声明列表中声明", r)
+			return nil, errs.New(errs.KindBadRequest, "角色名 %q 是内置保留字(服务声明里直接写 any 即对任意证书开放), 禁止在 roles 声明列表中声明", r)
 		}
 		if r == RoleNull {
-			return nil, fmt.Errorf("角色名 %q 是内置保留字(匿名访问, 服务声明里直接写 null 即匿名路由), 禁止在 roles 声明列表中声明", r)
+			return nil, errs.New(errs.KindBadRequest, "角色名 %q 是内置保留字(匿名访问, 服务声明里直接写 null 即匿名路由), 禁止在 roles 声明列表中声明", r)
 		}
 		if !ValidRoleName(r) {
-			return nil, fmt.Errorf("bad role name %q (只允许字母/数字/下划线/连字符)", r)
+			return nil, errs.New(errs.KindBadRequest, "bad role name %q (只允许字母/数字/下划线/连字符)", r)
 		}
 		if declared[r] {
-			return nil, fmt.Errorf("duplicate role %q", r)
+			return nil, errs.New(errs.KindConflict, "duplicate role %q", r)
 		}
 		declared[r] = true
 	}
@@ -105,13 +106,13 @@ func NewRouter(ms []Mapping, ss []ServiceCfg, declaredRoles []string) (*Router, 
 	for i := range ms {
 		m := &ms[i]
 		if m.Listen == "" {
-			return nil, fmt.Errorf("mapping[%d] missing listen", i)
+			return nil, errs.New(errs.KindBadRequest, "mapping[%d] missing listen", i)
 		}
 		if m.ID == "" {
-			return nil, fmt.Errorf("mapping %s missing id (mnemonic, unique)", m.Listen)
+			return nil, errs.New(errs.KindBadRequest, "mapping %s missing id (mnemonic, unique)", m.Listen)
 		}
 		if seenID[m.ID] {
-			return nil, fmt.Errorf("duplicate mapping id: %s", m.ID)
+			return nil, errs.New(errs.KindConflict, "duplicate mapping id: %s", m.ID)
 		}
 		seenID[m.ID] = true
 		port, path, err := parseListen(m.Listen)
@@ -123,20 +124,20 @@ func NewRouter(ms []Mapping, ss []ServiceCfg, declaredRoles []string) (*Router, 
 		// 导致整口路由被静默覆盖/同路径重复前缀无报错。
 		normKey := port + "|" + path
 		if seenNorm[normKey] {
-			return nil, fmt.Errorf("duplicate listen: %s (规范化后与已有入口相同)", m.Listen)
+			return nil, errs.New(errs.KindConflict, "duplicate listen: %s (规范化后与已有入口相同)", m.Listen)
 		}
 		seenNorm[normKey] = true
 		u, err := url.Parse(m.Target)
 		if err != nil || u.Scheme == "" || u.Host == "" {
-			return nil, fmt.Errorf("mapping %s bad target %q", m.Listen, m.Target)
+			return nil, errs.New(errs.KindBadRequest, "mapping %s bad target %q", m.Listen, m.Target)
 		}
 		// 请求头改写规则校验: op 合法 + name 非空
 		for _, h := range m.Headers {
 			if h.Op != "set" && h.Op != "del" {
-				return nil, fmt.Errorf("mapping %s bad header op %q (set|del)", m.Listen, h.Op)
+				return nil, errs.New(errs.KindBadRequest, "mapping %s bad header op %q (set|del)", m.Listen, h.Op)
 			}
 			if strings.TrimSpace(h.Name) == "" {
-				return nil, fmt.Errorf("mapping %s header rule missing name", m.Listen)
+				return nil, errs.New(errs.KindBadRequest, "mapping %s header rule missing name", m.Listen)
 			}
 		}
 		rt := &route{id: m.ID, port: port, path: path, target: u, rp: newReverseProxy(u),
@@ -157,14 +158,14 @@ func NewRouter(ms []Mapping, ss []ServiceCfg, declaredRoles []string) (*Router, 
 	seenSvc := map[string]bool{}
 	for _, s := range ss {
 		if s.Name == "" {
-			return nil, fmt.Errorf("service missing name")
+			return nil, errs.New(errs.KindBadRequest, "service missing name")
 		}
 		if seenSvc[s.Name] {
-			return nil, fmt.Errorf("duplicate service name: %s", s.Name)
+			return nil, errs.New(errs.KindConflict, "duplicate service name: %s", s.Name)
 		}
 		seenSvc[s.Name] = true
 		if len(s.Channels) == 0 {
-			return nil, fmt.Errorf("service %s has no channels", s.Name)
+			return nil, errs.New(errs.KindBadRequest, "service %s has no channels", s.Name)
 		}
 		// 服务 roles: "any"(内置)= 任意已登记证书; "null"(内置)= 匿名可访问; 其他必须在声明列表中
 		for _, r := range s.Roles {
@@ -172,16 +173,16 @@ func NewRouter(ms []Mapping, ss []ServiceCfg, declaredRoles []string) (*Router, 
 				continue
 			}
 			if !ValidRoleName(r) {
-				return nil, fmt.Errorf("service %s bad role %q (只允许字母/数字/下划线/连字符)", s.Name, r)
+				return nil, errs.New(errs.KindBadRequest, "service %s bad role %q (只允许字母/数字/下划线/连字符)", s.Name, r)
 			}
 			if !declared[r] {
-				return nil, fmt.Errorf("service %s role %q 未在 roles 声明列表中", s.Name, r)
+				return nil, errs.New(errs.KindBadRequest, "service %s role %q 未在 roles 声明列表中", s.Name, r)
 			}
 		}
 		for _, ch := range s.Channels {
 			idx := resolveChannelIndex(r.routes, ch)
 			if idx < 0 || idx >= len(r.routes) {
-				return nil, fmt.Errorf("service %s channel %q not found", s.Name, ch)
+				return nil, errs.New(errs.KindNotFound, "service %s channel %q not found", s.Name, ch)
 			}
 			r.routes[idx].roles = mergeRoles(r.routes[idx].roles, s.Roles)
 		}
@@ -222,11 +223,11 @@ func parseListen(l string) (string, string, error) {
 	// 规范化尾斜杠: "/a/"→"/a"; 单独 "/" 视为整口(path=""); 否则 matchPath 的前缀匹配会因尾斜杠失效
 	path = strings.TrimSuffix(path, "/")
 	if l == "" {
-		return "", "", fmt.Errorf("missing port in %q", orig)
+		return "", "", errs.New(errs.KindBadRequest, "missing port in %q", orig)
 	}
 	for _, c := range l {
 		if c < '0' || c > '9' {
-			return "", "", fmt.Errorf("bad port in %q", orig)
+			return "", "", errs.New(errs.KindBadRequest, "bad port in %q", orig)
 		}
 	}
 	return l, path, nil

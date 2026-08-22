@@ -4,6 +4,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"mtls-gateway/internal/errs"
 )
 
 // 第六批: apiErrStatus 状态码映射(400/409/404/403/500)
@@ -113,5 +115,40 @@ func TestStatusFromKeywordsDenyNarrowing(t *testing.T) {
 	}
 	if got := StatusFromKeywords("read server_ca x: (拒绝降级系统根)"); got != 500 {
 		t.Fatalf("拒绝降级系统根 should be 500 (not mislabeled 403), got %d", got)
+	}
+}
+
+// 批次 B-4: errs.Kind 结构化分类优先于子串表(确定性状态码, 不依赖消息措辞)
+func TestErrStatusTypedPriority(t *testing.T) {
+	cases := []struct {
+		kind string
+		want int
+	}{
+		{"admin_denied", 403},
+		{"immutable", 403},
+		{"forbidden", 403},
+		{"revoked", 403},
+		{"not_registered", 403},
+		{"not_found", 404},
+		{"conflict", 409},
+		{"bad_request", 400},
+		{"pwd_needed", 400},
+		{"bad_pwd", 400},
+		{"expired", 400},
+		{"no_cert", 400},
+	}
+	for _, c := range cases {
+		if got := StatusForKind(errs.Kind(c.kind)); got != c.want {
+			t.Errorf("StatusForKind(%s) = %d, want %d", c.kind, got, c.want)
+		}
+	}
+	// 结构化优先: 消息含"拒绝"但带 conflict kind → 409(子串表会误判 500/403)
+	typed := errs.New(errs.KindConflict, "拒绝降级系统根")
+	if got := ErrStatus(typed); got != 409 {
+		t.Fatalf("ErrStatus(typed conflict) = %d, want 409(结构化优先)", got)
+	}
+	// 未标注错误仍走子串回退
+	if got := ErrStatus(errors.New("cert ghost not found")); got != 404 {
+		t.Fatalf("ErrStatus(plain) = %d, want 404", got)
 	}
 }

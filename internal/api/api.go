@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"mtls-gateway/internal/db"
+	"mtls-gateway/internal/errs"
 	"mtls-gateway/internal/httpshared"
 	"mtls-gateway/internal/types"
 )
@@ -189,15 +190,15 @@ type (
 func (m *Manager) IssueCert(req IssueRequest) (*IssueResponse, error) {
 	warnings := req.NormalizePurposes(m.AdminRole)
 	if req.Name == "" || len(req.Purposes) == 0 {
-		return nil, fmt.Errorf("name and purposes required")
+		return nil, errs.New(errs.KindBadRequest, "name and purposes required")
 	}
 	// 签发校验: purposes 必须 ∈ 声明角色 ∪ {admin_role}; "any" 禁止签发给证书
 	for _, p := range req.Purposes {
 		if p == "any" {
-			return nil, fmt.Errorf("角色 %q 是内置保留字, 只可用于服务声明, 不能签发给证书", p)
+			return nil, errs.New(errs.KindBadRequest, "角色 %q 是内置保留字, 只可用于服务声明, 不能签发给证书", p)
 		}
 		if p != m.AdminRole && !m.hasRole(p) {
-			return nil, fmt.Errorf("角色 %q 未在 roles 声明列表中声明", p)
+			return nil, errs.New(errs.KindBadRequest, "角色 %q 未在 roles 声明列表中声明", p)
 		}
 	}
 	if req.Days <= 0 {
@@ -209,12 +210,12 @@ func (m *Manager) IssueCert(req IssueRequest) (*IssueResponse, error) {
 		}
 	}
 	if req.Days > 3650 { // 上限 10 年: 保证"过期"吊销兜底有效
-		return nil, fmt.Errorf("certificate validity too long: %d days (max 3650)", req.Days)
+		return nil, errs.New(errs.KindBadRequest, "certificate validity too long: %d days (max 3650)", req.Days)
 	}
 	// 禁止同名证书(含已吊销的): 原子检查+登记(防并发同名 TOCTOU)
 	// 先快速预检(友好错误), 最终以 InsertUniqueName 原子判定为准
 	if recs := m.store.FindByName(req.Name); len(recs) > 0 {
-		return nil, fmt.Errorf("certificate name %s already exists (%d record(s)), 禁止同名签发", req.Name, len(recs))
+		return nil, errs.New(errs.KindConflict, "certificate name %s already exists (%d record(s)), 禁止同名签发", req.Name, len(recs))
 	}
 	if req.NoPassword {
 		req.Password = "" // 无密码 p12
@@ -231,7 +232,7 @@ func (m *Manager) IssueCert(req IssueRequest) (*IssueResponse, error) {
 	}
 	// 设备名合法性
 	if !validName(req.Name) {
-		return nil, fmt.Errorf("invalid name: %s", req.Name)
+		return nil, errs.New(errs.KindBadRequest, "invalid name: %s", req.Name)
 	}
 
 	// 1. 生成密钥 (key_type/key_bits 可配置)
@@ -264,7 +265,7 @@ func (m *Manager) IssueCert(req IssueRequest) (*IssueResponse, error) {
 	if req.TSIP != "" {
 		ip := net.ParseIP(req.TSIP)
 		if ip == nil {
-			return nil, fmt.Errorf("invalid ts_ip: %s (应为合法 IPv4/IPv6)", req.TSIP)
+			return nil, errs.New(errs.KindBadRequest, "invalid ts_ip: %s (应为合法 IPv4/IPv6)", req.TSIP)
 		}
 		tmpl.IPAddresses = []net.IP{ip}
 	}
@@ -396,10 +397,40 @@ func StatusFromKeywords(msg string) int {
 	return http.StatusInternalServerError
 }
 
-// ErrStatus 按错误语义映射 HTTP 状态码(客户端错误 4xx, 其余 500)
-// 导出供 cmd/mtls-gw 的 gwErr 复用; 委托 StatusFromKeywords。
+// StatusForKind Kind → HTTP 状态码 的权威映射(errs.Kind 结构化分类, 与文本无关)。
+// 与 StatusFromKeywords 语义对齐; 结构化错误优先走此表, 子串表仅回退用。
+func StatusForKind(k errs.Kind) int {
+	switch k {
+	case errs.KindAdminDenied, errs.KindImmutable, errs.KindForbidden, errs.KindRevoked, errs.KindNotRegistered:
+		return http.StatusForbidden
+	case errs.KindNotFound:
+		return http.StatusNotFound
+	case errs.KindConflict:
+		return http.StatusConflict
+	case errs.KindBadRequest, errs.KindPwdNeeded, errs.KindBadPwd, errs.KindExpired, errs.KindNoCert:
+		return http.StatusBadRequest
+	}
+	return http.StatusInternalServerError
+}
+
+// ErrStatus 按错误语义映射 HTTP 状态码(客户端错误 4xx, 其余 500)。
+// 优先取 errs.KindOf(err) 结构化分类(确定性), 未标注才回退 StatusFromKeywords
+// 子串匹配(兼容存量/包装错误)。导出供 mtls-admin gwErr 与 relay errStatus 复用。
 func ErrStatus(err error) int {
+	if k := errs.KindOf(err); k != errs.KindUnknown {
+		return StatusForKind(k)
+	}
 	return StatusFromKeywords(err.Error())
+}
+
+// apiErrWriter 管理 API 错误出口(统一 JSON 信封 + kind): 状态码走 ErrStatus
+// (errs.Kind 结构化优先), kind 随信封上传 — relay AdminClient 还原分类后
+// 直接本地化, 不再依赖消息子串。
+var apiErrWriter = httpshared.ErrWriter{
+	Status: ErrStatus,
+	Kind: func(err error) string {
+		return string(errs.KindOf(err))
+	},
 }
 
 // handler 管理 API 路由; isLocal=true 时 Unix socket 通道(直接 admin)
@@ -409,30 +440,29 @@ func (m *Manager) handler(isLocal bool) http.Handler {
 		if !isLocal {
 			// 远程通道: 管理 API 只给 admin 用途 (由外层 middleware 检查, 这里再兜底)
 			if r.Header.Get("X-Auth-Purpose") != m.AdminRole {
-				http.Error(w, "admin required", http.StatusForbidden)
+				apiErrWriter.Write(w, r, errs.New(errs.KindAdminDenied, "admin required"))
 				return
 			}
 		}
 		var req IssueRequest
 		r.Body = http.MaxBytesReader(w, r.Body, httpshared.MaxBodyBytes)
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+			apiErrWriter.Write(w, r, errs.New(errs.KindBadRequest, "bad request: %v", err))
 			return
 		}
 		resp, err := m.IssueCert(req)
 		if err != nil {
-			http.Error(w, err.Error(), ErrStatus(err))
+			apiErrWriter.Write(w, r, err)
 			return
 		}
 		if !isLocal {
 			resp.KeyPEM = "" // 远程通道不回明文私钥(仅 p12+密码)
 		}
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		json.NewEncoder(w).Encode(resp)
+		httpshared.WriteJSON(w, resp)
 	})
 	mux.HandleFunc("POST /admin/certs/revoke", func(w http.ResponseWriter, r *http.Request) {
 		if !isLocal && r.Header.Get("X-Auth-Purpose") != m.AdminRole {
-			http.Error(w, "admin required", http.StatusForbidden)
+			apiErrWriter.Write(w, r, errs.New(errs.KindAdminDenied, "admin required"))
 			return
 		}
 		var req struct {
@@ -440,11 +470,11 @@ func (m *Manager) handler(isLocal bool) http.Handler {
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, httpshared.MaxBodyBytes)
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
+			apiErrWriter.Write(w, r, errs.New(errs.KindBadRequest, "bad request"))
 			return
 		}
 		if err := m.store.Revoke(req.Serial); err != nil {
-			http.Error(w, err.Error(), ErrStatus(err))
+			apiErrWriter.Write(w, r, err)
 			return
 		}
 		if m.audit != nil {
@@ -453,20 +483,17 @@ func (m *Manager) handler(isLocal bool) http.Handler {
 		if m.postChange != nil {
 			m.postChange() // 网关 reload, 否则吊销对网关不生效(仍放行)
 		}
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+		httpshared.WriteJSON(w, map[string]bool{"ok": true})
 	})
 	mux.HandleFunc("GET /admin/certs", func(w http.ResponseWriter, r *http.Request) {
 		if !isLocal && r.Header.Get("X-Auth-Purpose") != m.AdminRole {
-			http.Error(w, "admin required", http.StatusForbidden)
+			apiErrWriter.Write(w, r, errs.New(errs.KindAdminDenied, "admin required"))
 			return
 		}
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		json.NewEncoder(w).Encode(m.store.List())
+		httpshared.WriteJSON(w, m.store.List())
 	})
 	mux.HandleFunc("GET /admin/health", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		httpshared.WriteJSON(w, map[string]string{"status": "ok"})
 	})
 	return mux
 }
@@ -478,7 +505,7 @@ func (m *Manager) HTTPHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// 管理路径只允许 admin 用途(端点均为 /admin/*)
 		if r.Header.Get("X-Auth-Purpose") != m.AdminRole {
-			http.Error(w, "admin required", http.StatusForbidden)
+			apiErrWriter.Write(w, r, errs.New(errs.KindAdminDenied, "admin required"))
 			return
 		}
 		inner.ServeHTTP(w, r)
@@ -501,7 +528,7 @@ func (m *Manager) newClientKey() (crypto.PrivateKey, any, error) {
 			bits = 2048
 		}
 		if bits != 2048 && bits != 3072 && bits != 4096 {
-			return nil, nil, fmt.Errorf("bad key_bits %d for rsa (2048/3072/4096)", bits)
+			return nil, nil, errs.New(errs.KindBadRequest, "bad key_bits %d for rsa (2048/3072/4096)", bits)
 		}
 		k, err := rsa.GenerateKey(rand.Reader, bits)
 		if err != nil {
@@ -518,7 +545,7 @@ func (m *Manager) newClientKey() (crypto.PrivateKey, any, error) {
 		case 521:
 			curve = elliptic.P521()
 		default:
-			return nil, nil, fmt.Errorf("bad key_bits %d for ecdsa (256/384/521)", bits)
+			return nil, nil, errs.New(errs.KindBadRequest, "bad key_bits %d for ecdsa (256/384/521)", bits)
 		}
 		k, err := ecdsa.GenerateKey(curve, rand.Reader)
 		if err != nil {
@@ -526,7 +553,7 @@ func (m *Manager) newClientKey() (crypto.PrivateKey, any, error) {
 		}
 		return k, &k.PublicKey, nil
 	default:
-		return nil, nil, fmt.Errorf("bad key_type %q (rsa|ecdsa)", m.KeyType)
+		return nil, nil, errs.New(errs.KindBadRequest, "bad key_type %q (rsa|ecdsa)", m.KeyType)
 	}
 }
 

@@ -31,6 +31,7 @@ import (
 	"mtls-gateway/internal/config"
 	"mtls-gateway/internal/configmgr"
 	"mtls-gateway/internal/db"
+	"mtls-gateway/internal/errs"
 	"mtls-gateway/internal/eventlog"
 	"mtls-gateway/internal/httpshared"
 	"mtls-gateway/internal/i18n"
@@ -426,18 +427,21 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *configmgr.ConfigManage
 // localizeErrImmutable 仅 errImmutable 按请求语言重翻; 其余 configmgr/proxy 的
 // CRUD 错误是硬编码中文, 完整 i18n 接入属后续工作(结构化错误改造时统一)。
 func localizeErrImmutable(lang string, err error) error {
-	msg := err.Error()
-	zh := i18n.New("zh").S("errImmutable")
-	en := i18n.New("en").S("errImmutable")
-	if msg == zh || msg == en || msg == i18n.New(lang).S("errImmutable") {
+	if errs.IsKind(err, errs.KindImmutable) {
 		return i18n.New(lang).E("errImmutable")
 	}
 	return err
 }
 
-// gwErr 输出管理 API 错误(JSON 信封 + 状态码): 统一出口收敛到 httpshared.ErrWriter,
-// 状态码复用 api.ErrStatus(服务端权威表), 本地化仅覆盖 errImmutable。
+// gwErr 输出管理 API 错误(JSON 信封 + 状态码 + kind): 统一出口收敛到
+// httpshared.ErrWriter, 状态码/分类复用服务端权威(errs.Kind 结构化优先,
+// api.ErrStatus 兜底子串表), 本地化仅覆盖 errImmutable。kind 随信封上传,
+// 客户端(relay AdminClient)还原分类后直接翻译, 不再依赖消息子串。
 var gwErr = httpshared.ErrWriter{
 	Status:   api.ErrStatus,
 	Localize: localizeErrImmutable,
+	Kind:     errKindOf,
 }.Write
+
+// errKindOf 提取 errs.Kind 为字符串(信封 kind 字段; 未标注返回空串)。
+func errKindOf(err error) string { return string(errs.KindOf(err)) }

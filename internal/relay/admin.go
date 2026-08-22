@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"time"
 
+	"mtls-gateway/internal/errs"
 	"mtls-gateway/internal/types"
 )
 
@@ -85,7 +86,19 @@ func (a *AdminClient) do(method, path string, in, out any) error {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("admin %s %s: HTTP %d: %s", method, path, resp.StatusCode, string(b))
+		// 解析服务端 JSON 错误信封 {error, kind}(httpshared.ErrWriter 统一出口):
+		// kind 还原结构化分类, 本地化/状态码不再依赖消息子串; 非 JSON 旧响应回退纯文本。
+		var env struct {
+			Error string `json:"error"`
+			Kind  string `json:"kind"`
+		}
+		msg := string(b)
+		var kind errs.Kind
+		if json.Unmarshal(b, &env) == nil && env.Error != "" {
+			msg = env.Error
+			kind = errs.Kind(env.Kind)
+		}
+		return errs.New(kind, "admin %s %s: HTTP %d: %s", method, path, resp.StatusCode, msg)
 	}
 	if out != nil {
 		return json.NewDecoder(resp.Body).Decode(out)
