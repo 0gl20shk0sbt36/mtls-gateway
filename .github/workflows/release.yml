@@ -53,6 +53,9 @@ jobs:
             -o "dist/mtls-relay-${{ matrix.os }}-${{ matrix.arch }}$EXT" ./cmd/mtls-relay
           go build -trimpath -ldflags "-s -w -X main.version=${{ github.ref_name }}" \
             -o "dist/mtls-relay-cli-${{ matrix.os }}-${{ matrix.arch }}$EXT" ./cmd/mtls-relay-cli
+          # mtls-admin 独立管理进程(管理拆分后必装组件; 0.4.0 起发布 — 此前遗漏)
+          go build -trimpath -ldflags "-s -w -X main.version=${{ github.ref_name }}" \
+            -o "dist/mtls-admin-${{ matrix.os }}-${{ matrix.arch }}$EXT" ./cmd/mtls-admin
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -88,7 +91,8 @@ jobs:
             Generic mTLS gateway — device-level authentication + role-based routing.
 
             ### Download
-            - `mtls-gw-<os>-<arch>` — the gateway daemon (server)
+            - `mtls-gw-<os>-<arch>` — the gateway daemon (server, pure data plane)
+            - `mtls-admin-<os>-<arch>` — separate admin process (issue/revoke/config; run alongside the gateway, same config.toml)
             - `mtls-gw-cli-<os>-<arch>` — management CLI (Linux only, Unix socket)
             - `mtls-relay-<os>-<arch>` — client-side relay daemon (with WebUI)
             - `mtls-relay-cli-<os>-<arch>` — client relay CLI

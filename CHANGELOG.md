@@ -2,9 +2,24 @@
 
 项目变更历史。审计驱动的大规模修复记录见 [docs/AUDIT-CHANGELOG.md](./docs/AUDIT-CHANGELOG.md), 此处仅列版本级里程碑。
 
-## [未发布] — 当前 master(全本地未推)
+## [v0.4.0] — 2026-08-22
 
-v4 架构 + 三轮深度审计收敛:
+管理服务拆分(双进程架构)+ 三轮审计收敛 + CI 首跑修复 + 代码债偿还:
+
+- **管理服务拆分**: 网关纯数据面 + 独立 mtls-admin 管理进程(读同一 config.toml; 签发/吊销/配置 CRUD; 变更后自动调网关 `/admin/reload` 全量热重载 — 证书签发/吊销亦触发)。config 抽共享包 internal/config + internal/configmgr。**部署变化: 需同时运行 mtls-gw + mtls-admin 两个进程, 端口(info/reload/admin)互不冲突, 配 gateway_reload_addr/reload_cert/reload_key 获得自动热重载**。
+- **请求头改写配置化 + 证书身份注入**: mapping `headers` 规则 + `{cert_name}/{cert_serial}/{cert_roles}/{remote_ip}` 变量, 后端识别 mTLS 身份(先删后设防伪造)。
+- **匿名路由 + /info 引导**: 内置 `null` 角色(匿名可访问); `/info` 匿名返回 CA 供客户端过滤证书源; 客户端 server_ca 自动过滤系统证书库。
+- **Windows 系统证书库源重写(CNG)**: 弃用 certstore(RSACng 签名失败), 零依赖 x/sys/windows 自实现 + 跨平台 system 语义矩阵。
+- **日志系统重构**: 分平台默认路径 + 标准日志终端/文件双写 + 组件子目录(mtls-gw/mtls-admin/mtls-relay 互不污染)。
+- **22:18 生产事件双根因修复**: configmgr 落盘失败内存回滚(mutate) + 启动权限预检(Linux, 拒带病运行; 密钥禁 world 可读, 0640 放行)。
+- **DSH 首次发送超时修复**: relay 透传 120s 空闲杀连接 → 12h + 服务端 WriteTimeout→0。
+- **审计收敛**: 31 批 pro + flash 横向扫描 + 2026-08-22 三轮子代理复审迭代(7 大类只读审计 → 修复 → 复审 → 收敛), 修复 30+ 真实 bug + 25+ 安全加固; 测试全面性专项补齐 4 高危 + 9 中危测试缺口(补测抓到 PUT /api/settings 绕过 4MB 限流真缺陷)。
+- **CI 首跑修复**: windows-test 真机抓出 8.3 短名 EvalSymlinks 误判/CLI .exe/JSON 转义; E2E setup.sh 双进程化 + 端口迁 57xxx(避开生产); 证书变更自动 reload 真缺口落地。
+- **代码债偿还(GUI 铺路)**: startServer 助手 / 角色名校验统一 / atomicfile 原子写抽包 / tunnel key 前端解耦 / 管理桥 withAdmin 泛型 / HTTPHandler 缓存 / 定时器泄漏修复 / eventlog 重开重试 / WebUI CSP 安全头 / CLI `--sock=` 等号 flag / esc 去重。
+- **测试基线**: 235 个 Go 测试函数(-race 全绿)+ 前端单测 8 + E2E 15 + CLI 黑盒测试 16; CI 7 job 全绿(双 Go 版本 + windows 真机 + playwright E2E + windows/android 交叉编译)。
+- 完整变更记录见 [docs/AUDIT-CHANGELOG.md](./docs/AUDIT-CHANGELOG.md) 与 [TODO.md](./TODO.md)。
+
+以下为 v0.4.0 相对 v0.1.0 的完整逐项明细(自 v0.1.0 以来累积):
 
 - **v4 架构**: config 从 JSON 迁 TOML; `mappings`/`services` 双表 + `roles` 授权模型; `config_mode` 三态; 错误消息 `X-Lang` 双语; 客户端 relay 服务级隧道 + 证书管理台。
 - **relay 证书源可配置**: 连接设置新增 `cert_dir` 字段(空=系统证书库 / 非空=目录源), 保存即热换源(SetSource: 清缓存 + 按 server_ca 重新过滤); 启动时配置优先于 `-source` 参数; 连接设置移除重复的 lang 输入框(header 语言下拉保留)。
