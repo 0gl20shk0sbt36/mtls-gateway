@@ -49,3 +49,4 @@ scripts/cross-system/.env
 /frp/
 /mtls-admin
 /.ghxdg/
+/.ghxdg2/
