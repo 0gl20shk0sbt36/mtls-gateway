@@ -25,7 +25,7 @@
 
 - [ ] - [x] ~~`cmd/mtls-gw/main.go` http.Server 三段复制 → 抽 `startServer(addr, handler, name)` 助手~~ — 已做(0fc0bcf 闭包收敛 4 段构造)
 - [x] ~~`cmd/mtls-gw/configmgr.go` 9 个 CRUD 模板 → 抽 `mutate(func() error)` 助手~~ — 已做(mutate 已抽, 包已迁 internal/configmgr)
-- [ ] - [ ] `internal/relay/admin.go` 复制 `api.IssueRequest/IssueResponse` + `proxy.Mapping` → 抽共享 types 包(仍待)
+- [x] ~~`internal/relay/admin.go` 复制 `api.IssueRequest/IssueResponse` + `proxy.Mapping` → 抽共享 types 包~~ — 已做(批次 B-1, 38b2c7a: internal/types 收敛 DTO + 校验; 后续 B-2 httpshared / B-4 errs.Kind 一并消除复制)
 - [ ] - [x] ~~角色名校验 Go 侧统一~~ — api.validName 委托 proxy.ValidRoleName(0fc0bcf); 前端 RE_NAME 为 JS 侧独立, 字符集一致
 - [ ] - [ ] ~~路径拼接两包统一~~ — 刻意不做: proxy 折叠斜杠 vs relay 保留 // 与尾斜杠, 语义不同, 合并有回归风险(记录)
 - [x] ~~ResponseWriter 包装器两份(main.go statusWriter vs eventlog.StatusWriter)→ 共用~~ — 已做(第一轮删 statusWriter 改用 eventlog.StatusWriter)
