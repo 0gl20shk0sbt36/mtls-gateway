@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 
 	"golang.org/x/sys/unix"
+
+	"mtls-gateway/internal/config"
 )
 
 // pathNeed 一条路径的权限要求
@@ -24,7 +26,7 @@ type pathNeed struct {
 // checkStartupPaths 启动前检查全部文件/目录权限, 返回失败描述列表(空 = 全部通过)。
 // 用 unix.Access(2) 按当前进程 uid/gid 判定(含 root 特判), 不实际打开文件。
 // 文件已存在 → 检查其自身权限; 不存在 → 检查父目录写权限(创建路径)。
-func checkStartupPaths(cfg Config) []string {
+func checkStartupPaths(cfg config.Config) []string {
 	var fails []string
 	for _, n := range startupPathNeeds(cfg) {
 		if n.path == "" {
@@ -39,7 +41,7 @@ func checkStartupPaths(cfg Config) []string {
 
 // startupPathNeeds 汇总配置引用的全部文件/目录及其权限要求。
 // 可空字段(path=="")自动跳过; 文件不存在时改查父目录写权限(自动创建)。
-func startupPathNeeds(cfg Config) []pathNeed {
+func startupPathNeeds(cfg config.Config) []pathNeed {
 	needs := []pathNeed{
 		{cfg.CA, unix.R_OK, "CA 证书(读)"},
 		{cfg.CAKey, unix.R_OK, "CA 私钥(读)"},
@@ -93,7 +95,7 @@ func dirPermNeed(dir, desc string) []pathNeed {
 // reportStartupFailures 输出启动失败原因并退出(1):
 //   - stderr 一定有权限(进程启动时 stderr 已打开) — 用户要求"输出一定有权限";
 //   - 尝试追加到事件日志文件(日志文件本身可能不可写 → 忽略错误, "没权限就算了")。
-func reportStartupFailures(cfg Config, fails []string) {
+func reportStartupFailures(cfg config.Config, fails []string) {
 	msg := "mtls-gw 启动失败: 文件/目录权限不足(拒绝带病运行):\n"
 	for _, f := range fails {
 		msg += "  - " + f + "\n"

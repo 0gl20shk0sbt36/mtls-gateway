@@ -13,6 +13,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 
+	"mtls-gateway/internal/config"
 	"mtls-gateway/internal/i18n"
 	"mtls-gateway/internal/proxy"
 )
@@ -22,12 +23,12 @@ type ConfigManager struct {
 	mu     sync.Mutex
 	path   string
 	mode   string // mutable | ephemeral | immutable
-	cfg    Config
+	cfg    config.Config
 	router *proxy.Router
 	L      *i18n.L // 错误消息语言(zh/en, 默认 zh)
 }
 
-func NewConfigManager(path string, cfg Config, router *proxy.Router) *ConfigManager {
+func NewConfigManager(path string, cfg config.Config, router *proxy.Router) *ConfigManager {
 	return &ConfigManager{path: path, mode: cfg.ConfigMode, cfg: cfg, router: router, L: i18n.New(cfg.Lang)}
 }
 
@@ -108,7 +109,7 @@ func (m *ConfigManager) rebuild() error {
 // ReloadFromDisk 重读配置文件并全量热重载(管理进程改配置后经 /admin/reload 调用)。
 // 先解析+校验+构建新 router, 再原子替换(mode/Lang 同步); 任一步失败保持旧配置继续服务(失败不切换)。
 func (m *ConfigManager) ReloadFromDisk() error {
-	cfg, err := parseConfig(m.path)
+	cfg, err := config.Parse(m.path)
 	if err != nil {
 		return fmt.Errorf("reload config: %w", err)
 	}

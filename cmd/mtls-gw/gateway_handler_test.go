@@ -21,6 +21,7 @@ import (
 
 	"golang.org/x/net/websocket"
 	"mtls-gateway/internal/auth"
+	"mtls-gateway/internal/config"
 	"mtls-gateway/internal/db"
 	"mtls-gateway/internal/eventlog"
 	"mtls-gateway/internal/proxy"
@@ -123,7 +124,7 @@ func newGWTestEnv(t *testing.T, backends map[string]*httptest.Server) (*gwTestEn
 	if err != nil {
 		t.Fatalf("auth new: %v", err)
 	}
-	cfg := DefaultConfig()
+	cfg := config.DefaultConfig()
 	cfg.Roles = []string{"svc-a", "other"}
 	// 后端地址: 用传入的 httptest 或占位(未绑定端口 → 502 场景)
 	tgt := "http://127.0.0.1:1"
@@ -342,7 +343,7 @@ func TestGatewayHandler_NoRoute(t *testing.T) {
 	if err != nil {
 		t.Fatalf("auth: %v", err)
 	}
-	cfg := DefaultConfig()
+	cfg := config.DefaultConfig()
 	cfg.Roles = []string{"svc-a"}
 	// 只有带路径的映射: :9601/admin — 无整口兜底
 	cfg.Mappings = []proxy.Mapping{{ID: "m1x", Listen: ":9601/admin", Target: back.URL}}
@@ -425,7 +426,7 @@ func TestInfoHandler_FiltersByRole(t *testing.T) {
 	if err != nil {
 		t.Fatalf("auth: %v", err)
 	}
-	cfg := DefaultConfig()
+	cfg := config.DefaultConfig()
 	cfg.Roles = []string{"svc-a"}
 	cfg.Mappings = []proxy.Mapping{{ID: "m1", Listen: ":9601", Target: "http://127.0.0.1:1"}, {ID: "m2", Listen: ":9602", Target: "http://127.0.0.1:1"}}
 	cfg.Services = []proxy.ServiceCfg{{Name: "svc-a", Channels: []string{"m1"}, Roles: []string{"svc-a"}}, {Name: "any-svc", Channels: []string{"m2"}, Roles: []string{"any"}}}

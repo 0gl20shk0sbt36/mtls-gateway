@@ -17,6 +17,7 @@ import (
 
 	"mtls-gateway/internal/api"
 	"mtls-gateway/internal/auth"
+	"mtls-gateway/internal/config"
 	"mtls-gateway/internal/db"
 	"mtls-gateway/internal/eventlog"
 	"mtls-gateway/internal/proxy"
@@ -49,7 +50,7 @@ func newAdminEnv(t *testing.T) *adminEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := DefaultConfig()
+	cfg := config.DefaultConfig()
 	cfg.Roles = []string{"svc-a"}
 	cfg.Mappings = []proxy.Mapping{{ID: "m1", Listen: ":9601", Target: "http://127.0.0.1:1"}}
 	cfg.Services = []proxy.ServiceCfg{{Name: "svc-a", Channels: []string{"m1"}, Roles: []string{"svc-a"}}}

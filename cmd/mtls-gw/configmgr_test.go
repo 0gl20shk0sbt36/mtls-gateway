@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"mtls-gateway/internal/config"
 	"mtls-gateway/internal/proxy"
 )
 
@@ -13,7 +14,7 @@ func testConfigManager(t *testing.T, mode string) (*ConfigManager, string) {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
-	cfg := DefaultConfig()
+	cfg := config.DefaultConfig()
 	cfg.ConfigMode = mode
 	cfg.Roles = []string{"x"}
 	cfg.Mappings = []proxy.Mapping{{ID: "m1", Listen: ":9601", Target: "http://127.0.0.1:1"}}
@@ -103,7 +104,7 @@ func TestConfigManagerPersistFailureRollback(t *testing.T) {
 	if err := os.MkdirAll(path, 0o700); err != nil { // config.toml 位置是个目录 → rename 必然失败
 		t.Fatal(err)
 	}
-	cfg := DefaultConfig()
+	cfg := config.DefaultConfig()
 	cfg.ConfigMode = "mutable"
 	cfg.Roles = []string{"x"}
 	cfg.Mappings = []proxy.Mapping{{ID: "m1", Listen: ":9601", Target: "http://127.0.0.1:1"}}
@@ -194,7 +195,7 @@ func TestConfigManagerReloadFromDisk(t *testing.T) {
 
 	// 配置文件缺失 → 报错(不得静默用默认值清空路由)
 	missing := filepath.Join(t.TempDir(), "nope.toml")
-	cm2 := NewConfigManager(missing, DefaultConfig(), nil)
+	cm2 := NewConfigManager(missing, config.DefaultConfig(), nil)
 	if err := cm2.ReloadFromDisk(); err == nil {
 		t.Fatal("配置文件缺失 reload 应报错")
 	}

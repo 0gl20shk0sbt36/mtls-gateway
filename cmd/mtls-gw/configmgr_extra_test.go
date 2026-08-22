@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"mtls-gateway/internal/config"
 	"mtls-gateway/internal/proxy"
 )
 
@@ -217,7 +218,7 @@ func TestConfigManagerEphemeralNoBackup(t *testing.T) {
 func TestConfigManagerPersistAtomic(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "gw.toml")
-	cm := NewConfigManager(path, Config{ConfigMode: "mutable"}, nil)
+	cm := NewConfigManager(path, config.Config{ConfigMode: "mutable"}, nil)
 	if err := cm.AddRole("svc-x"); err != nil {
 		t.Fatal(err)
 	}

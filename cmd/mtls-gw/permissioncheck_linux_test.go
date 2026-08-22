@@ -7,10 +7,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"mtls-gateway/internal/config"
 )
 
 // 构造一份全字段可用的配置(所有路径存在且可读写)
-func permsOKConfig(t *testing.T) (Config, string) {
+func permsOKConfig(t *testing.T) (config.Config, string) {
 	t.Helper()
 	dir := t.TempDir()
 	file := func(name string) string {
@@ -20,7 +22,7 @@ func permsOKConfig(t *testing.T) (Config, string) {
 		}
 		return p
 	}
-	cfg := DefaultConfig()
+	cfg := config.DefaultConfig()
 	cfg.ConfigMode = "mutable"
 	cfg.CA = file("ca.pem")
 	cfg.CAKey = file("ca.key")
@@ -103,7 +105,7 @@ func TestCheckStartupPathsMissingParent(t *testing.T) {
 	// 配置文件所在目录不存在 → 落盘检查报失败(配置错误显式暴露)
 	dir := t.TempDir()
 	missing := filepath.Join(dir, "no-such-dir", "config.toml")
-	cfg := DefaultConfig()
+	cfg := config.DefaultConfig()
 	cfg.ConfigMode = "mutable"
 	cfgPath = &missing
 	defer func() { cfgPath = nil }()
@@ -129,7 +131,7 @@ func TestReportStartupFailures(t *testing.T) {
 	defer func() { os.Stderr = oldStderr }()
 
 	logFile := filepath.Join(dir, "events.log")
-	cfg := DefaultConfig()
+	cfg := config.DefaultConfig()
 	cfg.LogFile = logFile
 	fails := []string{"/etc/x (配置目录(落盘写)): permission denied"}
 	reportStartupFailures(cfg, fails)
