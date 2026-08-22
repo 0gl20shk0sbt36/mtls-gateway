@@ -1,6 +1,8 @@
 # 审计变更日志 (Audit Changelog)
 
-从第 1 次 pro 审计到第 28 批的完整变更记录。审计方式: 三专项(测试覆盖率 / 代码质量 / 安全漏洞)每批并行, 子代理限 `read_file` + `search_files` 只读静态审计; 每批发现 → 修复 → 提交 → 下一批, 直到收敛。
+从第 1 次 pro 审计到第 31 批 + flash 横向扫描 + 2026-08-22 三轮子代理复审迭代的完整变更记录。
+审计方式演进: ① pro 三专项(测试覆盖率/代码质量/安全漏洞)每批并行, 子代理限只读静态审计;
+② flash 横向通读扫盲; ③ 2026-08-22 起 7 大类只读审计 + 复审迭代闭环。每批发现 → 修复 → 提交 → 下一批, 直到收敛。
 
 > 注: 提交全部在本地(未推送云端), 每批一 commit 便于回滚。
 
@@ -313,3 +315,29 @@ flash 两轮审计报的 11 项问题全部修复:
 
 ### P2 高风险(未修, 见 TODO.md)
 http.Server 三段复制、configmgr 9 CRUD 模板、DTO 复制、角色名校验 4 份、路径拼接两包、ResponseWriter 两份、原子写两处、跨端 tunnel key 格式耦合 —— 均为"重复代码"型债, 不影响功能, 跨包重构收益递减风险递增。
+
+---
+
+## 2026-08-22 三轮子代理复审迭代(7 大类只读审计 → 复审 → 收敛)
+
+新范式: 7 个只读子代理并行审计(安全/正确性/并发/平台/测试覆盖/质量/运维) → 修复 → 4 复审 → 修复 → 3 复审(无必须再修) → 收编 → 2 验证复审。全程 read/glob/grep 只读; 每轮全量测试(19 包 -race + 五平台构建 + 前端 8/8)后单次提交, 均未推送。
+
+### 第一轮(7 并行只读审计 → 修复 17cba8f, 44 文件 +1146/-657)
+- 🔴 全修: admin_role 校验缺口(拒 null/ValidRoleName/不与 roles 声明重叠) / SetDeclaredRoles 热更新 / certsource+relay.src 数据竞争 / applyServerCA 失败降级系统根 / 双进程 admin_listen 端口冲突(reload_listen) / config.example 缺 roles 声明 / cert_issue|cert_revoke 事件 / isAddrInUse Windows / 权限预检(mode+reload_cert+mtls-admin 复用)
+- 🟡 大部分: 配置文件缺失拒绝启动 / reload 降级+失败事件 / 网关 stop 事件 / 管理面认证失败日志 / 日志分进程 / IPv6 ResolveListen / listen 判重规范化 / 热重载新端口告警 / DB UNIQUE(name) / UpdateSettings 先应用后落盘 / 访问日志 IP+耗时 / CLI 状态码 / Origin 断言 / certsource darwin 兜底 / CI windows-test+android-build
+- 🟢 部分: 死代码/误导注释/rotate 修正/数字索引警告/symlink 防护//info ReadAll 上限/日期缓存/ResponseWriter 去重
+
+### 第二轮(4 复审 → 修复 6e0a456, 17 文件 +257/-115)
+- 🔴 高: **permissioncheck mode 检查平台门控回归** — Windows os.Stat 的 Perm() 恒 0666, mode&0o077 检查在平台无关层会把全部密钥文件误判"权限过宽"拒启; 收口到 access_linux.go modePerm(非 Linux 恒 0) + 新增 !linux 断言测试(随 CI windows-test 执行防再漏) + ModeRestrict 0o077→0o007(0640 group 可读放行)
+- 🟡 中: loadFirstCert 无锁读 r.src(与 SetSource 热替换竞争) / LoadWithPassword+子目录 cert.pem/key.pem symlink 逃逸 / /info 成功路径+fetchCAAndFilter 无界 JSON 解码 / 审计事件下沉 api.Manager.SetAudit(unix socket/TCP 双通道统一) / mtls-admin 日志分离强制组件路径(共享路径=滚动竞态源)
+- 🟢 低: config 拒 "any" / TestResolveListen IPv6 用例 / certsource_other 注释 / proxy 日志路径 CRLF 清洗 / 魔法数字抽 maxBodyBytes/maxInfoBody / webUILogger sync.Once 毒化改 mutex 重试
+
+### 第三轮(3 复审 → 8e8cf9a + b629c0f, 均报"无必须再修")
+- 8e8cf9a: logging.DefaultDir Windows 组件子目录(否则 gw/admin 默认日志路径相同, 强制替换在 Windows 失效) / 三日志字段替换 log.Printf / certsource List 逃逸符号链接一次性告警 / sanitizeLogPath 扩滤全部 C0 控制字符
+- b629c0f: **configmgr 落盘污染** — 日志路径替换后的 cfg 传入 configmgr, persist 整份 Encode 把 admin 组件路径写回共享 config.toml → 网关重启日志合流; 改传原始 cfg(origCfg), 替换只影响本进程 / warnSymlinkEscape 新引入文本日志注入面(Linux 文件名可含 \n, CWE-117) / 清洗函数抽公共 pathutil.SanitizeForLog(relay CA subject 同套用) / sanitizeLogPath 单测
+
+### 最终验证(2 复审 3b26f1a7/1a5e2e9b)
+平台/安全双复审对 8e8cf9a 均报无必须再修; 文档一致性收尾 e7271cf(README 端口表 reload_listen/ModeRestrict 权衡/config.example 日志段说明/CHANGELOG/arch/TODO + i18n 占位符后端 39 键前端 115 键 0 错配静态校验)
+
+### 测试全面性专项(独立审计, 2026-08-22 派发)
+审计测试场景设计是否全面(负面路径/边界值/安全断言/失败回滚/并发/平台矩阵/回归护栏), 非覆盖率数字。结果待回填。
