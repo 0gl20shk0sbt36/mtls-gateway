@@ -23,9 +23,6 @@ import (
 	"mtls-gateway/internal/relayweb"
 )
 
-// version 由 release 构建经 -ldflags "-X main.version=..." 注入; 默认 "dev"
-var version = "dev"
-
 func main() {
 	// 便携式: 默认配置文件放 exe 同目录(config.json), 不写用户文件夹; 显式 -config 优先
 	defCfg := "config.json"

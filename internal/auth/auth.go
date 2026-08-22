@@ -145,7 +145,7 @@ func (g *Gateway) Authorize(r *http.Request) (*db.CertRecord, error) {
 	if !ok {
 		return nil, fmt.Errorf("cert %s not registered", serial)
 	}
-	if rec.Status != "enabled" {
+	if rec.Status != db.StatusEnabled {
 		return nil, fmt.Errorf("cert %s status=%s", serial, rec.Status)
 	}
 	// 过期检查
@@ -185,11 +185,11 @@ func nowDate() string {
 	return s
 }
 
-// AuthLog 记录认证事件
-func AuthLog(purpose, remote, serial string, ok bool) {
+// AuthLog 记录认证事件(channel = 入口 listen, 如 ":9443")
+func AuthLog(channel, remote, serial string, ok bool) {
 	status := "ALLOW"
 	if !ok {
 		status = "DENY"
 	}
-	log.Printf("auth[%s] purpose=%s remote=%s serial=%s", status, purpose, remote, serial)
+	log.Printf("auth[%s] channel=%s remote=%s serial=%s", status, channel, remote, serial)
 }

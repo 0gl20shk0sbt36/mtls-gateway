@@ -12,6 +12,12 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// 证书状态常量(哨兵, 防拼写漂移 — 可读性审计)
+const (
+	StatusEnabled = "enabled"
+	StatusRevoked = "revoked"
+)
+
 // CertRecord 一条证书的完整记录(内存表 + SQLite 行)
 // Purposes: 该身份可访问的应用列表 (admin, dsh, vaultwarden, ...)
 // SQLite 存逗号分隔字符串, 内存中为 []string
@@ -164,7 +170,7 @@ func (s *Store) upsertLocked(r CertRecord) error {
 		r.IssuedAt = time.Now().UTC().Format(time.RFC3339)
 	}
 	if r.Status == "" {
-		r.Status = "enabled"
+		r.Status = StatusEnabled
 	}
 	_, err := s.sqlite.Exec(`INSERT INTO certs (serial,name,purpose,ts_ip,status,issued_at,expires_at,fingerprint)
 		VALUES (?,?,?,?,?,?,?,?)
@@ -213,7 +219,7 @@ func (s *Store) Revoke(serial string) error {
 	if !ok {
 		return fmt.Errorf("cert %s not found", serial)
 	}
-	r.Status = "revoked"
+	r.Status = StatusRevoked
 	if _, err := s.sqlite.Exec(`UPDATE certs SET status='revoked' WHERE serial=?`, serial); err != nil {
 		return fmt.Errorf("revoke: %w", err)
 	}

@@ -189,13 +189,7 @@ type IssueRequest struct {
 	NoPassword bool     `json:"no_password"` // true = 无密码(留空=真的没密码)
 }
 
-// normalizePurposes 规范化用途列表, 返回警告列表 (不终止)
-// admin 规则:
-//   - admin 在首位 + 有其他 → 警告, 仅保留 admin (剔除其他)
-//   - admin 在非首位 → 警告, 剔除 admin (保留其他)
-//   - 仅 admin → 无警告
-//
-// normalizePurposes 规范化用途列表; adminRole 为内置管理角色名(可配置)
+// normalizePurposes 规范化用途列表, 返回警告列表(不终止); adminRole 为内置管理角色名(可配置)
 func (r *IssueRequest) normalizePurposes(adminRole string) (warnings []string) {
 	if len(r.Purposes) == 0 {
 		return nil
@@ -377,7 +371,7 @@ func (m *Manager) IssueCert(req IssueRequest) (*IssueResponse, error) {
 		Name:        req.Name,
 		Purposes:    req.Purposes,
 		TSIP:        req.TSIP,
-		Status:      "enabled",
+		Status:      db.StatusEnabled,
 		IssuedAt:    notBefore.Format(time.RFC3339),
 		ExpiresAt:   notAfter.Format("2006-01-02"),
 		Fingerprint: fmt.Sprintf("%X", sha256.Sum256(cert.Raw)), // SHA-256 指纹

@@ -23,9 +23,6 @@ import (
 	"mtls-gateway/internal/i18n"
 )
 
-// version 由 release 构建经 -ldflags "-X main.version=..." 注入; 默认 "dev"
-var version = "dev"
-
 var sockPath = "/run/mtls-gw.sock"
 var lang = i18n.Detect() // 系统语言检测 (LC_ALL > LC_MESSAGES > LANG > zh)
 
@@ -110,9 +107,6 @@ func do(method, path string, body any) (*http.Response, error) {
 	client := &http.Client{
 		Transport: &http.Transport{
 			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-				return net.Dial("unix", sockPath)
-			},
-			Dial: func(_, _ string) (net.Conn, error) {
 				return net.Dial("unix", sockPath)
 			},
 		},

@@ -23,6 +23,12 @@ import (
 	"mtls-gateway/internal/pathutil"
 )
 
+// 内置角色保留字(哨兵常量, 防拼写漂移 — 可读性审计)
+const (
+	RoleAny  = "any"  // 服务声明: 任一已登记证书可访问
+	RoleNull = "null" // 服务声明: 匿名可访问(无需证书)
+)
+
 // Mapping 一条映射(通道)配置 (TOML [[mappings]] 直接对应)
 type Mapping struct {
 	ID      string       `toml:"id" json:"id"`           // 助记符(唯一; 判重仍靠 listen)
@@ -104,15 +110,14 @@ type portRouter struct {
 	whole  *route   // 无路径兜底 (整口)
 }
 
-// NewRouter 从 mappings + services 构建路由器; 校验失败返回 error。
 // NewRouter 构建路由器; declaredRoles = 配置里声明的角色列表(服务 roles 必须 ⊆ 它, 除内置 "any")
 func NewRouter(ms []Mapping, ss []ServiceCfg, declaredRoles []string) (*Router, error) {
 	declared := map[string]bool{}
 	for _, r := range declaredRoles {
-		if r == "any" {
+		if r == RoleAny {
 			return nil, fmt.Errorf("角色名 %q 是内置保留字(服务声明里直接写 any 即对任意证书开放), 禁止在 roles 声明列表中声明", r)
 		}
-		if r == "null" {
+		if r == RoleNull {
 			return nil, fmt.Errorf("角色名 %q 是内置保留字(匿名访问, 服务声明里直接写 null 即匿名路由), 禁止在 roles 声明列表中声明", r)
 		}
 		if !ValidRoleName(r) {
@@ -198,7 +203,7 @@ func NewRouter(ms []Mapping, ss []ServiceCfg, declaredRoles []string) (*Router, 
 		}
 		// 服务 roles: "any"(内置)= 任意已登记证书; "null"(内置)= 匿名可访问; 其他必须在声明列表中
 		for _, r := range s.Roles {
-			if r == "any" || r == "null" {
+			if r == RoleAny || r == RoleNull {
 				continue
 			}
 			if !ValidRoleName(r) {
@@ -363,7 +368,7 @@ func resolveChannelIndex(routes []*route, ch string) int {
 
 func rolesMatch(want, have []string) bool {
 	for _, w := range want {
-		if w == "any" {
+		if w == RoleAny {
 			return true
 		}
 		for _, h := range have {

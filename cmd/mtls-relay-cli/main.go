@@ -18,9 +18,6 @@ import (
 	"time"
 )
 
-// version 由 release 构建经 -ldflags "-X main.version=..." 注入; 默认 "dev"
-var version = "dev"
-
 var adminAddr = "127.0.0.1:18081"
 
 func main() {

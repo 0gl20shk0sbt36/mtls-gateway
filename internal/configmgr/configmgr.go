@@ -80,7 +80,7 @@ func (m *ConfigManager) Roles() []string {
 func (m *ConfigManager) ConfigPath() string { return m.path }
 
 func (m *ConfigManager) checkWritable() error {
-	if m.mode == "immutable" {
+	if m.mode == config.ModeImmutable {
 		return m.L.E("errImmutable")
 	}
 	return nil
@@ -168,7 +168,7 @@ func (m *ConfigManager) mutate(apply func() error, rollback func()) error {
 
 // persist 落盘 (ephemeral 跳过; mutable 先备份再写; 原子替换 + 备份限量)
 func (m *ConfigManager) persist() error {
-	if m.mode == "ephemeral" {
+	if m.mode == config.ModeEphemeral {
 		return nil
 	}
 	if err := copyFile(m.path, m.path+".bak-"+time.Now().Format("20060102-150405.000000000")); err != nil {

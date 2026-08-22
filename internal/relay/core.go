@@ -69,8 +69,7 @@ func (r *Relay) SetLang(lang string) {
 	r.L = i18n.New(lang)
 }
 
-// New 创建 Relay。cfg 可为空配置(后续通过管理 API 补隧道)。
-// src 为证书来源(不得为 nil)。
+// New 创建 Relay。src 为证书来源(不得为 nil); 配置经 Start/Reload 传入。
 func New(src certsource.Source) *Relay {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Relay{
@@ -283,7 +282,7 @@ func (r *Relay) loadCert(certID string) (tls.Certificate, error) {
 }
 
 // relayDial 建立一条到给定路由上游的 mTLS 连接。
-func (r *Relay) relayDial(ctx context.Context, _ string, certID string, route TunnelRoute) (net.Conn, error) {
+func (r *Relay) relayDial(ctx context.Context, certID string, route TunnelRoute) (net.Conn, error) {
 	cert, err := r.loadCert(certID)
 	if err != nil {
 		return nil, err
@@ -297,13 +296,14 @@ func (r *Relay) relayDial(ctx context.Context, _ string, certID string, route Tu
 	return d.Dial(ctx)
 }
 
-// serverHost 服务端发现端点的主机部分 (serverAddr = host:port → host)
 // lang 锁内读当前语言(SetLang 并发写)
 func (r *Relay) lang() *i18n.L {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.L
 }
+
+// serverHost 服务端发现端点的主机部分 (serverAddr = host:port → host)
 
 // rootCAsCopy 锁内读根池(applyServerCA 并发写)
 func (r *Relay) rootCAsCopy() *x509.CertPool {

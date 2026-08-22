@@ -286,7 +286,7 @@ func (rt *tunnelRuntime) handleConn(local net.Conn) {
 		atomic.AddInt64(&rt.metrics.activeConns, -1)
 	}()
 
-	upstream, err := rt.r.relayDial(rt.ctx, rt.key, rt.certID, rt.route)
+	upstream, err := rt.r.relayDial(rt.ctx, rt.certID, rt.route)
 	if err != nil {
 		rt.metrics.lastErr.Store(err.Error())
 		log.Printf("tunnel[%s] dial upstream: %v", rt.key, err)

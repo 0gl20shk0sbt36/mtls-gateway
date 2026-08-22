@@ -18,6 +18,13 @@ import (
 	"mtls-gateway/internal/proxy"
 )
 
+// 配置模式常量(哨兵, 防拼写漂移 — 可读性审计)
+const (
+	ModeMutable   = "mutable"
+	ModeEphemeral = "ephemeral"
+	ModeImmutable = "immutable"
+)
+
 // Config 配置文件结构 (TOML)
 type Config struct {
 	BindHost      string             `toml:"bind_host"`       // 全局绑定地址 (默认 0.0.0.0)
@@ -70,7 +77,7 @@ func DefaultConfig() Config {
 	return Config{
 		BindHost:      "0.0.0.0",
 		DB:            "/var/lib/mtls-gw/mtls-gw.db",
-		ConfigMode:    "mutable",
+		ConfigMode:    ModeMutable,
 		AdminRole:     auth.DefaultAdminRole,
 		PwdLength:     16,
 		KeyType:       "rsa",
@@ -124,9 +131,9 @@ func Parse(path string) (Config, error) {
 		}
 	}
 	switch cfg.ConfigMode {
-	case "", "mutable", "ephemeral", "immutable":
+	case "", ModeMutable, ModeEphemeral, ModeImmutable:
 		if cfg.ConfigMode == "" {
-			cfg.ConfigMode = "mutable"
+			cfg.ConfigMode = ModeMutable
 		}
 	default:
 		return cfg, fmt.Errorf("bad config_mode %q (mutable|ephemeral|immutable)", cfg.ConfigMode)

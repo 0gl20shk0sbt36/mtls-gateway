@@ -252,7 +252,6 @@ func main() {
 	}
 }
 
-// accessEvent 组装访问事件(元数据, 不记数据内容)
 // accessEvent 组装访问事件(元数据, 不记录数据内容; 含来源 IP 与耗时供取证/排查)
 func accessEvent(rec *db.CertRecord, channel, method, path string, status int, in, out int64, remote string, dur time.Duration) eventlog.Event {
 	return eventlog.Event{
@@ -354,7 +353,6 @@ func mergedHandler(gw *auth.Gateway, cm *configmgr.ConfigManager, accLog, evLog 
 	return mm
 }
 
-// infoHandler /info: 无需 admin; 已登记证书即可; 返回该证书可访问的服务(按角色过滤)
 // infoHandler /info: 匿名引导(null)或已登记证书; 无证书时返回 CA(供客户端过滤证书源), 有证书时附带可访问服务列表
 func infoHandler(gw *auth.Gateway, cm *configmgr.ConfigManager, acc *eventlog.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
