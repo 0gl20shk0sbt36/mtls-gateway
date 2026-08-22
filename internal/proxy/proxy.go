@@ -4,7 +4,7 @@
 //   - mappings: 唯一实体, 每条 = id(助记符, 唯一) + listen(:port[/path]) + target; 判重靠 listen
 //   - services: 服务注册表(所有服务必须注册): name + channels(mapping id 或索引) + roles(允许的证书角色)
 //
-// 授权: 请求命中映射 → 取引用该映射的所有服务的 roles 并集 → 证书 roles 与并集有交集(或含 "*")→ 放行
+// 授权: 请求命中映射 → 取引用该映射的所有服务的 roles 并集 → 证书 roles 与并集有交集(或含 "any")→ 放行
 // 匹配: 同端口按入口路径最长前缀; 无路径 = 整口兜底。前缀替换(nginx proxy_pass 语义)。
 package proxy
 
@@ -64,7 +64,7 @@ func expandVars(s string, v HeaderVars) string {
 type ServiceCfg struct {
 	Name     string   `toml:"name" json:"name"`         // 服务名(唯一)
 	Channels []string `toml:"channels" json:"channels"` // 通道: mapping id 或索引(不建议)
-	Roles    []string `toml:"roles" json:"roles"`       // 允许访问本服务的证书角色; "*"=任一已登记
+	Roles    []string `toml:"roles" json:"roles"`       // 允许访问本服务的证书角色; "any"=任一已登记
 }
 
 // ChannelInfo /info 返回的通道信息
@@ -112,6 +112,9 @@ func NewRouter(ms []Mapping, ss []ServiceCfg, declaredRoles []string) (*Router, 
 		if r == "any" {
 			return nil, fmt.Errorf("角色名 %q 是内置保留字(服务声明里直接写 any 即对任意证书开放), 禁止在 roles 声明列表中声明", r)
 		}
+		if r == "null" {
+			return nil, fmt.Errorf("角色名 %q 是内置保留字(匿名访问, 服务声明里直接写 null 即匿名路由), 禁止在 roles 声明列表中声明", r)
+		}
 		if !ValidRoleName(r) {
 			return nil, fmt.Errorf("bad role name %q (只允许字母/数字/下划线/连字符)", r)
 		}
@@ -128,16 +131,12 @@ func NewRouter(ms []Mapping, ss []ServiceCfg, declaredRoles []string) (*Router, 
 		svcCopy[i].Channels = append([]string(nil), ss[i].Channels...)
 	}
 	r := &Router{byPort: map[string]*portRouter{}, mappings: append([]Mapping(nil), ms...), services: svcCopy}
-	seenListen, seenID := map[string]bool{}, map[string]bool{}
+	seenNorm, seenID := map[string]bool{}, map[string]bool{}
 	for i := range ms {
 		m := &ms[i]
 		if m.Listen == "" {
 			return nil, fmt.Errorf("mapping[%d] missing listen", i)
 		}
-		if seenListen[m.Listen] {
-			return nil, fmt.Errorf("duplicate listen: %s", m.Listen)
-		}
-		seenListen[m.Listen] = true
 		if m.ID == "" {
 			return nil, fmt.Errorf("mapping %s missing id (mnemonic, unique)", m.Listen)
 		}
@@ -149,6 +148,14 @@ func NewRouter(ms []Mapping, ss []ServiceCfg, declaredRoles []string) (*Router, 
 		if err != nil {
 			return nil, fmt.Errorf("mapping %q: %w", m.Listen, err)
 		}
+		// 判重基于规范化后的 (port, path) 复合键 — 原始串判重会让
+		// ":9443" 与 "9443"、":9443/a" 与 ":9443/a/" 等等价写法绕过检查,
+		// 导致整口路由被静默覆盖/同路径重复前缀无报错。
+		normKey := port + "|" + path
+		if seenNorm[normKey] {
+			return nil, fmt.Errorf("duplicate listen: %s (规范化后与已有入口相同)", m.Listen)
+		}
+		seenNorm[normKey] = true
 		u, err := url.Parse(m.Target)
 		if err != nil || u.Scheme == "" || u.Host == "" {
 			return nil, fmt.Errorf("mapping %s bad target %q", m.Listen, m.Target)
@@ -318,15 +325,6 @@ func (r *route) AllowsNull() bool {
 func (r *route) Listen() string { return ":" + r.port + r.path }
 func (r *route) Target() string { return r.target.String() }
 
-// Routes 返回全部映射(供 /admin/mappings; admin 用, 不过滤)
-func (r *Router) Routes() []Mapping {
-	out := make([]Mapping, 0, len(r.routes))
-	for _, rt := range r.routes {
-		out = append(out, Mapping{ID: rt.id, Listen: rt.Listen(), Target: rt.Target()})
-	}
-	return out
-}
-
 // ServicesAllowed 返回证书角色可访问的服务(供 /info 按角色过滤)
 func (r *Router) ServicesAllowed(roles []string) []ServiceInfo {
 	var out []ServiceInfo
@@ -356,6 +354,8 @@ func resolveChannelIndex(routes []*route, ch string) int {
 		}
 	}
 	if n, err := strconv.Atoi(ch); err == nil && n >= 0 && n < len(routes) {
+		// 数字索引回退: 映射重排会静默把服务角色挂到另一条路由(权限错配) — 显式警告
+		log.Printf("警告: services.channels 使用数字索引 %q(mapping id 优先); 映射顺序变化会导致角色错配, 请改用 mapping id", ch)
 		return n
 	}
 	return -1

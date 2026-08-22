@@ -122,7 +122,9 @@ func (m *Manager) UpdateSettings(p SettingsPatch) error {
 		}
 		newSrc = s
 	}
+	// 锁内改内存 cfg(记录旧值: 应用失败回滚用 — 半提交修复: 先应用后落盘)
 	m.mu.Lock()
+	oldCfg := m.cfg
 	if p.ServerAddr != nil {
 		m.cfg.ServerAddr = *p.ServerAddr
 	}
@@ -150,22 +152,26 @@ func (m *Manager) UpdateSettings(p SettingsPatch) error {
 	np := m.noPersist
 	m.mu.Unlock()
 
-	if !np {
-		if err := SaveConfig(m.cfgPath, cfg); err != nil {
-			return fmt.Errorf("persist config: %w", err)
-		}
-	}
+	// 先应用 relay(可能失败: SetServerCA 失败 → 回滚内存 cfg, 不落盘 — 避免"配置已持久化但未生效"半提交)
 	if m.relay != nil {
 		if p.Lang != nil {
 			m.relay.SetLang(*p.Lang)
 		}
 		if p.ServerCA != nil {
 			if err := m.relay.SetServerCA(*p.ServerCA); err != nil {
+				m.mu.Lock()
+				m.cfg = oldCfg // 回滚(未落盘, 磁盘保持旧值)
+				m.mu.Unlock()
 				return fmt.Errorf("set server_ca: %w", err)
 			}
 		}
 		if p.CertDir != nil {
 			m.relay.SetSource(newSrc) // 热换源: 清证书缓存, 按当前 server_ca 重新过滤
+		}
+	}
+	if !np {
+		if err := SaveConfig(m.cfgPath, cfg); err != nil {
+			return fmt.Errorf("persist config: %w", err)
 		}
 	}
 	// server_addr / listen_host / server_ca / cert_dir 变更 → Reload 重建隧道(热生效)

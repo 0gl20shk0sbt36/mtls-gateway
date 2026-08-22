@@ -22,8 +22,8 @@ func TestAPIErrStatus(t *testing.T) {
 		{"unknown internal error", 500},
 	}
 	for _, c := range cases {
-		if got := apiErrStatus(errors.New(c.msg)); got != c.want {
-			t.Errorf("apiErrStatus(%q) = %d, want %d", c.msg, got, c.want)
+		if got := ErrStatus(errors.New(c.msg)); got != c.want {
+			t.Errorf("ErrStatus(%q) = %d, want %d", c.msg, got, c.want)
 		}
 	}
 }
@@ -50,10 +50,10 @@ func TestIssueCertDaysBoundary(t *testing.T) {
 
 // 第八批: apiErrStatus 中文 404
 func TestAPIErrStatusCN(t *testing.T) {
-	if got := apiErrStatus(errors.New("证书 不存在")); got != 404 {
+	if got := ErrStatus(errors.New("证书 不存在")); got != 404 {
 		t.Fatalf("证书 不存在 → %d, want 404", got)
 	}
-	if got := apiErrStatus(errors.New("未找到")); got != 404 {
+	if got := ErrStatus(errors.New("未找到")); got != 404 {
 		t.Fatalf("未找到 → %d, want 404", got)
 	}
 }

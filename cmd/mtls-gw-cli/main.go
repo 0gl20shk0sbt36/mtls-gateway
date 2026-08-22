@@ -215,6 +215,11 @@ func list() {
 		os.Exit(1)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		// 状态码检查: 服务端 5xx 也报失败(此前不查状态码, 500 也当成功)
+		fmt.Fprintf(os.Stderr, "%s\n", i18n.T(lang, "list_failed", fmt.Errorf("HTTP %d", resp.StatusCode)))
+		os.Exit(1)
+	}
 	var certs []map[string]any
 	json.NewDecoder(resp.Body).Decode(&certs)
 	if len(certs) == 0 {
@@ -244,5 +249,10 @@ func health() {
 		os.Exit(1)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		// 状态码检查: 服务端 500 不得误报"核心进程 OK"
+		fmt.Fprintf(os.Stderr, "%s\n", i18n.T(lang, "health_failed", fmt.Errorf("HTTP %d", resp.StatusCode)))
+		os.Exit(1)
+	}
 	fmt.Println(i18n.T(lang, "core_ok"))
 }

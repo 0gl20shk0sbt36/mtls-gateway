@@ -118,7 +118,7 @@ func TestTunnelHTTPPathProxy(t *testing.T) {
 		t.Fatal(err)
 	}
 	localPort := freePort(t)
-	r := New("", src)
+	r := New(src)
 	defer r.Close()
 	gwPort := gwPortOf(h.gwAddr)
 	cfg := RelayConfig{
@@ -210,7 +210,7 @@ func TestTunnelEncryptedCertFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	localPort := freePort(t)
-	r := New("", src)
+	r := New(src)
 	defer r.Close()
 	cfg := RelayConfig{
 		ListenHost: "127.0.0.1", ServerAddr: h.gwAddr, ServerCAFile: h.caPath,
@@ -236,7 +236,7 @@ func TestTunnelConcurrentEcho(t *testing.T) {
 	defer h.close()
 	src := h.buildSrc(t)
 	localPort := freePort(t)
-	r := New("", src)
+	r := New(src)
 	defer r.Close()
 	cfg := RelayConfig{
 		ListenHost: "127.0.0.1", ServerAddr: h.gwAddr, ServerCAFile: h.caPath,
@@ -314,7 +314,7 @@ func TestTunnelHTTPRetryAfterInitFailure(t *testing.T) {
 
 	src, _ := certsource.OpenFile(h.clientPairPath)
 	localPort := freePort(t)
-	r := New("", src)
+	r := New(src)
 	defer r.Close()
 	gwPort := gwPortOf(h.gwAddr)
 	cfg := RelayConfig{
@@ -369,7 +369,7 @@ func TestTunnelIdleTimeout(t *testing.T) {
 	defer h.close()
 	src := h.buildSrc(t)
 	localPort := freePort(t)
-	r := New("", src)
+	r := New(src)
 	defer r.Close()
 	// 注入短超时 — 必须在 Start 之前(Start 时捕获进 tunnelRuntime)
 	r.idleTimeout = 300 * time.Millisecond
@@ -405,7 +405,7 @@ func TestTunnelHalfClose(t *testing.T) {
 	defer h.close()
 	src := h.buildSrc(t)
 	localPort := freePort(t)
-	r := New("", src)
+	r := New(src)
 	defer r.Close()
 	cfg := RelayConfig{
 		ListenHost: "127.0.0.1", ServerAddr: h.gwAddr, ServerCAFile: h.caPath,
@@ -471,7 +471,7 @@ func TestTunnelHTTPRebuildOnServerAddrChange(t *testing.T) {
 	gwAddr, caPath, clientPair := startVerifyGW(t, dir, svcs) // HTTP mTLS stub 网关
 	src, _ := certsource.OpenFile(clientPair)
 	localPort := freePort(t)
-	r := New("", src)
+	r := New(src)
 	defer r.Close()
 	cfg := RelayConfig{
 		ListenHost: "127.0.0.1", ServerAddr: gwAddr, ServerCAFile: caPath,
@@ -530,7 +530,7 @@ func TestTunnelHTTPCertRotation(t *testing.T) {
 	gwAddr, caPath, clientPair := startVerifyGW(t, dir, svcs)
 	src, _ := certsource.OpenFile(clientPair)
 	localPort := freePort(t)
-	r := New("", src)
+	r := New(src)
 	defer r.Close()
 	r.certCacheTTL = 100 * time.Millisecond // 注入短 TTL
 	cfg := RelayConfig{

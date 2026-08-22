@@ -1,7 +1,12 @@
 package certsource
 
 import (
+	"bytes"
+	"crypto"
+	"crypto/rsa"
+	"crypto/sha1"
 	"crypto/tls"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -168,3 +173,80 @@ func TestAcceptCert(t *testing.T) {
 var _ Source = (*fileSource)(nil)
 var _ Source = (*dirSource)(nil)
 var _ = tls.Certificate{}
+
+// —— 平台无关签名纯函数(从 Windows CNG 抽出, Linux 可测) ——
+
+// TestCertThumbprint 证书 SHA-1 指纹格式(大写冒号分隔, Windows 标准)
+func TestCertThumbprint(t *testing.T) {
+	tc := genTestCert(t, "test-ca", "mtls-gw", "dev")
+	cert, err := parseCertFromPEM(tc.CertPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tp := certThumbprint(cert)
+	sum := sha1.Sum(cert.Raw)
+	want := strings.ToUpper(fmt.Sprintf("%x", sum[:]))
+	want = strings.Join(chunks(want, 2), ":")
+	if tp != want {
+		t.Fatalf("thumbprint = %q, want %q", tp, want)
+	}
+	if len(tp) != 59 { // 20 字节 hex + 19 冒号
+		t.Fatalf("thumbprint 长度 = %d, want 59", len(tp))
+	}
+}
+
+func chunks(s string, n int) []string {
+	var out []string
+	for i := 0; i < len(s); i += n {
+		if i+n > len(s) {
+			out = append(out, s[i:])
+		} else {
+			out = append(out, s[i:i+n])
+		}
+	}
+	return out
+}
+
+// TestECDSARawToDER P1363 raw R||S → DER: P-256(32) 与 P-384(48, digest≠R 场景)
+func TestECDSARawToDER(t *testing.T) {
+	// P-256: 32+32
+	raw256 := bytes.Repeat([]byte{0xab}, 64)
+	der256, err := ecdsaRawToDER(raw256, 256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.HasPrefix(der256, []byte{0x30}) {
+		t.Fatalf("DER 应以 SEQUENCE 开头: %x", der256[:2])
+	}
+	// P-384: 48+48(即使 digest=SHA256 32, 也按曲线 48 解析)
+	raw384 := bytes.Repeat([]byte{0xcd}, 96)
+	der384, err := ecdsaRawToDER(raw384, 384)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.HasPrefix(der384, []byte{0x30}) {
+		t.Fatalf("DER 应以 SEQUENCE 开头: %x", der384[:2])
+	}
+	// 长度错误 → 报错
+	if _, err := ecdsaRawToDER(raw256, 384); err == nil {
+		t.Fatal("长度不匹配应报错")
+	}
+}
+
+// TestPSSSaltLength PSS salt 计算: EqualsHash → hash 大小; Auto 拒绝
+func TestPSSSaltLength(t *testing.T) {
+	// EqualsHash: salt = SHA256 大小 = 32
+	n, err := pssSaltLength(&rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash, Hash: crypto.SHA256})
+	if err != nil || n != 32 {
+		t.Fatalf("EqualsHash(SHA256) = %d, %v; want 32", n, err)
+	}
+	// 显式值
+	n, err = pssSaltLength(&rsa.PSSOptions{SaltLength: 16})
+	if err != nil || n != 16 {
+		t.Fatalf("显式 salt = %d, %v; want 16", n, err)
+	}
+	// Auto 拒绝
+	if _, err := pssSaltLength(&rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthAuto}); err == nil {
+		t.Fatal("Auto 应拒绝")
+	}
+}

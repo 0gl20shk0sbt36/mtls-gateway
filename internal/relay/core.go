@@ -24,8 +24,7 @@ import (
 // 持有一个证书来源(source), 各隧道通过 CertID 从该来源选证书;
 // 证书按 CertID 缓存, 多条隧道引用同一证书时复用一份 tls.Certificate。
 type Relay struct {
-	cfgPath string
-	mu      sync.Mutex
+	mu sync.Mutex
 
 	listenHost string                    // 当前配置的本地监听地址 (Start/Reload 更新)
 	serverAddr string                    // 服务端 /info 发现端点 (Start/Reload 更新; 亦可用 SetServerAddr)
@@ -71,10 +70,9 @@ func (r *Relay) SetLang(lang string) {
 
 // New 创建 Relay。cfg 可为空配置(后续通过管理 API 补隧道)。
 // src 为证书来源(不得为 nil)。
-func New(cfgPath string, src certsource.Source) *Relay {
+func New(src certsource.Source) *Relay {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Relay{
-		cfgPath:      cfgPath,
 		src:          src,
 		certCache:    make(map[string]certCacheEntry),
 		ctx:          ctx,
@@ -110,11 +108,12 @@ func (r *Relay) loadCertLang(certID, lang string) (tls.Certificate, error) {
 	}
 	r.mu.Lock()
 	e, ok := r.certCache[certID]
+	src := r.src
 	r.mu.Unlock()
 	if ok && time.Since(e.loadedAt) < r.certCacheTTL {
 		return e.cert, nil
 	}
-	c, err := r.src.Load(certID)
+	c, err := src.Load(certID)
 	if err != nil {
 		return tls.Certificate{}, localizeLoadErr(l, certID, err)
 	}
@@ -149,27 +148,32 @@ func (r *Relay) cfgListenHost() string {
 // serverCA 为空 = 用系统根 (根池 nil)。
 // 配置了 server_ca 但读取/解析失败 = 拒绝启动(降级系统根会被 MITM 冒充网关)。
 func (r *Relay) applyServerCA(serverCA string) error {
-	r.serverCA = serverCA
-	r.rootCAs = nil
-	r.caSubject = ""
-	if serverCA == "" {
-		return nil
-	}
-	pemBytes, err := os.ReadFile(serverCA)
-	if err != nil {
-		return fmt.Errorf("read server_ca %s: %w (拒绝降级系统根)", serverCA, err)
-	}
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM(pemBytes) {
-		return fmt.Errorf("parse server_ca %s failed (拒绝降级系统根)", serverCA)
-	}
-	r.rootCAs = pool
-	// 用 CA 主题过滤系统证书源: 只展示由该 CA 签发的身份(过滤 Adobe 等无关证书)
-	if ca := firstCert(pemBytes); ca != nil {
-		r.caSubject = ca.Subject.String()
-		if r.src != nil {
-			certsource.ApplyIssuerFilter(r.src, r.caSubject)
+	// 先构建新根池(失败不碰旧配置 — 绝不静默降级系统根):
+	// 原实现先置 rootCAs=nil 再读文件, Reload 中 server_ca 变更失败会导致
+	// 运行中隧道以系统根验证网关(违背防 MITM 意图)。
+	newPool := (*x509.CertPool)(nil)
+	newSubject := ""
+	if serverCA != "" {
+		pemBytes, err := os.ReadFile(serverCA)
+		if err != nil {
+			return fmt.Errorf("read server_ca %s: %w (拒绝降级系统根)", serverCA, err)
 		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(pemBytes) {
+			return fmt.Errorf("parse server_ca %s failed (拒绝降级系统根)", serverCA)
+		}
+		newPool = pool
+		// 用 CA 主题过滤系统证书源: 只展示由该 CA 签发的身份(过滤 Adobe 等无关证书)
+		if ca := firstCert(pemBytes); ca != nil {
+			newSubject = ca.Subject.String()
+		}
+	}
+	// 成功: 原子赋值(调用方持锁)
+	r.serverCA = serverCA
+	r.rootCAs = newPool
+	r.caSubject = newSubject
+	if newSubject != "" && r.src != nil {
+		certsource.ApplyIssuerFilter(r.src, newSubject)
 	}
 	// 异步匿名引导: 无证书调服务端 /info(null 路由), 拿服务端 CA 自动过滤(server_ca 未配置时的兜底)
 	go r.fetchCAAndFilter()
@@ -199,7 +203,7 @@ func (r *Relay) SetSource(src certsource.Source) {
 // 用返回的 CA 过滤系统证书源; 失败(旧服务端/不可达)静默降级。
 func (r *Relay) fetchCAAndFilter() {
 	r.mu.Lock()
-	addr, caFile, roots := r.serverAddr, r.serverCA, r.rootCAs
+	addr, caFile, roots, src := r.serverAddr, r.serverCA, r.rootCAs, r.src
 	r.mu.Unlock()
 	if addr == "" || roots == nil {
 		return
@@ -223,7 +227,7 @@ func (r *Relay) fetchCAAndFilter() {
 		return
 	}
 	if caCert := firstCert([]byte(info.CA)); caCert != nil {
-		certsource.ApplyIssuerFilter(r.src, caCert.Subject.String())
+		certsource.ApplyIssuerFilter(src, caCert.Subject.String())
 		log.Printf("anonymous /info 引导: 已用服务端 CA 过滤证书源 (%s)", caCert.Subject.String())
 	}
 }
@@ -446,14 +450,20 @@ func (r *Relay) Status() []TunnelStatus {
 
 // ListCertMeta 返回来源里可选的证书(供外壳/用户选择)。
 func (r *Relay) ListCertMeta() ([]certsource.IdentityMeta, error) {
-	return r.src.List()
+	r.mu.Lock()
+	src := r.src
+	r.mu.Unlock()
+	return src.List()
 }
 
 // LoadCertWithPassword 加载证书; 若私钥被加密(需密码)则用 password 解锁。
 // 需要密码而 password 为空时, 报"needs password"错误, 由调用方(WebUI)弹出密码框再试。
 // 注意: 不持 r.mu 外层锁 — loadCert 内部自锁, 再锁会重入死锁(sync.Mutex 不可重入)。
 func (r *Relay) LoadCertWithPassword(certID, password string) (tls.Certificate, error) {
-	if with, ok := r.src.(certsource.LoaderWithPassword); ok {
+	r.mu.Lock()
+	src := r.src
+	r.mu.Unlock()
+	if with, ok := src.(certsource.LoaderWithPassword); ok {
 		return with.LoadWithPassword(certID, password)
 	}
 	return r.loadCert(certID)

@@ -6,12 +6,12 @@ package auth
 import (
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/hex"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"mtls-gateway/internal/db"
@@ -157,23 +157,8 @@ func (g *Gateway) Authorize(r *http.Request) (*db.CertRecord, error) {
 	return &rec, nil
 }
 
-// AuthorizePurposes 返回该证书可访问的用途列表 (等价于返回 rec.Purposes)
-func (g *Gateway) AuthorizePurposes(r *http.Request) ([]string, error) {
-	rec, err := g.Authorize(r)
-	if err != nil {
-		return nil, err
-	}
-	return rec.Purposes, nil
-}
-
-// IsAdminPurpose 判断用途是否管理角色(不硬编码默认值; adminRole 由配置注入)
-func IsAdminPurpose(purpose, adminRole string) bool { return purpose == adminRole }
-
 // IsAdmin 判断记录是否持有内置管理角色(实例化后的 admin_role)
 func (g *Gateway) IsAdmin(rec *db.CertRecord) bool { return rec.HasPurpose(g.AdminRole) }
-
-// SerialHex 格式化序列号为可读 hex
-func SerialHex(serial []byte) string { return hex.EncodeToString(serial) }
 
 // 便于测试注入
 var timeNow = func() string {
@@ -181,9 +166,23 @@ var timeNow = func() string {
 	return nowDate()
 }
 
-// nowDate 返回当前 UTC 日期 yyyy-mm-dd
+// nowDate 返回当前 UTC 日期 yyyy-mm-dd(按天缓存, 避免每请求 Format — 认证热路径)
+var (
+	nowDateDay   atomic.Int64
+	nowDateCache atomic.Value // string
+)
+
 func nowDate() string {
-	return time.Now().UTC().Format("2006-01-02")
+	day := time.Now().UTC().Unix() / 86400
+	if d := nowDateDay.Load(); d != 0 && d == day {
+		if s, ok := nowDateCache.Load().(string); ok {
+			return s
+		}
+	}
+	s := time.Now().UTC().Format("2006-01-02")
+	nowDateDay.Store(day)
+	nowDateCache.Store(s)
+	return s
 }
 
 // AuthLog 记录认证事件

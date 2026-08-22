@@ -66,8 +66,9 @@ CREATE TABLE IF NOT EXISTS certs (
 	issued_at   TEXT NOT NULL,
 	expires_at  TEXT NOT NULL,
 	fingerprint TEXT NOT NULL DEFAULT ''
-);`); err != nil {
-		return nil, fmt.Errorf("create table: %w", err)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_certs_name ON certs(name);`); err != nil {
+		return nil, fmt.Errorf("create table/index: %w", err)
 	}
 
 	s := &Store{sqlite: sdb, table: make(map[string]CertRecord)}

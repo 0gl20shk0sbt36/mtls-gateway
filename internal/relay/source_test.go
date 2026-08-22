@@ -51,7 +51,7 @@ func splitPairToDir(t *testing.T, pairPath, dir, name string) {
 func TestSetSource(t *testing.T) {
 	h := newHarness(t)
 	defer h.close()
-	r := New("", h.buildSrc(t)) // 初始文件源
+	r := New(h.buildSrc(t)) // 初始文件源
 
 	// 换到目录源(目录含 clientPair 拆分出的证书)
 	dir := t.TempDir()
@@ -84,7 +84,7 @@ func TestUpdateSettingsCertDir(t *testing.T) {
 	h := newHarness(t)
 	defer h.close()
 	src := h.buildSrc(t)
-	r := New("", src)
+	r := New(src)
 	cfgPath := filepath.Join(t.TempDir(), "relay.json")
 	cfg := RelayConfig{ServerAddr: h.gwAddr, Tunnels: []Tunnel{}}
 	if err := SaveConfig(cfgPath, cfg); err != nil {

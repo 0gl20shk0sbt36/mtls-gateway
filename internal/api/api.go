@@ -61,7 +61,6 @@ type Manager struct {
 	caKey     *rsa.PrivateKey
 	certDir   string          // 已签发证书输出目录
 	sockPath  string          // Unix socket 路径
-	adminOnly bool            // TCP 通道是否要求 admin 用途
 	tmpl      CertTemplate    // 证书模板 (可配置)
 	AdminRole string          // 内置管理角色名 (config admin_role)
 	KeyType   string          // 签发密钥类型: rsa | ecdsa
@@ -135,7 +134,6 @@ func NewManager(store *db.Store, caCertPath, caKeyPath, certDir, sockPath string
 		caKey:     rsaKey,
 		certDir:   certDir,
 		sockPath:  sockPath,
-		adminOnly: true,
 		AdminRole: adminRole,
 		KeyType:   keyType,
 		KeyBits:   keyBits,
@@ -441,9 +439,6 @@ func ErrStatus(err error) int {
 	return StatusFromKeywords(err.Error())
 }
 
-// apiErrStatus 已合并入 ErrStatus(保留别名兼容内部旧调用点)
-func apiErrStatus(err error) int { return ErrStatus(err) }
-
 // handler 管理 API 路由; isLocal=true 时 Unix socket 通道(直接 admin)
 func (m *Manager) handler(isLocal bool) http.Handler {
 	mux := http.NewServeMux()
@@ -463,7 +458,7 @@ func (m *Manager) handler(isLocal bool) http.Handler {
 		}
 		resp, err := m.IssueCert(req)
 		if err != nil {
-			http.Error(w, err.Error(), apiErrStatus(err))
+			http.Error(w, err.Error(), ErrStatus(err))
 			return
 		}
 		if !isLocal {
@@ -486,7 +481,7 @@ func (m *Manager) handler(isLocal bool) http.Handler {
 			return
 		}
 		if err := m.store.Revoke(req.Serial); err != nil {
-			http.Error(w, err.Error(), apiErrStatus(err))
+			http.Error(w, err.Error(), ErrStatus(err))
 			return
 		}
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")

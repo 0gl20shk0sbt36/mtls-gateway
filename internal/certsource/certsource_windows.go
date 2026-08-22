@@ -16,16 +16,11 @@ import (
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/rsa"
-	"crypto/sha1"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/asn1"
-	"encoding/hex"
 	"fmt"
 	"io"
-	"math/big"
 	"sort"
-	"strings"
 	"sync"
 	"unsafe"
 
@@ -39,6 +34,7 @@ const certSystemStoreCurrentUser = 0x00010000
 
 // winSource 系统证书库源: 枚举 CurrentUser\My, 只展示带私钥的身份
 type winSource struct {
+	mu           sync.RWMutex // 保护过滤字段(SetFilter/SetIssuerFilter 与 List 并发)
 	filterOrg    string
 	issuerFilter string // CA 主题; 非空时按 issuer 匹配(只展示该 CA 签发的)
 	showAll      bool
@@ -48,12 +44,23 @@ func openSystemImpl() (Source, error) {
 	return &winSource{}, nil
 }
 
-func (s *winSource) SetFilter(org string, showAll bool) { s.filterOrg, s.showAll = org, showAll }
-func (s *winSource) SetIssuerFilter(caSubject string)   { s.issuerFilter = caSubject }
+func (s *winSource) SetFilter(org string, showAll bool) {
+	s.mu.Lock()
+	s.filterOrg, s.showAll = org, showAll
+	s.mu.Unlock()
+}
+func (s *winSource) SetIssuerFilter(caSubject string) {
+	s.mu.Lock()
+	s.issuerFilter = caSubject
+	s.mu.Unlock()
+}
 
 // accept 是否展示该证书(issuer 精确/包含匹配, 或 org 过滤; 与 dir 源同规则, 共用 acceptCert)
 func (s *winSource) accept(cert *x509.Certificate) bool {
-	return acceptCert(s.issuerFilter, s.filterOrg, s.showAll, cert)
+	s.mu.RLock()
+	issuer, org, showAll := s.issuerFilter, s.filterOrg, s.showAll
+	s.mu.RUnlock()
+	return acceptCert(issuer, org, showAll, cert)
 }
 
 // List 枚举 CurrentUser\My 全部带私钥的证书(过滤后)
@@ -210,14 +217,8 @@ func ncryptSignECDSA(kh windows.Handle, pub *ecdsa.PublicKey, digest []byte) ([]
 	if err := ncryptSign(kh, digest, sig, nil, 0); err != nil {
 		return nil, err
 	}
-	// raw R||S, 各 len = 曲线字节数(非 digest 长度: P-384+SHA256 场景 digest 32 ≠ R 48)
-	part := (pub.Curve.Params().BitSize + 7) / 8
-	if len(sig) != 2*part {
-		return nil, fmt.Errorf("unexpected ECDSA signature length %d (want %d)", len(sig), 2*part)
-	}
-	return asn1.Marshal(struct {
-		R, S *big.Int
-	}{R: new(big.Int).SetBytes(sig[:part]), S: new(big.Int).SetBytes(sig[part:])})
+	// raw R||S → DER(平台无关纯函数, 有单测)
+	return ecdsaRawToDER(sig, pub.Curve.Params().BitSize)
 }
 
 // ncryptSignRSA RSA 签名: 默认 PKCS1 v1.5; opts 为 *rsa.PSSOptions 时走 PSS
@@ -307,24 +308,11 @@ func rsaPaddingInfo(opts crypto.SignerOpts) (unsafe.Pointer, uintptr, error) {
 		return nil, 0, fmt.Errorf("unsupported RSA hash algorithm %v", h)
 	}
 	if o, ok := opts.(*rsa.PSSOptions); ok {
-		salt := o.SaltLength
-		switch salt {
-		case rsa.PSSSaltLengthAuto:
-			return nil, 0, fmt.Errorf("rsa.PSSSaltLengthAuto is not supported")
-		case rsa.PSSSaltLengthEqualsHash:
-			salt = o.HashFunc().Size()
+		salt, err := pssSaltLength(o)
+		if err != nil {
+			return nil, 0, err
 		}
 		return unsafe.Pointer(&bcryptPSSPaddingInfo{pszAlgID: algID, cbSalt: uint32(salt)}), bcryptPadPSS, nil
 	}
 	return unsafe.Pointer(&bcryptPKCS1PaddingInfo{pszAlgID: algID}), bcryptPadPKCS1, nil
-}
-
-// certThumbprint 返回证书 SHA-1 指纹 (大写, 冒号分隔) — Windows 标准 thumbprint
-func certThumbprint(cert *x509.Certificate) string {
-	sum := sha1.Sum(cert.Raw)
-	parts := make([]string, len(sum))
-	for i, b := range sum {
-		parts[i] = strings.ToUpper(hex.EncodeToString([]byte{b}))
-	}
-	return strings.Join(parts, ":")
 }

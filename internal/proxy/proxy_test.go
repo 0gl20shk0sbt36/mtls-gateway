@@ -1,16 +1,70 @@
 package proxy
 
 import (
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
 func newEcho() *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("ECHO " + r.Method + " " + r.URL.Path + " HOST=" + r.Host))
+		// 回显 Host + Origin + 转发头是否存在: 断言网关 Director 的信任围栏改写
+		w.Write([]byte("ECHO " + r.Method + " " + r.URL.Path + " HOST=" + r.Host +
+			" ORIGIN=" + r.Header.Get("Origin") +
+			" XFH=" + r.Header.Get("X-Forwarded-Host") +
+			" XFF=" + r.Header.Get("X-Forwarded-For")))
 	}))
+}
+
+// TestDirectorRewrites 转发时: Host/Origin 改写为后端 loopback(信任围栏放行), 伪造转发头被删
+func TestDirectorRewrites(t *testing.T) {
+	back := newEcho()
+	defer back.Close()
+	r, err := NewRouter([]Mapping{
+		{ID: "m", Listen: ":9005", Target: back.URL},
+	}, []ServiceCfg{{Name: "s", Channels: []string{"m"}, Roles: []string{"x"}}}, []string{"x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:9005")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go http.Serve(ln, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		rt := r.Match("9005", req.URL.Path)
+		if rt == nil {
+			http.Error(w, "no route", 404)
+			return
+		}
+		rt.ApplyHeaders(req, HeaderVars{CertName: "dev", RemoteIP: "100.64.0.2"})
+		r.Serve(rt, w, req)
+	}))
+	req, _ := http.NewRequest("GET", "http://127.0.0.1:9005/x", nil)
+	req.Header.Set("X-Forwarded-For", "1.2.3.4") // 客户端伪造
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	got := string(body)
+	wantOrigin := back.URL // Director: Origin = target scheme://host
+	if !strings.Contains(got, "ORIGIN="+wantOrigin) {
+		t.Errorf("Origin 应改写为后端 %q: %s", wantOrigin, got)
+	}
+	if !strings.Contains(got, "XFH=") {
+		t.Errorf("X-Forwarded-Host 应被删除: %s", got)
+	}
+	if !strings.Contains(got, "XFF=") {
+		t.Errorf("X-Forwarded-For 应被删除(防伪造): %s", got)
+	}
+	if !strings.Contains(got, "HOST=") {
+		t.Errorf("缺少 HOST 回显: %s", got)
+	}
 }
 
 func TestLongestPrefixMatch(t *testing.T) {
@@ -86,13 +140,13 @@ func TestSubstitution(t *testing.T) {
 	srv9004.Start()
 	defer srv9004.Close()
 
-	if got := get("http://127.0.0.1:9003/a/hello"); got != "ECHO GET /hello HOST="+back.Listener.Addr().String() {
+	if got := get("http://127.0.0.1:9003/a/hello"); !strings.Contains(got, "ECHO GET /hello HOST="+back.Listener.Addr().String()) {
 		t.Errorf("strip: %q", got)
 	}
-	if got := get("http://127.0.0.1:9003/a/x"); got != "ECHO GET /x HOST="+back.Listener.Addr().String() {
+	if got := get("http://127.0.0.1:9003/a/x"); !strings.Contains(got, "ECHO GET /x HOST="+back.Listener.Addr().String()) {
 		t.Errorf("strip /a/x: %q", got)
 	}
-	if got := get("http://127.0.0.1:9004/p"); got != "ECHO GET /x/p HOST="+back.Listener.Addr().String() {
+	if got := get("http://127.0.0.1:9004/p"); !strings.Contains(got, "ECHO GET /x/p HOST="+back.Listener.Addr().String()) {
 		t.Errorf("prepend: %q", got)
 	}
 }
@@ -236,9 +290,12 @@ func TestNewRouterDeepCopy(t *testing.T) {
 	ms[0].Listen = ":9999"
 	ss[0].Roles[0] = "hacked"
 	ss[0].Channels[0] = "hacked-ch"
-	// router 内部不受影响
-	if got := r.Routes(); len(got) != 1 || got[0].ID != "m1" {
+	// router 内部不受影响(用 Listen + 匹配验证, Routes 已移除)
+	if got := r.Listens(); len(got) != 1 || got[0] != "9100" {
 		t.Fatalf("routes polluted: %+v", got)
+	}
+	if rt := r.Match("9100", "/"); rt == nil {
+		t.Fatal("route m1 应仍可匹配")
 	}
 	if got := r.ServicesAllowed([]string{"any"}); len(got) != 1 || got[0].Name != "s1" {
 		t.Fatalf("services polluted: %+v", got)

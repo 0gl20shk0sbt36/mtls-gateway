@@ -337,28 +337,6 @@ func TestTLSMinVersionValidation(t *testing.T) {
 	}
 }
 
-// L7: IsAdminPurpose / IsAdmin
-func TestIsAdminPurpose(t *testing.T) {
-	if !IsAdminPurpose(DefaultAdminRole, DefaultAdminRole) {
-		t.Fatal("DefaultAdminRole should be admin")
-	}
-	if IsAdminPurpose("dsh", DefaultAdminRole) {
-		t.Fatal("dsh should not be admin")
-	}
-	// 自定义 admin_role 生效
-	if !IsAdminPurpose("mtls-superadmin", "mtls-superadmin") {
-		t.Fatal("custom admin role should match")
-	}
-	if IsAdminPurpose("svc-a", "mtls-superadmin") {
-		t.Fatal("non-admin role should not match custom admin role")
-	}
-	rec := &db.CertRecord{Name: "x", Purposes: []string{DefaultAdminRole}}
-	g := &Gateway{AdminRole: DefaultAdminRole}
-	if !g.IsAdmin(rec) {
-		t.Fatal("admin purpose record should be admin")
-	}
-}
-
 // P1-1: 证书过期边界 — 当天到期仍有效/昨天过期被拒/空 ExpiresAt 不判(注入 timeNow)
 func TestCertExpiryBoundary(t *testing.T) {
 	store := testStore(t)

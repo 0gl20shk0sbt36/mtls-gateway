@@ -118,18 +118,22 @@ func TestFindByNameAndListOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	s.Upsert(CertRecord{Serial: "s2", Name: "dup", Status: "enabled", IssuedAt: "2026-08-01T00:00:00Z", ExpiresAt: "2026-09-01"})
-	s.Upsert(CertRecord{Serial: "s1", Name: "dup", Status: "revoked", IssuedAt: "2026-07-01T00:00:00Z", ExpiresAt: "2026-08-01"})
-	s.Upsert(CertRecord{Serial: "s3", Name: "other", Status: "enabled", IssuedAt: "2026-09-01T00:00:00Z", ExpiresAt: "2026-10-01"})
-	recs := s.FindByName("dup")
-	if len(recs) != 2 {
-		t.Fatalf("FindByName should include revoked, got %d", len(recs))
+	if err := s.Upsert(CertRecord{Serial: "s2", Name: "dup", Status: "enabled", IssuedAt: "2026-08-01T00:00:00Z", ExpiresAt: "2026-09-01"}); err != nil {
+		t.Fatal(err)
 	}
-	if recs[0].Serial == "s1" || recs[1].Serial == "s1" {
-		// 顺序不强制; 只确认两条都在
+	// DB 层 UNIQUE(name) 强制"禁止同名(含吊销)" — 任何状态同名都拒绝
+	if err := s.Upsert(CertRecord{Serial: "s1", Name: "dup", Status: "revoked", IssuedAt: "2026-07-01T00:00:00Z", ExpiresAt: "2026-08-01"}); err == nil {
+		t.Fatal("同名记录(含吊销)应被 UNIQUE(name) 拒绝")
+	}
+	if err := s.Upsert(CertRecord{Serial: "s3", Name: "other", Status: "enabled", IssuedAt: "2026-09-01T00:00:00Z", ExpiresAt: "2026-10-01"}); err != nil {
+		t.Fatal(err)
+	}
+	recs := s.FindByName("dup")
+	if len(recs) != 1 || recs[0].Serial != "s2" {
+		t.Fatalf("FindByName(\"dup\") = %+v, want 仅 s2", recs)
 	}
 	all := s.List()
-	if len(all) != 3 {
+	if len(all) != 2 {
 		t.Fatalf("List: %d", len(all))
 	}
 }

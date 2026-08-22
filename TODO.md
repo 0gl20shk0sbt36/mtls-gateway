@@ -61,3 +61,14 @@
 - [x] **阶段 1: 网关 reload API** — POST /admin/reload(admin 证书): db.Store.Reload(全量重读重建 map, 原子替换) + ConfigManager.ReloadFromDisk(重读配置+新 router, 失败保持旧) + auth.Gateway.Reload; parseConfig 抽离(启动 fatal/reload 返回 error)
 - [x] **阶段 2: mtls-admin 独立进程** — cmd/mtls-admin(读同一 config.toml): db 写者 + CA 签发(api.Manager) + 配置 CRUD(configmgr 共用, 已抽 internal/configmgr) + Unix socket/TCP admin(mTLS) + 变更后调网关 /admin/reload(reloadClient, gateway_reload_addr/reload_cert/reload_key); internal/config 加管理字段
 - [x] **阶段 3: 网关瘦身 + CLI/Web/relay 适配** — 网关移除管理功能(api.Manager 装配/配置 CRUD/证书管理), 仅留认证+路由+转发+/info+POST /admin/reload; mtls-gw-cli 走管理进程 Unix socket(sock_path 一致, 零代码改动); relay admin_addr 指向管理进程(证书管理台), server_addr 不变(网关 /info); config_mode 由管理进程 configmgr 执行(共用包)
+
+## 审计第一轮(7 大类只读审计)已修复项(详见 git 提交 2026-08-22)
+🔴 全修: admin_role 校验缺口(拒 null/ValidRoleName/不与 roles 声明重叠) / SetDeclaredRoles 热更新 / certsource+relay.src 数据竞争 / applyServerCA 失败降级系统根 / 双进程 admin_listen 端口冲突(reload_listen) / config.example 缺 roles 声明 / cert_issue|cert_revoke 事件 / isAddrInUse Windows / 权限预检(mode+reload_cert+mtls-admin 复用)
+🟡 大部分: 配置文件缺失拒绝启动 / reload 降级+失败事件 / 网关 stop 事件 / 管理面认证失败日志 / 日志分进程 / IPv6 ResolveListen / listen 判重规范化 / 热重载新端口告警 / DB UNIQUE(name) / UpdateSettings 先应用后落盘 / 访问日志 IP+耗时 / CLI 状态码 / Origin 断言 / certsource darwin 兜底 / CI windows test+android build
+🟢 部分: 死代码/误导注释/rotate 修正/数字索引警告/symlink 防护//info ReadAll 上限/日期缓存/ResponseWriter 去重
+
+## 审计第一轮未修(记录, 第二轮复审评估)
+- [ ] 错误本地化 M1 三处碎片化(结构化 error 重构, 大改高风险)
+- [ ] relay 管理桥 9 函数样板(M3) / HTTP mTLS client 构造重复(M4) / listen 解析两套(M5) / main 包 handler 拆分(M8)
+- [ ] 前端 app.js 单测 / i18n 占位符一致性 / webUILogger sync.Once
+- [ ] 热重载动态起停监听(当前仅告警) / p12 密码 stdin / 魔法数字常量 / 日志 CRLF 清洗 / 过期 RFC3339 统一

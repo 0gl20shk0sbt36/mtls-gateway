@@ -60,7 +60,7 @@ func main() {
 	certsource.ApplyGwFilter(src, *filterOrg, *showAll)
 
 	// 中继核心 + 管理
-	r := relay.New(cfgPath, src)
+	r := relay.New(src)
 	mgr, err := relay.NewManager(r, cfgPath)
 	if err != nil {
 		log.Fatalf("manager: %v", err)

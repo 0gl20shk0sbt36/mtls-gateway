@@ -76,36 +76,43 @@ func (l *Logger) open() error {
 	return nil
 }
 
-// rotate 超过上限时滚动: 当前文件 → .1, 旧文件顺延, 删最老
+// rotate 超过上限时滚动: 当前文件 → .1, 旧文件顺延, 删最老。
+// 保留语义: maxFile 份历史 + 当前 = maxFile+1 份(与文档"保留 maxFile 份历史"一致)。
 func (l *Logger) rotate() {
 	l.f.Close()
-	// 删除最老
 	if l.maxFile > 0 {
 		oldest := l.path + fmt.Sprintf(".%d", l.maxFile)
-		os.Remove(oldest)
+		if err := os.Remove(oldest); err != nil && !os.IsNotExist(err) {
+			log.Printf("eventlog rotate remove %s: %v", oldest, err)
+		}
 	}
-	// 顺延
 	for i := l.maxFile - 1; i >= 1; i-- {
-		os.Rename(l.path+fmt.Sprintf(".%d", i), l.path+fmt.Sprintf(".%d", i+1))
+		if err := os.Rename(l.path+fmt.Sprintf(".%d", i), l.path+fmt.Sprintf(".%d", i+1)); err != nil && !os.IsNotExist(err) {
+			log.Printf("eventlog rotate rename %s: %v", l.path+fmt.Sprintf(".%d", i), err)
+		}
 	}
-	os.Rename(l.path, l.path+".1")
+	if err := os.Rename(l.path, l.path+".1"); err != nil && !os.IsNotExist(err) {
+		log.Printf("eventlog rotate rename %s: %v", l.path, err)
+	}
 	l.open()
 }
 
 // Event 一条事件记录
 type Event struct {
-	Time     time.Time `json:"time"`
-	Type     string    `json:"type"` // start|stop|tunnel_add|tunnel_del|config_change|cert_issue|cert_revoke|access|deny
-	Cert     string    `json:"cert,omitempty"`
-	Serial   string    `json:"serial,omitempty"`
-	Role     string    `json:"role,omitempty"`
-	Channel  string    `json:"channel,omitempty"`
-	Method   string    `json:"method,omitempty"`
-	Path     string    `json:"path,omitempty"`
-	Status   int       `json:"status,omitempty"`
-	BytesIn  int64     `json:"bytes_in,omitempty"`
-	BytesOut int64     `json:"bytes_out,omitempty"`
-	Msg      string    `json:"msg,omitempty"`
+	Time       time.Time `json:"time"`
+	Type       string    `json:"type"` // start|stop|tunnel_add|tunnel_del|config_change|cert_issue|cert_revoke|access|deny
+	Cert       string    `json:"cert,omitempty"`
+	Serial     string    `json:"serial,omitempty"`
+	Role       string    `json:"role,omitempty"`
+	Channel    string    `json:"channel,omitempty"`
+	Method     string    `json:"method,omitempty"`
+	Path       string    `json:"path,omitempty"`
+	Status     int       `json:"status,omitempty"`
+	BytesIn    int64     `json:"bytes_in,omitempty"`
+	BytesOut   int64     `json:"bytes_out,omitempty"`
+	Remote     string    `json:"remote,omitempty"`      // 来源 IP(安全取证: 谁从哪访问了什么)
+	DurationMS int64     `json:"duration_ms,omitempty"` // 请求耗时(ms, 性能排查)
+	Msg        string    `json:"msg,omitempty"`
 }
 
 // Write 写一条事件(JSON 行)

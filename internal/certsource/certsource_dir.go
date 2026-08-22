@@ -8,11 +8,13 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 )
 
 // dirSource 目录扫描源: 每子目录一个证书 (<name>/cert.pem + <name>/key.pem),
 // 或顶层 *.p12。ID = 相对路径 (如 "device-a" 或 "device-a.p12")。
 type dirSource struct {
+	mu        sync.RWMutex // 保护过滤字段(SetFilter 与 List 并发; relay 异步 fetchCAAndFilter 写)
 	root      string
 	filterOrg string // 非空则只展示由该 org 签发的证书
 	showAll   bool   // 显示全部 (跳过 filterOrg 过滤)
@@ -31,11 +33,18 @@ func openDirImpl(root string) (Source, error) {
 }
 
 // SetFilter 设置是否只展示给定 org 签发的证书
-func (d *dirSource) SetFilter(org string, showAll bool) { d.filterOrg, d.showAll = org, showAll }
+func (d *dirSource) SetFilter(org string, showAll bool) {
+	d.mu.Lock()
+	d.filterOrg, d.showAll = org, showAll
+	d.mu.Unlock()
+}
 
 // accept 是否展示该证书(与 winSource 共用 acceptCert 公共规则)
 func (d *dirSource) accept(cert *x509.Certificate) bool {
-	return acceptCert("", d.filterOrg, d.showAll, cert)
+	d.mu.RLock()
+	org, showAll := d.filterOrg, d.showAll
+	d.mu.RUnlock()
+	return acceptCert("", org, showAll, cert)
 }
 
 // List 扫描目录, 返回每条身份元数据
@@ -98,6 +107,10 @@ func (d *dirSource) Load(id string) (tls.Certificate, error) {
 	if err != nil {
 		return tls.Certificate{}, fmt.Errorf("cert %s not found: %w", id, err)
 	}
+	// 符号链接防护: 目录内 symlink 可把读取指向目录外任意文件 — 解析后校验仍在 root 内
+	if real, rerr := filepath.EvalSymlinks(full); rerr == nil && !withinRoot(d.root, real) {
+		return tls.Certificate{}, fmt.Errorf("cert %s resolves outside cert dir (symlink rejected)", id)
+	}
 	if st.IsDir() {
 		cert, err := os.ReadFile(filepath.Join(full, "cert.pem"))
 		if err != nil {
@@ -111,6 +124,15 @@ func (d *dirSource) Load(id string) (tls.Certificate, error) {
 		return tlsFromPEM(id, combined)
 	}
 	return loadFilePEMOrP12(full)
+}
+
+// withinRoot 判断 resolved 路径是否仍在 root 目录内(符号链接防护)
+func withinRoot(root, resolved string) bool {
+	rel, err := filepath.Rel(root, resolved)
+	if err != nil {
+		return false
+	}
+	return rel == "." || !strings.HasPrefix(rel, "..")
 }
 
 // LoadWithPassword 带密码加载 (加密私钥/p12)

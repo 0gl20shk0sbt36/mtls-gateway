@@ -17,7 +17,7 @@ import (
 func mgrEnv(t *testing.T, h *harness) (*Manager, http.Handler) {
 	t.Helper()
 	src := h.buildSrc(t)
-	r := New("", src)
+	r := New(src)
 	r.SetServerAddr(h.gwAddr)
 	_ = r.SetServerCA(h.caPath)
 	cfgPath := filepath.Join(t.TempDir(), "relay.json")
@@ -142,7 +142,7 @@ func TestManagerHTTP_AddTunnel(t *testing.T) {
 	svcs := []map[string]any{{"name": "svc-x", "channels": []any{map[string]any{"listen": ":9601", "target": "http://x"}}}}
 	gwAddr, caPath, clientPair := startVerifyGW(t, dir, svcs)
 	src, _ := certsource.OpenFile(clientPair)
-	r2 := New("", src)
+	r2 := New(src)
 	r2.SetServerAddr(gwAddr)
 	_ = r2.SetServerCA(caPath)
 	cfgPath := filepath.Join(dir, "relay.json")

@@ -9,6 +9,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 
 	"github.com/BurntSushi/toml"
 
@@ -28,8 +29,9 @@ type Config struct {
 	KeyType       string             `toml:"key_type"`        // 签发密钥: rsa | ecdsa
 	KeyBits       int                `toml:"key_bits"`        // rsa:2048/3072/4096; ecdsa:256/384/521
 	TLSMinVersion string             `toml:"tls_min_version"` // "1.2" | "1.3"
-	AdminListen   string             `toml:"admin_listen"`    // 管理 API TCP (需 admin_role 证书)
-	InfoListen    string             `toml:"info_listen"`     // /info 发现端口; 空=关
+	AdminListen   string             `toml:"admin_listen"`    // 管理 API TCP (mtls-admin 进程; 需 admin_role 证书)
+	InfoListen    string             `toml:"info_listen"`     // /info 发现端口(网关); 空=关
+	ReloadListen  string             `toml:"reload_listen"`   // 网关 /admin/reload 端口(管理进程调用); 空=与 info 同端口合并
 	CA            string             `toml:"ca"`
 	CAKey         string             `toml:"ca_key"`
 	ServerCert    string             `toml:"server_cert"`
@@ -108,6 +110,19 @@ func Parse(path string) (Config, error) {
 	if cfg.AdminRole == "any" {
 		return cfg, fmt.Errorf("admin_role 不能是保留字 \"any\"(会导致任意 any 证书获得管理权限)")
 	}
+	if cfg.AdminRole == "null" {
+		return cfg, fmt.Errorf("admin_role 不能是保留字 \"null\"(匿名访问哨兵, 语义冲突)")
+	}
+	if !proxy.ValidRoleName(cfg.AdminRole) {
+		return cfg, fmt.Errorf("bad admin_role %q (只允许字母/数字/下划线/连字符)", cfg.AdminRole)
+	}
+	// admin_role 不得出现在 roles 声明列表: 该角色证书自动获得管理权限(IsAdmin 字符串相等),
+	// 若声明为普通角色则对应证书全部提权 — 必须唯一保留给管理用途。
+	for _, r := range cfg.Roles {
+		if r == cfg.AdminRole {
+			return cfg, fmt.Errorf("admin_role %q 禁止出现在 roles 声明列表(提权风险)", cfg.AdminRole)
+		}
+	}
 	switch cfg.ConfigMode {
 	case "", "mutable", "ephemeral", "immutable":
 		if cfg.ConfigMode == "" {
@@ -140,6 +155,9 @@ func Parse(path string) (Config, error) {
 	// 角色声明列表校验: 命名合法 + 去重 (服务 roles 校验在 NewRouter)
 	seen := map[string]bool{}
 	for _, r := range cfg.Roles {
+		if r == "null" {
+			return cfg, fmt.Errorf("角色 %q 是内置保留字(匿名路由哨兵), 禁止在 roles 声明列表中声明", r)
+		}
 		if !proxy.ValidRoleName(r) {
 			return cfg, fmt.Errorf("bad role name %q (只允许字母/数字/下划线/连字符)", r)
 		}
@@ -151,13 +169,14 @@ func Parse(path string) (Config, error) {
 	return cfg, nil
 }
 
-// ResolveListen 把 ":port" 落到 bindHost (绝对地址原样返回)
+// ResolveListen 把 ":port" 落到 bindHost (绝对地址原样返回)。
+// 用 net.JoinHostPort 拼接: bind_host="::"(IPv6) 时 ":9444" → "[::]:9444"(原字符串拼接产出非法的 ":::9444")。
 func ResolveListen(bindHost, spec string) string {
 	if spec == "" {
 		return ""
 	}
 	if spec[0] == ':' {
-		return bindHost + spec
+		return net.JoinHostPort(bindHost, spec[1:])
 	}
 	return spec
 }

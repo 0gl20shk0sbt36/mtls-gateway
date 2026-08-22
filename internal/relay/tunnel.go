@@ -13,7 +13,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"mtls-gateway/internal/pathutil"
@@ -130,10 +129,6 @@ func (r *Relay) hasLocalPort(port string) bool {
 		}
 	}
 	return false
-}
-
-func isAddrInUse(err error) bool {
-	return errors.Is(err, syscall.EADDRINUSE) || strings.Contains(err.Error(), "address already in use")
 }
 
 // localHTTPHandler 本地路径模式: 剥本地前缀 → 补通道前缀 → mTLS 转发服务端通道

@@ -45,14 +45,21 @@ key_type = "rsa"                      # 签发密钥类型: rsa | ecdsa
 key_bits = 2048                       # rsa: 2048/3072/4096; ecdsa: 256/384/521
 pwd_length = 16                       # 自动生成 p12 密码的长度
 
-# ---- 监听端口 ----
-info_listen = ":9499"                 # /info 服务发现端口(匿名可访问, 返回 CA 供客户端引导; 与 admin_listen 相同=合并同端口路径区分; 空串=关闭)
-admin_listen = ":9444"                # 管理 API 端口(仅 admin_role 证书可连; 与 info_listen 相同则 /info 与 /admin 同端口)
+# ---- 监听端口(双进程) ----
+# 网关(mtls-gw): info_listen(/info 服务发现) + reload_listen(/admin/reload, 管理进程调用)
+# 管理进程(mtls-admin): admin_listen(完整管理 API, 与网关读同一 config)
+# 同机部署时 info/admin/reload 三者端口必须互不相同(除 info 与 reload 可同端口合并)
+info_listen = ":9499"                 # 网关 /info 服务发现端口(匿名可访问, 返回 CA 供客户端引导; 空串=关闭)
+reload_listen = ":9444"               # 网关 /admin/reload 端口(管理进程调用, 仅 admin_role 证书); 空=与 info 同端口合并
+admin_listen = ":9445"                # mtls-admin 管理 API 端口(仅 admin_role 证书可连)
 
 # ---- 管理进程专属(mtls-admin 用; mtls-gw 忽略; 管理服务拆分后) ----
 # gateway_reload_addr = "100.104.135.63:9444"   # 网关 /admin/reload 地址(变更 DB/配置后自动全量热重载; 空=不自动)
 # reload_cert = "/var/lib/mtls-gw/certs/gw-admin/cert.pem"  # 调网关 reload 的 admin 客户端证书
 # reload_key = "/var/lib/mtls-gw/certs/gw-admin/key.pem"    # 对应私钥
+
+# ---- 角色声明列表(必须声明所有业务角色; 内置 any/null 免声明, 仅服务可用) ----
+roles = ["dsh", "vault", "staff", "family"]
 
 # ============================================================
 # 映射(通道) — 唯一实体; 判重靠 listen(重复=启动报错); id 仅助记符(也须唯一)

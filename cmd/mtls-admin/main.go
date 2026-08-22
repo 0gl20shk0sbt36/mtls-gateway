@@ -11,6 +11,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
@@ -33,6 +34,8 @@ import (
 	"mtls-gateway/internal/db"
 	"mtls-gateway/internal/eventlog"
 	"mtls-gateway/internal/i18n"
+	"mtls-gateway/internal/logging"
+	"mtls-gateway/internal/permissioncheck"
 	"mtls-gateway/internal/proxy"
 )
 
@@ -53,8 +56,29 @@ func main() {
 	if err != nil {
 		log.Fatalf("config %s: %v (配置文件错误, 拒绝启动)", *configPath, err)
 	}
+	// 日志路径与网关分离(同一 config 的 log_file 若未被显式配置, 落为网关默认路径 —
+	// 双进程各自滚动同一文件会 rename 竞态互相覆盖; 换成 mtls-admin 组件路径)。
+	{
+		def := config.DefaultConfig()
+		if cfg.LogFile == def.LogFile {
+			cfg.LogFile = logging.DefaultPath("mtls-admin", "events.log")
+		}
+		if cfg.AccessLogFile == def.AccessLogFile {
+			cfg.AccessLogFile = logging.DefaultPath("mtls-admin", "access.log")
+		}
+		if cfg.StdoutLogFile == def.StdoutLogFile {
+			cfg.StdoutLogFile = logging.DefaultPath("mtls-admin", "stdout.log")
+		}
+	}
 	if err := os.MkdirAll(filepath.Dir(cfg.DB), 0o700); err != nil {
 		log.Fatalf("mkdir db dir: %v", err)
+	}
+
+	// 启动前权限预检(Linux): 管理进程是唯一写者(DB/CA 签发/配置落盘) —
+	// 检查 CA 私钥/reload 客户端证书(mode&0o077==0 禁 world)/DB/签发目录/socket/配置目录。
+	// 防 22:18 类"目录不可写带病运行"(签发目录只读 → 临时目录创建失败、配置落盘失败)。
+	if permissioncheck.Report(permissioncheck.Check(permissioncheck.AdminNeeds(cfg, *configPath)), cfg.LogFile) {
+		os.Exit(1)
 	}
 
 	// 日志: 事件(JSON) + 标准输出(文本, 终端+文件双写)
@@ -110,14 +134,18 @@ func main() {
 	}
 	mgr.SetDeclaredRoles(cfg.Roles)
 
-	// 网关 reload 客户端(可选): 变更后调网关 /admin/reload 热重载
+	// 网关 reload 客户端(可选): 变更后调网关 /admin/reload 热重载。
+	// 配置错误(缺 reload_cert/key 等)降级为警告并禁用自动 reload —
+	// 自动 reload 是增强项, 不应因它瘫痪证书管理/签发(证书管理仍可用, 稍后手动 reload 即可)。
 	var rc *reloadClient
 	if cfg.GatewayReloadAddr != "" {
 		rc, err = newReloadClient(cfg)
 		if err != nil {
-			log.Fatalf("reload client: %v", err)
+			log.Printf("gateway reload 客户端配置错误: %v (自动 reload 禁用; 变更后需手动调网关 /admin/reload)", err)
+			rc = nil
+		} else {
+			log.Printf("gateway reload: %s (变更后自动热重载)", cfg.GatewayReloadAddr)
 		}
-		log.Printf("gateway reload: %s (变更后自动热重载)", cfg.GatewayReloadAddr)
 	}
 
 	if evLog != nil {
@@ -198,22 +226,23 @@ func newReloadClient(cfg config.Config) (*reloadClient, error) {
 	}, nil
 }
 
-// Trigger 调网关 /admin/reload; 失败仅记日志(管理侧已落盘, 下次变更/手动 reload 可收敛)
-func (c *reloadClient) Trigger() {
+// Trigger 调网关 /admin/reload; 返回是否成功(失败由调用方写事件留痕, 管理侧已落盘可重试)
+func (c *reloadClient) Trigger() bool {
 	if c == nil {
-		return
+		return false
 	}
 	resp, err := c.cli.Post("https://"+c.addr+"/admin/reload", "application/json", nil)
 	if err != nil {
 		log.Printf("gateway reload: %v (管理侧已落盘, 可稍后重试)", err)
-		return
+		return false
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		log.Printf("gateway reload: HTTP %d (管理侧已落盘)", resp.StatusCode)
-		return
+		return false
 	}
 	log.Printf("gateway reload: ok")
+	return true
 }
 
 // —— 管理 handler(admin 证书保护): 证书管理(api.Manager) + 配置 CRUD(configmgr, 落盘后调网关 reload) ——
@@ -226,10 +255,15 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *configmgr.ConfigManage
 			ev.Write(eventlog.Event{Type: "config_change", Msg: msg})
 		}
 	}
-	// 配置变更落盘后触发网关 reload(管理进程是配置写者, 网关只读消费者)
+	// 配置变更落盘后触发网关 reload(管理进程是配置写者, 网关只读消费者);
+	// 并同步签发校验的角色集(否则新增角色后签发仍报"未声明", 需重启才生效)
 	changed := func(msg string) {
 		cfgChanged(msg)
-		rc.Trigger()
+		mgr.SetDeclaredRoles(cm.Roles()) // 角色 CRUD/config 批量保存后刷新签发校验集
+		if rc != nil && !rc.Trigger() {
+			// reload 失败可见: 网关内存副本停留旧状态(吊销不生效/新证书不可用), 必须留痕
+			cfgChanged("⚠️ 网关 reload 失败: " + msg + " (网关仍用旧内存副本, 请检查 gateway_reload_addr/reload 证书)")
+		}
 	}
 
 	// 配置总览
@@ -373,17 +407,56 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *configmgr.ConfigManage
 		writeJSON(w, map[string]any{"ok": true})
 	})
 
-	// 证书管理(api.Manager 现成) + 兜底
-	mux.Handle("/", mgr.HTTPHandler())
+	// 证书管理(api.Manager 现成): 包装记录 cert_issue/cert_revoke 审计事件
+	// (证书签发/吊销是最高价值审计事件, 必须可追溯; 网关瘦身后本进程是唯一写入点)
+	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		msg := ""
+		if r.URL.Path == "/admin/certs/revoke" || r.URL.Path == "/admin/certs/issue" {
+			if b, err := io.ReadAll(io.LimitReader(r.Body, 4<<20)); err == nil {
+				r.Body = io.NopCloser(bytes.NewReader(b)) // 恢复 body 供下游解析
+				var rb struct {
+					Serial   string   `json:"serial"`
+					Name     string   `json:"name"`
+					Purposes []string `json:"purposes"`
+				}
+				if json.Unmarshal(b, &rb) == nil {
+					if r.URL.Path == "/admin/certs/revoke" && rb.Serial != "" {
+						msg = "吊销证书 serial=" + rb.Serial
+					}
+					if r.URL.Path == "/admin/certs/issue" {
+						msg = fmt.Sprintf("签发证书 name=%s purposes=%v", rb.Name, rb.Purposes)
+					}
+				}
+			}
+		}
+		sw := eventlog.NewStatusWriter(w)
+		mgr.HTTPHandler().ServeHTTP(sw, r)
+		if ev != nil && sw.Status() >= 200 && sw.Status() < 400 {
+			switch r.URL.Path {
+			case "/admin/certs/issue":
+				if msg == "" {
+					msg = "签发证书"
+				}
+				ev.Write(eventlog.Event{Type: "cert_issue", Msg: msg})
+			case "/admin/certs/revoke":
+				if msg == "" {
+					msg = "吊销证书"
+				}
+				ev.Write(eventlog.Event{Type: "cert_revoke", Msg: msg})
+			}
+		}
+	}))
 
-	// 外层: admin 证书授权
+	// 外层: admin 证书授权(认证失败留痕 — 管理面不能是日志盲区)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rec, err := gw.Authorize(r)
 		if err != nil {
+			cfgChanged("管理面认证失败: " + r.Method + " " + r.URL.Path)
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
 		if !gw.IsAdmin(rec) {
+			cfgChanged(fmt.Sprintf("管理面拒绝非 admin 证书 %s(%s): %s %s", rec.Name, rec.Serial, r.Method, r.URL.Path))
 			http.Error(w, "admin cert required", http.StatusForbidden)
 			return
 		}

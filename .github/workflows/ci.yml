@@ -93,7 +93,7 @@ jobs:
         with:
           go-version: '1.26'
           cache: true
-      - name: Build windows (all cmd; includes Windows certstore)
+      - name: Build windows (all cmd; includes Windows certstore + mtls-admin)
         env:
           GOOS: windows
           GOARCH: amd64
@@ -102,3 +102,36 @@ jobs:
           go build ./cmd/mtls-gw-cli
           go build ./cmd/mtls-relay
           go build ./cmd/mtls-relay-cli
+          go build ./cmd/mtls-admin
+
+  windows-test:
+    name: Test (windows)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+      - name: Test (runs Windows CNG source tests)
+        run: go test -v -race ./...
+
+  android-build:
+    name: Cross-compile (android)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+      - name: Build android (all cmd; includes certsource android + permissioncheck linux path)
+        env:
+          GOOS: android
+          GOARCH: arm64
+        run: |
+          go build ./...

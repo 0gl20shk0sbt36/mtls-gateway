@@ -177,7 +177,7 @@ func TestRelay_Echo(t *testing.T) {
 	src := h.buildSrc(t)
 
 	localPort := freePort(t)
-	r := New("", src)
+	r := New(src)
 	defer r.Close()
 
 	cfg := RelayConfig{ListenHost: "127.0.0.1", ServerAddr: h.gwAddr, ServerCAFile: h.caPath, Tunnels: []Tunnel{
@@ -219,7 +219,7 @@ func TestRelay_CertReuse(t *testing.T) {
 
 	p1 := freePort(t)
 	p2 := freePort(t)
-	r := New("", src)
+	r := New(src)
 	defer r.Close()
 	cfg := RelayConfig{ListenHost: "127.0.0.1", ServerAddr: h.gwAddr, ServerCAFile: h.caPath, Tunnels: []Tunnel{
 		{Service: "s1", Routes: []TunnelRoute{{Channel: ":" + gwPortOf(h.gwAddr), Local: ":" + fmt.Sprintf("%d", p1)}}, CertID: h.clientPairPath, Enabled: true},
@@ -256,7 +256,7 @@ func TestRelay_BadUpstream(t *testing.T) {
 	src := h.buildSrc(t)
 
 	localPort := freePort(t)
-	r := New("", src)
+	r := New(src)
 	defer r.Close()
 	cfg := RelayConfig{ListenHost: "127.0.0.1", ServerAddr: "127.0.0.1:1", ServerCAFile: h.caPath, Tunnels: []Tunnel{
 		{Service: "s1", Routes: []TunnelRoute{{Channel: ":1", Local: ":" + fmt.Sprintf("%d", localPort)}}, CertID: h.clientPairPath, Enabled: true},
@@ -291,7 +291,7 @@ func TestRelay_Reload(t *testing.T) {
 
 	p1 := freePort(t)
 	p2 := freePort(t)
-	r := New("", src)
+	r := New(src)
 	defer r.Close()
 	cfg := RelayConfig{ListenHost: "127.0.0.1", ServerAddr: h.gwAddr, ServerCAFile: h.caPath, Tunnels: []Tunnel{
 		{Service: "s1", Routes: []TunnelRoute{{Channel: ":" + gwPortOf(h.gwAddr), Local: ":" + fmt.Sprintf("%d", p1)}}, CertID: h.clientPairPath, Enabled: true},
@@ -333,7 +333,7 @@ func TestRelay_StartTwice(t *testing.T) {
 	h := newHarness(t)
 	defer h.close()
 	src := h.buildSrc(t)
-	r := New("", src)
+	r := New(src)
 	defer r.Close()
 	cfg := RelayConfig{ListenHost: "127.0.0.1"}
 	if err := r.Start(cfg); err != nil {
@@ -352,7 +352,7 @@ func TestRelay_StopThenStart(t *testing.T) {
 	src := h.buildSrc(t)
 
 	localPort := freePort(t)
-	r := New("", src)
+	r := New(src)
 	defer r.Close()
 	cfg := RelayConfig{ListenHost: "127.0.0.1", ServerAddr: h.gwAddr, ServerCAFile: h.caPath, Tunnels: []Tunnel{
 		{Service: "s1", Routes: []TunnelRoute{{Channel: ":" + gwPortOf(h.gwAddr), Local: ":" + fmt.Sprintf("%d", localPort)}}, CertID: h.clientPairPath, Enabled: true},
@@ -403,7 +403,7 @@ func TestApplyServerCARejectsBad(t *testing.T) {
 	h := newHarness(t)
 	defer h.close()
 	src := h.buildSrc(t)
-	r := New("", src)
+	r := New(src)
 	defer r.Close()
 	// 文件不存在
 	if err := r.SetServerCA("/nonexistent/ca.crt"); err == nil {
@@ -436,7 +436,7 @@ func TestLoadCertWithPasswordFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := New("", noPwdSource{src})
+	r := New(noPwdSource{src})
 	defer r.Close()
 	// 无密码证书: 回退到 loadCert(自锁), 不持外层锁 → 不死锁
 	cert, err := r.LoadCertWithPassword(h.clientPairPath, "")
@@ -453,7 +453,7 @@ func TestReloadBadTunnelDoesNotBlockOthers(t *testing.T) {
 	h := newHarness(t)
 	defer h.close()
 	src := h.buildSrc(t)
-	r := New("", src)
+	r := New(src)
 	defer r.Close()
 	port1, port2 := freePort(t), freePort(t)
 	cfg := RelayConfig{
@@ -501,7 +501,7 @@ func TestReloadCertSwitch(t *testing.T) {
 	h := newHarness(t)
 	defer h.close()
 	src := h.buildSrc(t)
-	r := New("", src)
+	r := New(src)
 	defer r.Close()
 	localPort := freePort(t)
 	cfg := RelayConfig{
@@ -550,7 +550,7 @@ func TestReloadCertIDSwitch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := New("", src2)
+	r := New(src2)
 	defer r.Close()
 	localPort := freePort(t)
 	cfg := RelayConfig{

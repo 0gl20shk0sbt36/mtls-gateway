@@ -2,8 +2,10 @@ package certsource
 
 import (
 	"crypto"
+	"crypto/sha1"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/pem"
 	"fmt"
 	"os"
@@ -12,6 +14,16 @@ import (
 
 	pkcs12 "software.sslmate.com/src/go-pkcs12"
 )
+
+// certThumbprint 返回证书 SHA-1 指纹 (大写, 冒号分隔) — Windows 标准 thumbprint(平台无关)
+func certThumbprint(cert *x509.Certificate) string {
+	sum := sha1.Sum(cert.Raw)
+	parts := make([]string, len(sum))
+	for i, b := range sum {
+		parts[i] = strings.ToUpper(hex.EncodeToString([]byte{b}))
+	}
+	return strings.Join(parts, ":")
+}
 
 // tlsFromPEM 从 PEM 字节构造 tls.Certificate.
 // pemBytes 应含 CERTIFICATE 块 (可含链), 以及 PRIVATE KEY 或 RSA PRIVATE KEY 块.

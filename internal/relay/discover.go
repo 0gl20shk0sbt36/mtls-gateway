@@ -93,7 +93,7 @@ func (r *Relay) DiscoverWithCert(cert tls.Certificate) ([]ServiceInfo, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 限 1MB: 防误配/MITM 内存耗尽
 		return nil, fmt.Errorf("relay: /info HTTP %d: %s", resp.StatusCode, firstLine(string(b)))
 	}
 	var out DiscoverResult

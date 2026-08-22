@@ -1,11 +1,10 @@
-// mtls-gw: mTLS 反向代理网关 + 证书管理 (v4)
+// mtls-gw: mTLS 反向代理网关(纯数据面: 认证 + 路由 + 转发; 管理功能在独立 mtls-admin 进程)
 //
 // 模型: mappings(通道) + services(服务注册) + roles(证书角色) 三表联动。
 // 服务端参数只有一个: -config <配置文件> (TOML)。
 package main
 
 import (
-	"bufio"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -31,6 +30,7 @@ import (
 	"mtls-gateway/internal/eventlog"
 	"mtls-gateway/internal/i18n"
 	"mtls-gateway/internal/pathutil"
+	"mtls-gateway/internal/permissioncheck"
 	"mtls-gateway/internal/proxy"
 )
 
@@ -61,11 +61,10 @@ func main() {
 		log.Fatalf("mkdir db dir: %v", err)
 	}
 
-	// 启动前权限预检(Linux): 配置引用的全部文件/目录权限不足 → 拒绝启动。
-	// 防 2026-08-21 22:18 类事件(配置目录不可写导致落盘/备份静默失败、内存与磁盘分叉)带病运行。
+	// 启动前权限预检(Linux): 网关读路径(CA/服务器证书/私钥/DB/日志)权限不足 → 拒绝启动。
+	// 防 2026-08-21 22:18 类事件带病运行; 密钥文件要求 mode&0o077==0(禁 world 可读)。
 	// 失败时 stderr 必有输出; 尝试写事件日志(日志无权限则跳过)。
-	if fails := checkStartupPaths(cfg); len(fails) > 0 {
-		reportStartupFailures(cfg, fails)
+	if permissioncheck.Report(permissioncheck.Check(permissioncheck.GatewayNeeds(cfg)), cfg.LogFile) {
 		os.Exit(1)
 	}
 
@@ -183,70 +182,72 @@ func main() {
 	}
 
 	// ===== /info 服务发现 (已登记设备证书即可; 匿名返回 CA 供引导) =====
+	// ===== /admin/reload (管理进程调用, 全量热重载) =====
+	// 网关管理面仅剩 reload(其余管理功能在独立 mtls-admin 进程, 绑 admin_listen);
+	// 网关用独立 reload_listen 端口, 未配置时与 info 同端口(/info + /admin/reload 路径区分)。
 	infoListen := config.ResolveListen(bindHost, cfg.InfoListen)
-	admListen := config.ResolveListen(bindHost, cfg.AdminListen)
-	merged := infoListen != "" && admListen != "" && infoListen == admListen // 同端口合并: /info + /admin 路径区分
-	if infoListen != "" && !merged {
+	reloadListen := config.ResolveListen(bindHost, cfg.ReloadListen)
+	if reloadListen == "" {
+		reloadListen = infoListen // 默认与 /info 合并(兼容旧 info+admin 合并配置形态)
+	}
+	merged := infoListen != "" && reloadListen != "" && infoListen == reloadListen
+
+	if merged {
+		// 合并端口: /info(匿名引导) + /admin/reload(admin 证书) 同端口路径区分
+		mm := http.NewServeMux()
+		mm.HandleFunc("/info", infoHandler(gateway, cm, accLog).ServeHTTP)
+		mm.Handle("/admin/", adminHandler(gateway, cm, evLog)) // 尾部斜杠=前缀匹配(/admin/*)
 		go func() {
-			ln, err := net.Listen("tcp", infoListen)
+			ln, err := net.Listen("tcp", reloadListen)
 			if err != nil {
-				log.Fatalf("info listen %s: %v", infoListen, err)
+				log.Fatalf("merged listen: %v", err)
 			}
-			log.Printf("mtls /info listening on %s (registered cert only)", infoListen)
-			infoSrv := &http.Server{
-				Handler:           infoHandler(gateway, cm, accLog),
+			log.Printf("mtls info+reload listening on %s (merged: /info anonymous, /admin/reload mTLS)", reloadListen)
+			admSrv := &http.Server{
+				Handler:           mm,
 				ReadHeaderTimeout: 10 * time.Second,
 				ReadTimeout:       30 * time.Second,
 				WriteTimeout:      gwWriteTimeout,
 				IdleTimeout:       gwIdleTimeout,
 			}
 			serversMu.Lock()
-			servers = append(servers, infoSrv)
+			servers = append(servers, admSrv)
 			serversMu.Unlock()
-			if err := infoSrv.Serve(tlsListener(ln, gateway.ServerTLSConfig())); err != nil && err != http.ErrServerClosed {
-				log.Fatalf("info serve: %v", err)
+			if err := admSrv.Serve(tlsListener(ln, gateway.ServerTLSConfig())); err != nil && err != http.ErrServerClosed {
+				log.Fatalf("merged serve: %v", err)
 			}
 		}()
-	}
-
-	// 注: 管理功能(签发/吊销/配置 CRUD/Unix socket)已拆分至独立 mtls-admin 进程(管理服务拆分)。
-	// 网关仅保留数据面: 认证 + 路由 + 转发 + /info 服务发现 + /admin/reload(供管理进程调用)。
-
-	// ===== 管理 API TCP (远程 Web, 需 admin_role 证书) =====
-	if admListen != "" {
-		if merged {
-			// 合并端口: /info(匿名引导) + /admin/*(admin 证书) 同端口路径区分
-			mm := http.NewServeMux()
-			mm.HandleFunc("/info", infoHandler(gateway, cm, accLog).ServeHTTP)
-			mm.Handle("/admin/", adminHandler(gateway, cm, evLog)) // 尾部斜杠=前缀匹配(/admin/*)
+	} else {
+		if infoListen != "" {
 			go func() {
-				ln, err := net.Listen("tcp", admListen)
+				ln, err := net.Listen("tcp", infoListen)
 				if err != nil {
-					log.Fatalf("merged listen: %v", err)
+					log.Fatalf("info listen %s: %v", infoListen, err)
 				}
-				log.Printf("mtls info+admin listening on %s (merged: /info anonymous, /admin mTLS)", admListen)
-				admSrv := &http.Server{
-					Handler:           mm,
+				log.Printf("mtls /info listening on %s (registered cert only)", infoListen)
+				infoSrv := &http.Server{
+					Handler:           infoHandler(gateway, cm, accLog),
 					ReadHeaderTimeout: 10 * time.Second,
 					ReadTimeout:       30 * time.Second,
 					WriteTimeout:      gwWriteTimeout,
 					IdleTimeout:       gwIdleTimeout,
 				}
 				serversMu.Lock()
-				servers = append(servers, admSrv)
+				servers = append(servers, infoSrv)
 				serversMu.Unlock()
-				if err := admSrv.Serve(tlsListener(ln, gateway.ServerTLSConfig())); err != nil && err != http.ErrServerClosed {
-					log.Fatalf("merged serve: %v", err)
+				if err := infoSrv.Serve(tlsListener(ln, gateway.ServerTLSConfig())); err != nil && err != http.ErrServerClosed {
+					log.Fatalf("info serve: %v", err)
 				}
 			}()
-		} else {
+		}
+		if reloadListen != "" {
 			go func() {
-				ln, err := net.Listen("tcp", admListen)
+				ln, err := net.Listen("tcp", reloadListen)
 				if err != nil {
-					log.Fatalf("admin listen: %v", err)
+					log.Fatalf("reload listen %s: %v", reloadListen, err)
 				}
-				log.Printf("admin api listening on %s (mTLS, admin cert required)", admListen)
-				admSrv := &http.Server{
+				log.Printf("mtls /admin/reload listening on %s (mTLS, admin cert required)", reloadListen)
+				reloadSrv := &http.Server{
 					Handler:           adminHandler(gateway, cm, evLog),
 					ReadHeaderTimeout: 10 * time.Second,
 					ReadTimeout:       30 * time.Second,
@@ -254,10 +255,10 @@ func main() {
 					IdleTimeout:       gwIdleTimeout,
 				}
 				serversMu.Lock()
-				servers = append(servers, admSrv)
+				servers = append(servers, reloadSrv)
 				serversMu.Unlock()
-				if err := admSrv.Serve(tlsListener(ln, gateway.ServerTLSConfig())); err != nil && err != http.ErrServerClosed {
-					log.Fatalf("admin serve: %v", err)
+				if err := reloadSrv.Serve(tlsListener(ln, gateway.ServerTLSConfig())); err != nil && err != http.ErrServerClosed {
+					log.Fatalf("reload serve: %v", err)
 				}
 			}()
 		}
@@ -268,6 +269,9 @@ func main() {
 	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
 	<-quit
 	log.Println("shutting down...")
+	if evLog != nil {
+		evLog.Write(eventlog.Event{Type: "stop", Msg: "mtls-gw 停止"})
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	serversMu.Lock()
@@ -278,86 +282,31 @@ func main() {
 	}
 }
 
-// statusWriter 包装 ResponseWriter: 记录状态码与响应字节数(访问日志用)
-// 实现 Hijacker/Flusher/ReaderFrom: 透传底层能力, 否则 WebSocket 升级(101)与流式响应被破坏
-type statusWriter struct {
-	http.ResponseWriter
-	status int
-	bytes  int64
-}
-
-func (w *statusWriter) WriteHeader(c int) {
-	if w.status != 0 {
-		return // 幂等: 只记首次(与 eventlog.StatusWriter 一致)
-	}
-	w.status = c
-	w.ResponseWriter.WriteHeader(c)
-}
-
-func (w *statusWriter) Write(b []byte) (int, error) {
-	n, err := w.ResponseWriter.Write(b)
-	w.bytes += int64(n)
-	if w.status == 0 {
-		w.status = http.StatusOK
-	}
-	return n, err
-}
-
-// Hijack 透传(WebSocket/升级必需)
-func (w *statusWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	hj, ok := w.ResponseWriter.(http.Hijacker)
-	if !ok {
-		return nil, nil, fmt.Errorf("underlying ResponseWriter does not support hijacking")
-	}
-	if w.status == 0 {
-		w.status = http.StatusSwitchingProtocols // 升级连接: 访问日志记 101(与 eventlog 侧一致)
-	}
-	return hj.Hijack()
-}
-
-// Flush 透传(流式响应)
-func (w *statusWriter) Flush() {
-	if f, ok := w.ResponseWriter.(http.Flusher); ok {
-		f.Flush()
-	}
-}
-
-// ReadFrom 透传(io.Copy 优化)
-func (w *statusWriter) ReadFrom(r io.Reader) (int64, error) {
-	if rf, ok := w.ResponseWriter.(io.ReaderFrom); ok {
-		n, err := rf.ReadFrom(r)
-		w.bytes += n
-		if w.status == 0 {
-			w.status = http.StatusOK
-		}
-		return n, err
-	}
-	n, err := io.Copy(struct{ io.Writer }{w}, r)
-	return n, err
-}
-
 // accessEvent 组装访问事件(元数据, 不记数据内容)
-func accessEvent(rec *db.CertRecord, channel, method, path string, status int, in, out int64) eventlog.Event {
-	ev := eventlog.Event{
-		Type:     "access",
-		Cert:     rec.Name,
-		Serial:   rec.Serial,
-		Role:     strings.Join(rec.Purposes, ","),
-		Channel:  channel,
-		Method:   method,
-		Path:     path,
-		Status:   status,
-		BytesIn:  in,
-		BytesOut: out,
+// accessEvent 组装访问事件(元数据, 不记录数据内容; 含来源 IP 与耗时供取证/排查)
+func accessEvent(rec *db.CertRecord, channel, method, path string, status int, in, out int64, remote string, dur time.Duration) eventlog.Event {
+	return eventlog.Event{
+		Type:       "access",
+		Cert:       rec.Name,
+		Serial:     rec.Serial,
+		Role:       strings.Join(rec.Purposes, ","),
+		Channel:    channel,
+		Method:     method,
+		Path:       path,
+		Status:     status,
+		BytesIn:    in,
+		BytesOut:   out,
+		Remote:     remote,
+		DurationMS: dur.Milliseconds(),
 	}
-	return ev
 }
 
 // gatewayHandler 网关主 handler: 认证 → 按路径选映射(最长匹配) → 按引用服务的 roles 授权 → 转发
 // 路由器每次从 ConfigManager 取(支持热重载); 访问/拒绝事件写 accLog
 func gatewayHandler(gw *auth.Gateway, cm *configmgr.ConfigManager, port string, acc *eventlog.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		sw := &statusWriter{ResponseWriter: w}
+		start := time.Now()
+		sw := eventlog.NewStatusWriter(w)
 
 		// 匹配前规范化请求路径: 防 /admin/../secret 命中 /admin 映射后逃逸 target 前缀
 		// (dot-segment 只清替换结果不够 — 匹配用的是原始路径)
@@ -379,11 +328,11 @@ func gatewayHandler(gw *auth.Gateway, cm *configmgr.ConfigManager, port string, 
 			rt.ApplyHeaders(r, proxy.HeaderVars{RemoteIP: remote}) // 默认防伪造基线 + mapping.headers(证书变量为空)
 			router.Serve(rt, sw, r)
 			if acc != nil {
-				code := sw.status
+				code := sw.Status()
 				if code == 0 {
 					code = http.StatusOK
 				}
-				acc.Write(accessEvent(&db.CertRecord{Name: "(anonymous)"}, rt.Listen(), r.Method, r.URL.Path, code, r.ContentLength, sw.bytes))
+				acc.Write(accessEvent(&db.CertRecord{Name: "(anonymous)"}, rt.Listen(), r.Method, r.URL.Path, code, r.ContentLength, sw.Bytes(), remote, time.Since(start)))
 			}
 			return
 		}
@@ -416,11 +365,11 @@ func gatewayHandler(gw *auth.Gateway, cm *configmgr.ConfigManager, port string, 
 		})
 		router.Serve(rt, sw, r)
 		if acc != nil {
-			code := sw.status
+			code := sw.Status()
 			if code == 0 {
 				code = http.StatusOK // 未写头时记 200(Hijack 已记 101)
 			}
-			acc.Write(accessEvent(rec, rt.Listen(), r.Method, r.URL.Path, code, r.ContentLength, sw.bytes))
+			acc.Write(accessEvent(rec, rt.Listen(), r.Method, r.URL.Path, code, r.ContentLength, sw.Bytes(), remote, time.Since(start)))
 		}
 	})
 }
@@ -429,7 +378,9 @@ func gatewayHandler(gw *auth.Gateway, cm *configmgr.ConfigManager, port string, 
 // infoHandler /info: 匿名引导(null)或已登记证书; 无证书时返回 CA(供客户端过滤证书源), 有证书时附带可访问服务列表
 func infoHandler(gw *auth.Gateway, cm *configmgr.ConfigManager, acc *eventlog.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		sw := &statusWriter{ResponseWriter: w}
+		start := time.Now()
+		sw := eventlog.NewStatusWriter(w)
+		remote := auth.RemoteIP(r)
 		rec, err := gw.Authorize(r)
 		if err != nil {
 			// 有证书但认证失败(吊销/未登记) → 403; 仅真匿名(无证书)才返回 CA 引导
@@ -453,11 +404,11 @@ func infoHandler(gw *auth.Gateway, cm *configmgr.ConfigManager, acc *eventlog.Lo
 			"services": services,
 		})
 		if acc != nil {
-			code := sw.status
+			code := sw.Status()
 			if code == 0 {
 				code = http.StatusOK
 			}
-			acc.Write(accessEvent(&db.CertRecord{Name: name}, "/info", r.Method, r.URL.Path, code, r.ContentLength, sw.bytes))
+			acc.Write(accessEvent(&db.CertRecord{Name: name}, "/info", r.Method, r.URL.Path, code, r.ContentLength, sw.Bytes(), remote, time.Since(start)))
 		}
 	})
 }
@@ -502,6 +453,7 @@ func adminHandler(gw *auth.Gateway, cm *configmgr.ConfigManager, ev *eventlog.Lo
 	// 先 DB 后配置, 各自原子替换; 任一失败返回错误(成功侧已生效, 失败侧保持旧副本, 可重试)。
 	// admin 证书保护(外层统一 Authorize + IsAdmin)。
 	mux.HandleFunc("POST /admin/reload", func(w http.ResponseWriter, r *http.Request) {
+		oldPorts := cm.Router().Listens() // reload 前(当前实际监听的端口)
 		if err := gw.Reload(); err != nil {
 			gwErr(w, r, fmt.Errorf("db reload: %w", err))
 			return
@@ -511,16 +463,39 @@ func adminHandler(gw *auth.Gateway, cm *configmgr.ConfigManager, ev *eventlog.Lo
 			return
 		}
 		cfgChanged("热重载: DB + 配置(管理进程触发)")
+		// 热重载不动态起/停监听: 新增端口需重启网关才生效 — 显式告警(避免静默"路由存在但不可达")
+		existing := map[string]bool{}
+		for _, p := range oldPorts {
+			existing[p] = true
+		}
+		var added []string
+		for _, p := range cm.Router().Listens() {
+			if !existing[p] {
+				added = append(added, p)
+			}
+		}
+		if len(added) > 0 {
+			msg := fmt.Sprintf("热重载: 新增端口 %v 需重启网关才生效(热重载不动态起监听)", added)
+			log.Printf("%s", msg)
+			cfgChanged(msg)
+		}
 		writeJSON(w, map[string]any{"ok": true})
 	})
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rec, err := gw.Authorize(r)
 		if err != nil {
+			// 管理面认证失败留痕(业务面有 access log, 管理面不能是盲区)
+			if ev != nil {
+				ev.Write(eventlog.Event{Type: "deny", Channel: "/admin/reload", Method: r.Method, Path: r.URL.Path, Status: 403, Msg: "admin auth failed"})
+			}
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
 		if !gw.IsAdmin(rec) {
+			if ev != nil {
+				ev.Write(eventlog.Event{Type: "deny", Cert: rec.Name, Serial: rec.Serial, Channel: "/admin/reload", Method: r.Method, Path: r.URL.Path, Status: 403, Msg: "admin cert required"})
+			}
 			http.Error(w, "admin cert required", http.StatusForbidden)
 			return
 		}
@@ -538,15 +513,12 @@ func tlsListener(ln net.Listener, tlsCfg *tls.Config) net.Listener {
 	return tls.NewListener(ln, tlsCfg)
 }
 
-// loadConfig 启动时加载配置; 解析/语义错误拒绝启动(静默用默认值可能带错安全配置)
+// loadConfig 启动时加载配置; 解析/语义错误或文件缺失一律拒绝启动
+// (静默用默认值可能带错安全配置, 且掩盖 systemd 配置路径笔误 — 与 mtls-admin 一致)。
 func loadConfig(path string) config.Config {
 	cfg, err := config.Parse(path)
 	if err != nil {
-		if os.IsNotExist(err) {
-			log.Printf("config %s 不存在 (使用默认值)", path)
-			return config.DefaultConfig()
-		}
-		log.Fatalf("config %s: %v (配置文件错误, 拒绝启动)", path, err)
+		log.Fatalf("config %s: %v (配置文件错误/缺失, 拒绝启动)", path, err)
 	}
 	return cfg
 }

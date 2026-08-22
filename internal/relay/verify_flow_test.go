@@ -132,7 +132,7 @@ func TestManagerVerify_FullFlow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := New("", src)
+	r := New(src)
 	r.SetServerAddr(gwAddr)
 	_ = r.SetServerCA(caPath)
 	cfgPath := filepath.Join(dir, "relay.json")
@@ -159,7 +159,7 @@ func TestManagerVerify_AdminProbeSilent(t *testing.T) {
 	svcs := []map[string]any{{"name": "svc-a", "channels": []any{map[string]any{"listen": ":9601", "target": "http://x"}}}}
 	gwAddr, caPath, clientPair := startVerifyGW(t, dir, svcs)
 	src, _ := certsource.OpenFile(clientPair)
-	r := New("", src)
+	r := New(src)
 	r.SetServerAddr(gwAddr)
 	_ = r.SetServerCA(caPath)
 	cfgPath := filepath.Join(dir, "relay.json")
@@ -184,7 +184,7 @@ func TestManagerAdminBridgeIssueHTTP(t *testing.T) {
 	svcs := []map[string]any{{"name": "svc-a", "channels": []any{map[string]any{"listen": ":9601", "target": "http://x"}}}}
 	gwAddr, caPath, clientPair := startVerifyGW(t, dir, svcs)
 	src, _ := certsource.OpenFile(clientPair)
-	r := New("", src)
+	r := New(src)
 	r.SetServerAddr(gwAddr)
 	r.SetServerCA(caPath)
 	cfgPath := filepath.Join(dir, "relay.json")
@@ -223,7 +223,7 @@ func TestDiscoverDefaultPath(t *testing.T) {
 	svcs := []map[string]any{{"name": "svc-a", "channels": []any{map[string]any{"listen": ":9601", "target": "http://x"}}}}
 	gwAddr, caPath, clientPair := startVerifyGW(t, dir, svcs)
 	src, _ := certsource.OpenFile(clientPair)
-	r := New("", src)
+	r := New(src)
 	r.SetServerAddr(gwAddr)
 	r.SetServerCA(caPath)
 	svc, err := r.Discover() // 默认路径: 无证书参数 → loadFirstCert
@@ -241,7 +241,7 @@ func TestAdminClientConfigCRUD(t *testing.T) {
 	svcs := []map[string]any{{"name": "svc-a", "channels": []any{map[string]any{"listen": ":9601", "target": "http://x"}}}}
 	gwAddr, caPath, clientPair := startVerifyGW(t, dir, svcs)
 	src, _ := certsource.OpenFile(clientPair)
-	r := New("", src)
+	r := New(src)
 	r.SetServerAddr(gwAddr)
 	r.SetServerCA(caPath)
 	cfgPath := filepath.Join(dir, "relay.json")
@@ -281,7 +281,7 @@ func TestAdminClientListAndService(t *testing.T) {
 	svcs := []map[string]any{{"name": "svc-a", "channels": []any{map[string]any{"listen": ":9601", "target": "http://x"}}}}
 	gwAddr, caPath, clientPair := startVerifyGW(t, dir, svcs)
 	src, _ := certsource.OpenFile(clientPair)
-	r := New("", src)
+	r := New(src)
 	r.SetServerAddr(gwAddr)
 	r.SetServerCA(caPath)
 	cfgPath := filepath.Join(dir, "relay.json")
@@ -309,7 +309,7 @@ func TestAdminClientService(t *testing.T) {
 	svcs := []map[string]any{{"name": "svc-a", "channels": []any{map[string]any{"listen": ":9601", "target": "http://x"}}}}
 	gwAddr, caPath, clientPair := startVerifyGW(t, dir, svcs)
 	src, _ := certsource.OpenFile(clientPair)
-	r := New("", src)
+	r := New(src)
 	r.SetServerAddr(gwAddr)
 	r.SetServerCA(caPath)
 	cfgPath := filepath.Join(dir, "relay.json")
