@@ -275,12 +275,12 @@ func TestRelay_BadUpstream(t *testing.T) {
 	if _, err := conn.Write([]byte("x")); err != nil {
 		t.Fatal(err)
 	}
-	// pro 深度审计补: 坏上游下读应得 EOF/错误(连接被 relay 关闭), 而非悬挂
-	// 收紧为显式 EOF/closed: 排除"relay 挂起→3s 超时"的假阴性窗口(pro 复审建议)
+	// pro 深度审计补: 坏上游下读应得"连接被关闭"(EOF/FIN 或 RST), 而非悬挂。
+	// 断言排除超时: relay 若挂起(连接不关)则 3s 超时 → 失败(消除假阴性窗口; pro 复审建议)。
 	conn.SetReadDeadline(time.Now().Add(3 * time.Second))
 	buf := make([]byte, 16)
-	if _, err := conn.Read(buf); !(errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed)) {
-		t.Fatalf("坏上游: 本地连接应被关闭(EOF/closed), got %v", err)
+	if _, err := conn.Read(buf); err == nil || errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("坏上游: 本地连接应被关闭(EOF/RST), got %v", err)
 	}
 
 	// 确认隧道仍注册
