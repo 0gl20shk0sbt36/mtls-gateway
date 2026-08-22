@@ -48,3 +48,4 @@ node_modules/
 scripts/cross-system/.env
 /frp/
 /mtls-admin
+/.ghxdg/
