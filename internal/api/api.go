@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"mtls-gateway/internal/db"
+	"mtls-gateway/internal/proxy"
 )
 
 // CertTemplate 证书模板配置 (来自配置文件, 部署级)
@@ -548,16 +549,10 @@ func (m *Manager) HTTPHandler() http.Handler {
 }
 
 // 工具函数
+// validName 设备名/证书名合法性: 与角色名校验同字符集(委托 proxy.ValidRoleName),
+// 附加 64 长度上限(防 ENAMETOOLONG: 输出目录/CN)。统一消除规则微差(P2 债)。
 func validName(s string) bool {
-	if len(s) == 0 || len(s) > 64 { // 长度上限: 防 ENAMETOOLONG(输出目录/CN)
-		return false
-	}
-	for _, c := range s {
-		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_') {
-			return false
-		}
-	}
-	return true
+	return proxy.ValidRoleName(s) && len(s) <= 64
 }
 
 // newClientKey 按 key_type/key_bits 生成客户端密钥 (rsa 2048/3072/4096; ecdsa 256/384/521)

@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"mtls-gateway/internal/atomicfile"
 	"mtls-gateway/internal/logging"
 )
 
@@ -151,21 +152,9 @@ func SaveConfig(path string, cfg RelayConfig) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("mkdir config dir: %w", err)
 	}
-	// 原子替换: CreateTemp 真唯一临时文件 + rename(防并发写同一 tmp 踩踏; 避免崩溃留半截 JSON)
-	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*")
-	if err != nil {
-		return fmt.Errorf("create temp config: %w", err)
-	}
-	defer os.Remove(tmp.Name())                // rename 失败/异常时清理残留
-	if _, err := tmp.Write(data); err != nil { // 用句柄写(避免二次打开 + fd 泄漏)
-		tmp.Close()
-		return fmt.Errorf("write config %s: %w", path, err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close temp config: %w", err)
-	}
-	if err := os.Rename(tmp.Name(), path); err != nil {
-		return fmt.Errorf("replace config %s: %w", path, err)
+	// 原子替换(CreateTemp 唯一临时文件 + rename): 抽 internal/atomicfile 与 configmgr.persist 共用
+	if err := atomicfile.WriteFile(path, data); err != nil {
+		return fmt.Errorf("save config %s: %w", path, err)
 	}
 	return nil
 }

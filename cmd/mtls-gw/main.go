@@ -50,6 +50,28 @@ const (
 func main() {
 	var servers []*http.Server // 优雅退出时关闭
 	var serversMu sync.Mutex
+	var gateway *auth.Gateway // 供下方 startServer 闭包使用(在 auth.New 处赋值)
+	// startServer 起一个 mTLS http.Server(统一超时 + 注册优雅退出 + Serve; 失败 Fatal)。
+	// 收敛 4 段 http.Server 构造复制(P2 债); 监听(listen)由调用方先建立(不同端口/地址来源)。
+	startServer := func(ln net.Listener, h http.Handler, name, detail string) {
+		srv := &http.Server{
+			Handler:           h,
+			ReadHeaderTimeout: 10 * time.Second,
+			ReadTimeout:       30 * time.Second,
+			// WriteTimeout=0: 流式响应(SSE/LLM token 流)可能持续数分钟, 60s 会在生成中途
+			// 强制切断(表现: 消息超时一次, 重发命中缓存即好); 单用户内网挂连接风险可接受,
+			// 反代侧 ResponseHeaderTimeout 仍保护响应头
+			WriteTimeout: gwWriteTimeout,
+			IdleTimeout:  gwIdleTimeout,
+		}
+		serversMu.Lock()
+		servers = append(servers, srv)
+		serversMu.Unlock()
+		log.Printf("mtls %s listening on %s (%s)", name, ln.Addr(), detail)
+		if err := srv.Serve(tlsListener(ln, gateway.ServerTLSConfig())); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("%s serve: %v", name, err)
+		}
+	}
 	cfgPath = flag.String("config", "/etc/mtls-gw/config.toml", "配置文件路径")
 	flag.Parse()
 
@@ -102,11 +124,10 @@ func main() {
 
 	// 认证器 (requireIPBind/admin_role/tls_min_version 来自配置)
 	requireIPBind := cfg.RequireIPBindResolved()
-	gateway, err := auth.New(store, cfg.CA, cfg.ServerCert, cfg.ServerKey, requireIPBind, cfg.AdminRole, cfg.TLSMinVersion)
+	gateway, err = auth.New(store, cfg.CA, cfg.ServerCert, cfg.ServerKey, requireIPBind, cfg.AdminRole, cfg.TLSMinVersion)
 	if err != nil {
 		log.Fatalf("auth: %v", err)
 	}
-
 	// 映射 + 服务注册 → 路由器 (listen 判重 / 通道引用校验 / 角色声明校验在此报错)
 	router, err := proxy.NewRouter(cfg.Mappings, cfg.Services, cfg.Roles)
 	if err != nil {
@@ -168,23 +189,7 @@ func main() {
 			if err != nil {
 				log.Fatalf("listen %s: %v", addr, err)
 			}
-			log.Printf("mtls gateway listening on %s (mTLS)", addr)
-			srv := &http.Server{
-				Handler:           gatewayHandler(gateway, cm, port, accLog),
-				ReadHeaderTimeout: 10 * time.Second,
-				ReadTimeout:       30 * time.Second,
-				// WriteTimeout: 流式响应(SSE/LLM token 流)可能持续数分钟,
-				// 60s 会在 LLM 生成中途强制切断连接(表现: 消息超时一次, 重发命中缓存即好)。
-				// 禁用写超时(单用户内网环境, 挂连接风险可接受); 反代侧 ResponseHeaderTimeout 仍保护响应头
-				WriteTimeout: gwWriteTimeout,
-				IdleTimeout:  gwIdleTimeout,
-			}
-			serversMu.Lock()
-			servers = append(servers, srv)
-			serversMu.Unlock()
-			if err := srv.Serve(tlsListener(ln, gateway.ServerTLSConfig())); err != nil && err != http.ErrServerClosed {
-				log.Fatalf("gateway serve %s: %v", addr, err)
-			}
+			startServer(ln, gatewayHandler(gateway, cm, port, accLog), "gateway", "mTLS")
 		}()
 	}
 
@@ -209,20 +214,7 @@ func main() {
 			if err != nil {
 				log.Fatalf("merged listen: %v", err)
 			}
-			log.Printf("mtls info+reload listening on %s (merged: /info anonymous, /admin/reload mTLS)", reloadListen)
-			admSrv := &http.Server{
-				Handler:           mm,
-				ReadHeaderTimeout: 10 * time.Second,
-				ReadTimeout:       30 * time.Second,
-				WriteTimeout:      gwWriteTimeout,
-				IdleTimeout:       gwIdleTimeout,
-			}
-			serversMu.Lock()
-			servers = append(servers, admSrv)
-			serversMu.Unlock()
-			if err := admSrv.Serve(tlsListener(ln, gateway.ServerTLSConfig())); err != nil && err != http.ErrServerClosed {
-				log.Fatalf("merged serve: %v", err)
-			}
+			startServer(ln, mm, "info+reload", "merged: /info anonymous, /admin/reload mTLS")
 		}()
 	} else {
 		if infoListen != "" {
@@ -231,20 +223,7 @@ func main() {
 				if err != nil {
 					log.Fatalf("info listen %s: %v", infoListen, err)
 				}
-				log.Printf("mtls /info listening on %s (registered cert only)", infoListen)
-				infoSrv := &http.Server{
-					Handler:           infoHandler(gateway, cm, accLog),
-					ReadHeaderTimeout: 10 * time.Second,
-					ReadTimeout:       30 * time.Second,
-					WriteTimeout:      gwWriteTimeout,
-					IdleTimeout:       gwIdleTimeout,
-				}
-				serversMu.Lock()
-				servers = append(servers, infoSrv)
-				serversMu.Unlock()
-				if err := infoSrv.Serve(tlsListener(ln, gateway.ServerTLSConfig())); err != nil && err != http.ErrServerClosed {
-					log.Fatalf("info serve: %v", err)
-				}
+				startServer(ln, infoHandler(gateway, cm, accLog), "/info", "registered cert only")
 			}()
 		}
 		if reloadListen != "" {
@@ -253,20 +232,7 @@ func main() {
 				if err != nil {
 					log.Fatalf("reload listen %s: %v", reloadListen, err)
 				}
-				log.Printf("mtls /admin/reload listening on %s (mTLS, admin cert required)", reloadListen)
-				reloadSrv := &http.Server{
-					Handler:           adminHandler(gateway, cm, evLog),
-					ReadHeaderTimeout: 10 * time.Second,
-					ReadTimeout:       30 * time.Second,
-					WriteTimeout:      gwWriteTimeout,
-					IdleTimeout:       gwIdleTimeout,
-				}
-				serversMu.Lock()
-				servers = append(servers, reloadSrv)
-				serversMu.Unlock()
-				if err := reloadSrv.Serve(tlsListener(ln, gateway.ServerTLSConfig())); err != nil && err != http.ErrServerClosed {
-					log.Fatalf("reload serve: %v", err)
-				}
+				startServer(ln, adminHandler(gateway, cm, evLog), "/admin/reload", "mTLS, admin cert required")
 			}()
 		}
 	}

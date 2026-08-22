@@ -220,8 +220,10 @@ async function loadTunnels() {
   try {
     const sts = await api("/api/status");
     const cfg = await api("/api/config");
-    const byId = {};
-    for (const s of sts) byId[s.id] = s;
+    // 按 status 自身字段(service/channel/local)建索引, 不再拼 Go 内部复合 key
+    // (service@channel@local) — 解耦跨端 key 格式(P2 债: 前端不该知道 Go 的 key 约定)
+    const byRoute = {};
+    for (const s of sts) byRoute[s.service + "|" + s.channel + "|" + s.local] = s;
     const body = $("tunnelBody");
     body.innerHTML = "";
     const tunnels = (cfg.tunnels || []).slice().sort((a, b) => (a.service || "").localeCompare(b.service || ""));
@@ -234,8 +236,7 @@ async function loadTunnels() {
       // 聚合该服务所有路由的状态
       let running = false, conns = 0, bin = 0, bout = 0;
       (tn.routes || []).forEach((rt) => {
-        const k = tn.service + "@" + rt.channel + "@" + rt.local;
-        const s = byId[k] || {};
+        const s = byRoute[tn.service + "|" + rt.channel + "|" + rt.local] || {};
         if (s.running) running = true;
         conns += s.active_conns || 0;
         bin += s.bytes_in || 0;
