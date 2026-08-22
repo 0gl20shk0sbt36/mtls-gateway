@@ -68,10 +68,12 @@ func main() {
 	}
 	adminAccess := logging.DefaultPath("mtls-admin", "access.log")
 	if cfg.AccessLogFile != adminAccess {
+		log.Printf("日志: access %q → %q (mtls-admin 组件路径)", cfg.AccessLogFile, adminAccess)
 		cfg.AccessLogFile = adminAccess
 	}
 	adminStdout := logging.DefaultPath("mtls-admin", "stdout.log")
 	if cfg.StdoutLogFile != adminStdout {
+		log.Printf("日志: stdout %q → %q (mtls-admin 组件路径)", cfg.StdoutLogFile, adminStdout)
 		cfg.StdoutLogFile = adminStdout
 	}
 	if err := os.MkdirAll(filepath.Dir(cfg.DB), 0o700); err != nil {

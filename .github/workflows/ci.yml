@@ -130,6 +130,8 @@ jobs:
           go-version: '1.26'
           cache: true
       - name: Build android (all cmd; includes certsource android + permissioncheck linux path)
+        # 注: GOOS=android 满足 //go:build linux(go/build 特例) → permissioncheck
+        # 实际编译 access_linux.go(unix.Access 在 android 可用), 非跳过路径(实测 go list 证实)。
         env:
           GOOS: android
           GOARCH: arm64

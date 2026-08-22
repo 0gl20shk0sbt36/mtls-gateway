@@ -73,7 +73,7 @@
 - [ ] 前端 app.js 单测(靠 E2E 兜底) / i18n 占位符一致性(键集合测试抓不到占位符取值差异, 建议 logic.test.js 加占位符静态检查)
 - [ ] 热重载动态起停监听(当前显式告警已防呆, 需求出现再实现) / p12 密码 stdin(威胁面≈0, 改 stdin 破坏脚本化, 不值) / 过期 RFC3339 统一(格式与比较逻辑自洽, 建议注释写明语义)
 
-## 审计第二轮(4 个复审子代理, 2026-08-22)已修复(本提交)
+## 审计第二轮(4 个复审子代理, 2026-08-22)已修复(提交 6e0a456)
 🔴 高: permissioncheck mode 检查**平台门控回归** — mode&0o077 检查原在平台无关层, Windows 上 os.Stat 的 Perm() 恒 0666 → 双进程一旦有密钥文件就拒绝启动; 已收口到 access_linux.go 的 modePerm(非 Linux 恒 0) + 新增 `!linux` 测试断言(随 CI windows-test 执行防再漏) + ModeRestrict 0o077→0o007(0640 group 可读不再误拒, 新增 TestKeyModeGroupReadableOK)
 🟡 中: loadFirstCert 无锁读 r.src 数据竞争(SetSource 热替换并发) / LoadWithPassword+子目录 cert.pem/key.pem symlink 逃逸(含 List 一致性: 逃逸身份不展示) / /info 成功路径 + fetchCAAndFilter 无界 JSON 解码(限流补齐, maxInfoBody=1MB) / 审计事件下沉 api.Manager(SetAudit, unix socket 与 TCP 双通道统一 cert_issue|cert_revoke, CLI 签发/吊销不再漏记) / mtls-admin 日志分离强制组件路径(显式共享路径也替换 — 共享=滚动竞态源, config.example 部署场景生效)
 🟢 低: config.Parse roles 拒 "any"(与 NewRouter/configmgr 一致) / TestResolveListen IPv6 回归用例("::"→"[::]:9444") / certsource_other.go 注释措辞(android 走真实检查) / proxy ErrorHandler 日志路径 CRLF 清洗(CWE-117) / 魔法数字抽常量(maxBodyBytes 3 文件 + maxInfoBody) / webUILogger sync.Once 毒化 → mutex 失败重试
@@ -84,3 +84,13 @@
 - [ ] README 2.2 端口表漏 reload_listen 一行 + 存量合并端口配置升级需迁移(并入文档一致性收尾)
 - [ ] 存量重名库打开报原始 SQLite 错误(UNIQUE 索引在 db.Open 失败; 功能仍正确拒绝, 提示不友好)
 - [ ] windows-test job 首次真实 runner 观察(AF_UNIX 黑盒测试依赖 Windows AF_UNIX 支持, 预期可过)
+
+## 审计第三轮(3 个复审子代理复审 6e0a456, 2026-08-22)— 收敛
+安全/正确性/平台三复审均报**无必须再修**; 已顺手收编其建议(提交 6e0a457 之前含于同批):
+- logging.DefaultDir Windows 分支加组件子目录(exe 目录下) — 否则 mtls-gw 与 mtls-admin 默认日志路径相同, 强制替换在 Windows 上失效
+- mtls-admin 三个日志字段替换均 log.Printf 提示(覆盖显式配置可观测性)
+- certsource List 逃逸符号链接一次性告警(warnSymlinkEscape, 目录被污染留痕不刷屏)
+- sanitizeLogPath 扩滤全部 C0 控制字符(\x00-\x1F 含 ANSI ESC), 不止 CR/LF
+- ci.yml android-build 注释实证澄清(GOOS=android 满足 //go:build linux, 走 access_linux.go)
+- 平台复审"android 走非 Linux 路径"判断与 go list 实证不符, 未采纳(第一轮判断正确)
+- 建议修但暂缓(并入文档收尾): ModeRestrict 威胁模型权衡(0640 group 可读密钥放行)写入 README/配置注释; config.example.toml 日志段说明 admin 强制组件路径; README 端口表 reload_listen

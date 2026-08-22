@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -16,8 +17,9 @@ import (
 type dirSource struct {
 	mu        sync.RWMutex // 保护过滤字段(SetFilter 与 List 并发; relay 异步 fetchCAAndFilter 写)
 	root      string
-	filterOrg string // 非空则只展示由该 org 签发的证书
-	showAll   bool   // 显示全部 (跳过 filterOrg 过滤)
+	filterOrg string    // 非空则只展示由该 org 签发的证书
+	showAll   bool      // 显示全部 (跳过 filterOrg 过滤)
+	warnOnce  sync.Once // 逃逸符号链接一次性告警(目录被污染时留痕, 不刷屏)
 }
 
 // openDirImpl 创建目录源 (certsource.go 分派的平台无关实现)
@@ -68,9 +70,11 @@ func (d *dirSource) List() ([]IdentityMeta, error) {
 			}
 			// 符号链接防护: 与 Load/LoadWithPassword 一致 — 逃逸 root 的身份不展示(否则列出却加载失败)
 			if err := d.checkWithinRoot(certPath); err != nil {
+				d.warnSymlinkEscape(err)
 				continue
 			}
 			if err := d.checkWithinRoot(keyPath); err != nil {
+				d.warnSymlinkEscape(err)
 				continue
 			}
 			data, err := os.ReadFile(certPath)
@@ -87,7 +91,8 @@ func (d *dirSource) List() ([]IdentityMeta, error) {
 			metas = append(metas, metaFromCert(cert, name, "dir:"+d.root))
 		} else if strings.EqualFold(filepath.Ext(name), ".p12") {
 			if err := d.checkWithinRoot(full); err != nil {
-				continue // 顶层 p12 符号链接逃逸 root: 不展示
+				d.warnSymlinkEscape(err) // 顶层 p12 符号链接逃逸 root: 不展示
+				continue
 			}
 			data, err := os.ReadFile(full)
 			if err != nil {
@@ -143,6 +148,14 @@ func (d *dirSource) Load(id string) (tls.Certificate, error) {
 		return tlsFromPEM(id, combined)
 	}
 	return loadFilePEMOrP12(full)
+}
+
+// warnSymlinkEscape 逃逸符号链接一次性告警: 目录被污染(攻击者写入逃逸链接)时留痕,
+// 只告警一次避免 List 高频轮询刷屏。
+func (d *dirSource) warnSymlinkEscape(err error) {
+	d.warnOnce.Do(func() {
+		log.Printf("cert source %s: 检测到逃逸符号链接, 已跳过该身份: %v (请检查证书目录是否被污染)", d.root, err)
+	})
 }
 
 // checkWithinRoot 符号链接防护: 解析后路径必须仍在 root 目录内。

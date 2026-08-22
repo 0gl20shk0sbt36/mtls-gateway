@@ -17,10 +17,13 @@ import (
 // DefaultDir 返回组件的平台默认日志目录(不存在时由调用方创建)。
 func DefaultDir(component string) string {
 	if runtime.GOOS == "windows" {
+		// 可执行文件同目录 + 组件子目录(便携式, 不写用户文件夹):
+		// 组件子目录保证同目录多进程(mtls-gw + mtls-admin)日志互不污染 —
+		// 否则两者默认路径相同, mtls-admin 的"强制组件路径"替换在 Windows 上失效。
 		if exe, err := os.Executable(); err == nil {
-			return filepath.Dir(exe)
+			return filepath.Join(filepath.Dir(exe), component)
 		}
-		return "."
+		return filepath.Join(".", component)
 	}
 	if dir, err := os.UserCacheDir(); err == nil && dir != "" {
 		return filepath.Join(dir, component)

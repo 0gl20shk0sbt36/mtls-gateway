@@ -459,11 +459,12 @@ func SanitizeHeader(r *http.Request) {
 	r.Header.Del("Via")
 }
 
-// sanitizeLogPath 清洗日志输出的路径: 删除 CR/LF(防日志注入伪造文本日志行, CWE-117)。
-// 已认证客户端可把 %0d%0a 编进 URL, 未清洗会伪造文本 stdout 日志行; JSON 事件日志不受影响。
+// sanitizeLogPath 清洗日志输出的路径: 删除 CR/LF 及其余 C0 控制字符(\x00-\x1F, 含 ANSI ESC)。
+// 已认证客户端可把 %0d%0a 编进 URL 伪造文本日志行(CWE-117); ANSI 转义只能污染外观、
+// 不能伪造日志行, 一并滤除; JSON 事件日志由 json.Marshal 转义不受影响。
 func sanitizeLogPath(p string) string {
 	return strings.Map(func(r rune) rune {
-		if r == '\r' || r == '\n' {
+		if r < 0x20 || r == 0x7f {
 			return -1
 		}
 		return r
