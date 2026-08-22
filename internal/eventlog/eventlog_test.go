@@ -248,8 +248,10 @@ func TestAppendLineReopensAfterNil(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer l.Close()
-	// 模拟 rotate 重开失败后的状态(rotate 置 l.f=nil)
+	// 模拟 rotate 重开失败后的状态(rotate 先 Close 原句柄再置 l.f=nil;
+	// 不关句柄则 Windows 上清理临时目录时文件被占用 — windows-test 抓出)
 	l.mu.Lock()
+	l.f.Close()
 	l.f = nil
 	l.mu.Unlock()
 	// 下次写入应重试重开并落盘
