@@ -357,3 +357,22 @@ http.Server 三段复制、configmgr 9 CRUD 模板、DTO 复制、角色名校�
 4. **windows-test 第 2 轮**: certsource checkWithinRoot 的 EvalSymlinks 在 Windows 展开 8.3 短名(RUNNER~1)→ 合法证书全被误判 symlink 逃逸 → root 也先解析再比较; 另修 3 处 Windows 不兼容测试断言(JSON 反斜杠转义/Unix 0600 权限)。
 
 **结果**: 7 job 全绿(Test 1.25/1.26、windows-test、WebUI unit、WebUI E2E、windows/android build), E2E 本地 15/15 也真实跑通。
+
+---
+
+## 2026-08-22 flash→pro 循环审计轮(提交 a510d15 + cc762e4)
+
+按用户指定流程: flash 横向全库审计 → 修复 → flash 审不出 → 交 pro 深挖 → 修复 → 并行 flash 复审验证。
+
+**flash 横向通读发现(2 必须 + 8 建议修, 修复 a510d15)**:
+- 🔴 certsource_windows.go enumMyCerts 失败分支: 手动释放 CertFreeCertificateContext 后把悬垂指针当 prev 传入下一轮(MSDN 契约 violation, double-free/UAF)
+- 🔴 tunnel.go hasLocalPort 跨隧道组同端口静默复用(A 的 HTTP 监听吞掉 B 的整口流量/字节错送); 修: 只放行同 service 组内整口 route 复用 + 回归测试 TestRelay_PortReuseScoping
+- 🟡 建议修(全部落地): mtls-admin 启动补 NewRouter 校验(与网关对称) / 优雅退出(TCP admin 5s Shutdown) / UpdateSettings 落盘失败记日志继续(内存即权威, 与 AddTunnel 一致) / fetchCAAndFilter 注释修正 / certCacheTTL 锁内读(certTTL helper) / CLI 文档(relay-cli usage 对齐真实 flag、gw-cli 去硬编码路径) / config.example 热重载范围+persist 重排说明 / AGENTS.md 同步
+
+**pro 深挖复审(a510d15)发现——flash 遗漏的同类严重缺陷(修复 cc762e4)**:
+- 🔴🔴 enumMyCerts **成功路径**同类 UAF/double-free: 枚举返回的 ctx 传给下一次 CertEnumCertificatesInStore 即被释放(MSDN 契约), 直接存 out 导致枚举后全部悬垂(close() double-free / Load() 的 CryptAcquire 用已释放内存; 真机有证书即触发, CI 空库冒烟未暴露)。修: append 前 CertDuplicateCertificateContext(与 tg123/certstore 同款); 失败分支修复本身正确但同类缺陷在成功路径
+- 建议修: hasWholePortRuntime 按 service 对称化(防回归) / relay-cli 顶部 doc 注释清理
+- 其余 6 项(a510d15 的修复)全部通过无回归
+
+**验证**: 20 包 -race 全绿; 五平台构建 + windows vet(含测试文件)通过; 前端单测 8/8 + E2E 15/15; CI 7/7 全绿(含 windows-test 编译验证 UAF 修复)。
+**教训**: flash 修复"失败分支"后, pro 独立视角发现"成功路径"存在同类缺陷 — 验证了"flash 审不出交 pro"的流程必要性。

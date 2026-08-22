@@ -48,8 +48,18 @@ gofmt -l cmd internal  # 应为空(CI 强制)
 - 前端测试: 单测 `internal/relayweb/web/test/`(8 例) + E2E `internal/relayweb/web/e2e/`(15 例, setup.sh 生成环境; E2E 端口段 57xxx, 与生产/常用段隔离)。
 - CI (GitHub Actions): 双 Go 版本(1.25/1.26) build+vet+gofmt+test+race / WebUI 单测 / playwright E2E / windows 真机测试(CNG + 平台差异) / windows+android 交叉编译; 打 tag 自动多平台编译发 Release。
 
+## 审计流程(agent 协作范式, 改代码前先审 / 大改后必审)
+
+用户指定的审计工作方式, 所有 agent/子代理必须遵守:
+
+1. **并行分派**: 一次审计轮按类别拆分(如 安全 / 正确性 / 并发 / 平台 / 测试覆盖 / 代码质量 / 运维一致性), **每个类别一个独立子代理**, 同一批消息内**并行**派出。子代理只读(read/glob/grep, 不可改文件), 互相独立、不被告知彼此的见解(防同质化)。
+2. **flash 循环迭代**: 用 flash 模型子代理做横向全库通读审计 → 收集发现 → 修复(必须修 + 建议修) → 全量测试(-race + 五平台 + 前端单测 + E2E) → **单次提交** → 再派 flash 复审(同类目并行)验证修复。反复迭代, 直到 flash 报告"无必须修/无新发现"。
+3. **flash 审不出 → 交 pro**: flash 收敛后升级给 pro 模型子代理**独立深挖复审**——验证 flash 的修复是否正确, 并找 flash 遗漏的同类缺陷(历史教训: flash 只修了 Windows 枚举失败分支的 UAF, pro 抓到成功路径的同类 UAF/double-free)。pro 的发现 → 再修 → 再验证, 直到 pro 也报"无必须修"。
+4. **闭环判定**: 收敛 = 连续一轮(或多轮)复审无必须修; 每轮修复后都要跑全量测试并单次提交(不推送除非用户指示)。
+5. **留痕**: 每轮审计/复审的发现与修复提交追加到 `docs/AUDIT-CHANGELOG.md`(批号/提交号/发现清单); TODO.md 同步未修项与完成项。
+
 ## 审计历史
-pro 审计变更记录见 `docs/AUDIT-CHANGELOG.md`(31 批 × 3 专项 + flash 横向扫描 + 2026-08-22 三轮子代理复审迭代 + CI 首跑修复)。
+pro 审计变更记录见 `docs/AUDIT-CHANGELOG.md`(31 批 × 3 专项 + flash 横向扫描 + 2026-08-22 三轮子代理复审迭代 + CI 首跑修复 + 2026-08-22 flash→pro 循环审计轮)。
 
 ## 未来方向(规划中, 未实现)
 - **TrustSource 抽象**: 把 IP 绑定抽成可插拔接口 `TrustSource.authorize(req) → 设备标识|拒绝`(IPBindSource / LanSource / 未来网络)。
