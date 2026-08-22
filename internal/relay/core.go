@@ -405,7 +405,7 @@ func (r *Relay) Reload(cfg RelayConfig) error {
 	}
 	// 复用 route 的宿主整口被删除后, 重新起独立监听(否则端口永久变暗)
 	for id, rt := range r.tunnels {
-		if rt.listener == nil && !r.hasWholePortRuntime(rt.route.LocalPort()) {
+		if rt.listener == nil && !r.hasWholePortRuntime(rt.service, rt.route.LocalPort()) {
 			if err := r.startTunnel(rt); err != nil {
 				reloadErrs = append(reloadErrs, fmt.Errorf("rebuild reused tunnel %s: %w", id, err))
 			}
@@ -417,10 +417,11 @@ func (r *Relay) Reload(cfg RelayConfig) error {
 	return nil
 }
 
-// hasWholePortRuntime 本隧道组是否已有整口(LocalPath="")route 监听该端口(复用 route 的宿主判定)
-func (r *Relay) hasWholePortRuntime(port string) bool {
+// hasWholePortRuntime 本隧道组(同 service)是否已有整口(LocalPath="")route 监听该端口
+// (复用 route 的宿主判定; 与 hasLocalPort 同按 service 隔离 — 跨组同端口已在 Start 拒绝, 对称化防回归)
+func (r *Relay) hasWholePortRuntime(service, port string) bool {
 	for _, rt := range r.tunnels {
-		if rt.listener != nil && rt.route.LocalPath() == "" && rt.route.LocalPort() == port {
+		if rt.service == service && rt.listener != nil && rt.route.LocalPath() == "" && rt.route.LocalPort() == port {
 			return true
 		}
 	}

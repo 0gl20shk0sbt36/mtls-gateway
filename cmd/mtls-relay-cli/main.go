@@ -1,12 +1,6 @@
-// mtls-relay-cli — mtls-relay 管理 CLI (daemon 的客户端, 经本地管理 API).
+// mtls-relay-cli — mtls-relay 管理 CLI (daemon 的客户端, 经本地管理 API)。
+// 用法见 `mtls-relay-cli help`(tunnel add 用 --service/--cert/--route 按服务建隧道)。
 //
-// 用法:
-//
-//	mtls-relay-cli [--admin 127.0.0.1:18081] certs
-//	mtls-relay-cli [--admin ...] tunnel add --service <svc> --cert <certID> [--route "ch=local,..."]
-//	mtls-relay-cli [--admin ...] tunnel del <id>
-//	mtls-relay-cli [--admin ...] tunnel list
-//	mtls-relay-cli [--admin ...] reload | start | stop | status | config
 //	mtls-relay-cli [--admin ...] start | stop
 //	mtls-relay-cli [--admin ...] status
 //	mtls-relay-cli [--admin ...] config
