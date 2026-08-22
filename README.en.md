@@ -8,10 +8,12 @@ A **generic access gateway** built on mTLS client certificates: device-level aut
 
 ```
 client (holds device cert) ──mTLS──▶ mtls-gw ──▶ backend service
-                                     │
-                                     ├─ /info port: service discovery (any registered cert)
-                                     ├─ admin port: issue/revoke/config (admin_role cert only)
-                                     └─ business port: mappings routing + services role authz
+                                      │
+                                      ├─ /info port: service discovery (any registered cert)
+                                      ├─ /admin/reload: full hot reload (admin_role cert only, called by mtls-admin)
+                                      └─ business port: mappings routing + services role authz
+
+mtls-admin (separate process): admin port issue/revoke/config (admin_role cert only) + Unix socket (local CLI)
 ```
 
 ---
@@ -62,14 +64,19 @@ Authorization rule: after a request hits a mapping, it is allowed only if the ce
 4. mapping match + role authorization
 5. reverse-proxy forward
 
-### 1.5 Dual Management Channel
+### 1.5 Dual Management Channel (separate process mtls-admin)
+
+Management runs in a **separate process mtls-admin** (reads the same config.toml as mtls-gw):
+the gateway is a pure data plane (auth + routing + forwarding), the admin process is the sole
+writer (DB/config); after any change it calls the gateway's `POST /admin/reload` for a full hot
+reload (the gateway's in-memory copy is read-only and atomically swapped).
 
 | Channel | Access | Permission |
 |---|---|---|
 | Unix socket (local CLI) | file perms 600 | direct admin (Linux only) |
 | TCP admin API | mTLS cert | `admin_role` cert only |
 
-The CLI and Web panel are **peer shells** of the management API; the Web panel never calls the CLI directly.
+The CLI and Web panel are **peer shells** of the management API; the Web panel never calls the CLI directly. Both connect to mtls-admin.
 
 ---
 
@@ -96,20 +103,22 @@ Full field reference in [config.example.toml](./config.example.toml). Core field
 | `ca` / `ca_key` | CA cert/key (for issuing; key 600) |
 | `server_cert` / `server_key` | gateway's own TLS cert |
 | `admin_role` | built-in admin role name (default `mtls-superadmin`; avoid common names) |
-| `admin_listen` | admin API port (admin_role cert only) |
 | `info_listen` | `/info` discovery port (any registered cert) |
+| `reload_listen` | gateway `/admin/reload` port (called by mtls-admin, admin_role cert only; empty = merged with info port) |
+| `admin_listen` | admin API port (admin_role cert only; owned by the mtls-admin process) |
 | `config_mode` | `mutable` (persist, default) / `ephemeral` (memory only) / `immutable` (read-only) |
 | `lang` | error message language `zh` / `en` (default zh) |
 | `key_type` / `key_bits` | issued key: rsa 2048/3072/4096 or ecdsa 256/384/521 |
 | `default_days` / `admin_days` | default validity for regular/admin certs |
 
-### 2.3 Run
+### 2.3 Run (two processes)
 
 ```bash
-/usr/local/bin/mtls-gw -config /etc/mtls-gw/config.toml
+/usr/local/bin/mtls-gw   -config /etc/mtls-gw/config.toml   # gateway (pure data plane)
+/usr/local/bin/mtls-admin -config /etc/mtls-gw/config.toml  # admin process (issue/revoke/config)
 ```
 
-### 2.4 Issue a cert (local CLI, Unix socket)
+### 2.4 Issue a cert (local CLI, connecting to mtls-admin's Unix socket)
 
 ```bash
 mtls-gw-cli -sock /run/mtls-gw/mtls-gw.sock issue \
@@ -118,7 +127,8 @@ mtls-gw-cli revoke -serial <serial>
 mtls-gw-cli list
 ```
 
-> Windows has no Unix socket; issue via the TCP admin API (requires an admin cert).
+> The Unix socket is served by mtls-admin (same config as the gateway, same `sock_path`).
+> Windows has no Unix socket; issue via the TCP admin API (requires an admin cert; `admin_addr` points at mtls-admin).
 
 ---
 
@@ -141,7 +151,7 @@ relay config (`relay.json`):
   "admin_addr": "gw.example:9444",
   "server_ca": "/path/to/ca.crt",
   "listen_host": "127.0.0.1",
-  "cert": {"source": "dir", "arg": "/path/to/certs"},
+  "cert_dir": "/path/to/certs",
   "tunnels": [
     {"service": "dsh", "cert_id": "dev-laptop", "routes": [{"channel": ":9443", "local": ":9443"}]}
   ]
@@ -149,6 +159,8 @@ relay config (`relay.json`):
 ```
 
 - `server_addr` = `/info` discovery endpoint; `admin_addr` = admin endpoint (cert management, separate)
+- `cert_dir` = client cert source: empty = system cert store (platform-native identity store: Windows "Personal/My" CNG / Linux convention dir `~/.mtls-gw/certs` / Android app-private dir), non-empty = dir source (one cert per subdirectory); config wins over the `-source`/`-source-arg` startup flags
+- `log_file` = runtime log path (tunnel/cert/connection events, **terminal + file double-write**; empty = platform default: Windows exe-dir/`mtls-relay` component subdir / Linux `~/.cache/mtls-relay`)
 - Tunnels are built **per service** (one service = multiple channels); local routes can override port/path
 - Cert rotation / server address changes rebuild tunnels automatically
 
@@ -175,6 +187,7 @@ Import the p12 (private key + password) into the browser/phone — no extra soft
 - **Management-plane isolation**: business/admin/discovery on separate ports; admin API independent of business ports
 - **DNS-rebinding protection**: relay admin API enforces loopback + Origin validation
 - **server_ca unavailable → refuse startup**: prevents MITM via downgrade to system roots
+- **Startup permission pre-check (Linux)**: checks every file/dir referenced by config (CA/DB/certs/logs/sock/persist dirs) before starting; insufficient permissions → refuse startup with output on stderr (and best-effort write to the event log) — prevents "running sick with an unwritable dir" causing lost persistence / memory-disk divergence. Key files additionally require `mode&0o007==0` (no world read/write); **0640 (group-readable) is allowed** — trade-off: common in single-user/trusted-group deployments; tighten to 0600 if you need owner-only
 - **Duplicate cert names forbidden**: pre-issue dedup (incl. revoked), prevents same-name confusion
 - **Error redaction**: auth failures return only `forbidden`; details go to the event log only
 - **Timeout/size limits**: ReadTimeout/WriteTimeout/IdleTimeout on all ports + MaxBytesReader 4MB
@@ -183,14 +196,14 @@ Import the p12 (private key + password) into the browser/phone — no extra soft
 
 - Windows has no Unix socket; CLI issuing goes through the TCP admin API
 - Cert expiry compared as `yyyy-mm-dd` strings (still valid on the expiry day)
-- Newly issued certs need a gateway reload/restart before `/info` sees them
+- Without `gateway_reload_addr` configured, newly issued certs need a manual gateway `/admin/reload` (or restart) before `/info` sees them; with it configured, mtls-admin auto-reloads the gateway after every issue/revoke
 
 ---
 
 ## 5. Tests
 
 ```bash
-go test -race ./...          # Go unit/integration (178 test functions, -race green)
+go test -race ./...          # Go unit/integration (235 test functions, -race green)
 go vet ./...
 gofmt -l cmd internal        # must be empty (enforced by CI)
 
@@ -198,11 +211,11 @@ gofmt -l cmd internal        # must be empty (enforced by CI)
 node --test internal/relayweb/web/test/*.test.js   # 8 unit tests
 # E2E (run setup.sh first to build the environment)
 bash internal/relayweb/web/e2e/setup.sh /tmp/mtls-e2e
-node --test internal/relayweb/web/e2e/*.test.mjs   # 14 tests
+node --test internal/relayweb/web/e2e/*.test.mjs   # 15 tests
 ```
 
 - Tests build a **temporary CA + server cert** in-test, no deployment dependency.
-- CI (GitHub Actions): build + vet + gofmt + test + race on Go 1.25 + 1.26; tagged releases auto-cross-compile.
+- CI (GitHub Actions): dual Go versions (1.25/1.26) build+vet+gofmt+test+race / WebUI unit / playwright E2E / Windows real-machine tests / Windows+Android cross-compile; tagged releases auto-cross-compile to multiple platforms.
 
 ---
 
@@ -210,7 +223,8 @@ node --test internal/relayweb/web/e2e/*.test.mjs   # 14 tests
 
 | Directory | Responsibility |
 |---|---|
-| `cmd/mtls-gw` | server daemon (config parse + multi-port mTLS + admin API) |
+| `cmd/mtls-gw` | gateway daemon (pure data plane: auth + routing + forwarding + /info + reload) |
+| `cmd/mtls-admin` | separate admin process (issue/revoke/config CRUD, reads the same config; calls the gateway reload after changes) |
 | `cmd/mtls-gw-cli` | local management CLI (Unix socket) |
 | `cmd/mtls-relay` | client relay daemon (/info discovery → tunnels + WebUI) |
 | `internal/db` | SQLite persistence + in-memory authoritative table |
@@ -224,4 +238,4 @@ node --test internal/relayweb/web/e2e/*.test.mjs   # 14 tests
 
 ## 7. Audit History
 
-Full audit changelog in [docs/AUDIT-CHANGELOG.md](./docs/AUDIT-CHANGELOG.md) (31 pro batches × 3 tracks + 2 flash sweeps; 30+ real bugs + 25+ security hardening). Unfinished items in [TODO.md](./TODO.md).
+Full audit changelog in [docs/AUDIT-CHANGELOG.md](./docs/AUDIT-CHANGELOG.md) (31 pro batches × 3 tracks + 2 flash sweeps + 2026-08-22 three-round subagent review iterations + CI first-run fixes; 30+ real bugs + 25+ security hardening). Unfinished items in [TODO.md](./TODO.md).

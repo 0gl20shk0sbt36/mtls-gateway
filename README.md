@@ -10,8 +10,10 @@
 客户端(带设备证书) ──mTLS──▶ mtls-gw ──▶ 后端服务
                               │
                               ├─ /info 端口: 服务发现(任一已登记证书)
-                              ├─ admin 端口: 证书签发/吊销/配置(仅 admin_role 证书)
+                              ├─ /admin/reload: 全量热重载(仅 admin_role 证书, 管理进程调用)
                               └─ 业务端口: 按 mappings 路由 + services 角色授权
+
+mtls-admin(独立管理进程): admin 端口 签发/吊销/配置(仅 admin_role 证书) + Unix socket(本机 CLI)
 ```
 
 ---
@@ -193,7 +195,7 @@ relay 自带 WebUI(`--listen-admin :28083`):
 
 - Windows 无 Unix socket, CLI 签发走 TCP admin API
 - 证书有效期按 `yyyy-mm-dd` 字符串比较(到期日当天仍有效)
-- 运行时新增证书需重载/重启网关才能被 `/info` 获取
+- 未配置 `gateway_reload_addr` 时, 运行时新增证书需手动调网关 `/admin/reload`(或重启)才能被 `/info` 获取; 配置了则 mtls-admin 在每次签发/吊销后自动 reload 网关
 
 ---
 

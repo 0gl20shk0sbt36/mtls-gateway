@@ -15,7 +15,7 @@
 - [x] ~~**推送代码到云端**~~ — 2026-08-22 已推 origin master(90a2efa..d10a3f2), CI 首跑验证中
 - [ ] **部署最新二进制到 Windows** — win2 常驻进程(mtls-e2e/mtls-gw2/mtls-echo)仍是旧版
 - [ ] **生产 mtls-gw.service 重部署** — v4 TOML 重写后未部署(当前 DSH 9443 下线)
-- [ ] **README.en.md 同步** — 英文版仍是 v3 旧模型(README.md 已 v4)
+- [x] ~~**README.en.md 同步**~~ — 2026-08-22 已对齐 v4 双进程架构(与 README.md 逐节一致)
 - [ ] **阶段 6 GUI(Wails v2)** — 从未开始
 - [ ] **other-svc 演示服务是否删除** — 待用户确认
 
