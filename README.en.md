@@ -2,6 +2,9 @@
 
 A **generic access gateway** built on mTLS client certificates: device-level authentication + role-based routing. Not tied to any specific application — reuse it for any self-hosted service.
 
+> **Project origin**: built initially for **DSH (self-hosted DeepSeek chat service)** to solve "only my own devices may reach it";
+> it was then generalized into a generic mTLS gateway — wiring up any HTTP service only requires adding a `mappings` channel + a `services` declaration + issuing a cert with the matching `roles`.
+
 ## Architecture in One Line
 
 **Certificate = identity, SQLite = authorization.** Every request passes two gates: ① TLS chain verification (CA-signed) ② database registration (serial present + not revoked + not expired). **Memory is authoritative**: the full DB is loaded into a map at startup, request verification reads memory only (zero I/O), and mutations write through to the DB.
