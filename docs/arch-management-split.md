@@ -35,7 +35,7 @@ CLI / Web 面板 / relay-admin ──▶ mtls-admin 管理 API
 | server_cert/server_key | ✅ | ❌ | 网关 TLS |
 | mappings/services/roles | ✅ 路由+授权 | ✅ 查看/改(写 TOML) | 管理改后调 reload |
 | admin_listen / sock_path / cert_dir / 签发参数 | ❌ | ✅ | 管理面 |
-| log_* | ✅ | ✅ | 各自日志(分平台默认) |
+| log_* | ✅ | ✅ | 各自日志(分平台默认; mtls-admin 强制组件路径, 替换不落盘) |
 | reload 配置(阶段2): gateway_reload_addr | ❌ | ✅ | 管理调网关 reload 的地址 |
 
 ## 3. 数据流

@@ -6,7 +6,8 @@
 //   - Linux/其他: 用户缓存目录 $XDG_CACHE_HOME/<component> 或 ~/.cache/<component>
 //     (用户级无需特权; 生产部署可显式配置 /var/log/<component>/...)
 //
-// 组件命名空间: "mtls-gw"(服务端) / "mtls-relay"(客户端中继), 各组件日志互不污染。
+// 组件命名空间: "mtls-gw"(服务端) / "mtls-admin"(管理进程) / "mtls-relay"(客户端中继),
+// 各组件日志互不污染(Windows 同目录多进程也靠组件子目录隔离)。
 package logging
 
 import (

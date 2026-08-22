@@ -81,16 +81,24 @@
 ## 审计第二轮未修(记录, 均为复审判定可缓/低危)
 - [ ] UpdateSettings 三个边缘: SetLang 失败不回滚 / 并发回滚覆盖 / SaveConfig 失败内存已应用(反向半提交) — 单用户本地 API 概率极低
 - [ ] eventlog maxFile=0 仍保留 .1 一份历史(既有行为, 与"0=不留历史"语义不符)
-- [ ] README 2.2 端口表漏 reload_listen 一行 + 存量合并端口配置升级需迁移(并入文档一致性收尾)
+- [x] ~~README 2.2 端口表漏 reload_listen 一行~~ — 文档收尾已补; 存量合并端口配置(info==admin)升级需迁移配置(新示例已分离端口)仍待运维侧注意
 - [ ] 存量重名库打开报原始 SQLite 错误(UNIQUE 索引在 db.Open 失败; 功能仍正确拒绝, 提示不友好)
 - [ ] windows-test job 首次真实 runner 观察(AF_UNIX 黑盒测试依赖 Windows AF_UNIX 支持, 预期可过)
 
 ## 审计第三轮(3 个复审子代理复审 6e0a456, 2026-08-22)— 收敛
-安全/正确性/平台三复审均报**无必须再修**; 已顺手收编其建议(提交 6e0a457 之前含于同批):
+安全/正确性/平台三复审均报**无必须再修**; 已顺手收编其建议(提交 8e8cf9a + b629c0f):
 - logging.DefaultDir Windows 分支加组件子目录(exe 目录下) — 否则 mtls-gw 与 mtls-admin 默认日志路径相同, 强制替换在 Windows 上失效
 - mtls-admin 三个日志字段替换均 log.Printf 提示(覆盖显式配置可观测性)
 - certsource List 逃逸符号链接一次性告警(warnSymlinkEscape, 目录被污染留痕不刷屏)
-- sanitizeLogPath 扩滤全部 C0 控制字符(\x00-\x1F 含 ANSI ESC), 不止 CR/LF
+- sanitizeLogPath 扩滤全部 C0 控制字符(\x00-\x1F 含 ANSI ESC), 不止 CR/LF; 清洗函数抽公共 pathutil.SanitizeForLog(relay core.go CA subject/err 同套用)
 - ci.yml android-build 注释实证澄清(GOOS=android 满足 //go:build linux, 走 access_linux.go)
 - 平台复审"android 走非 Linux 路径"判断与 go list 实证不符, 未采纳(第一轮判断正确)
-- 建议修但暂缓(并入文档收尾): ModeRestrict 威胁模型权衡(0640 group 可读密钥放行)写入 README/配置注释; config.example.toml 日志段说明 admin 强制组件路径; README 端口表 reload_listen
+- **b629c0f(复审发现收尾)**: configmgr 落盘污染 — mtls-admin 日志路径替换后的 cfg 传入 configmgr, persist 整份 Encode 会把 admin 组件路径写回共享 config.toml, 网关下次启动日志重新合流; 改传原始 cfg(origCfg), 替换只影响本进程; 另修 warnSymlinkEscape 新引入的文本日志注入面(文件名可含 \n) + sanitizeLogPath 单测
+
+## 文档一致性(第 8 大类, 2026-08-22)— 一次性收尾完成(本提交)
+- README: 2.2 端口表补 reload_listen; 安全模型补 ModeRestrict 权衡(0640 放行, 要"仅属主"用 0600); Windows 日志路径陈旧描述修正; 测试计数 194→514
+- config.example.toml: 日志段说明 mtls-admin 强制组件路径(替换不落盘); 安全段补私钥权限预检说明; Windows 默认路径描述修正
+- internal/relay/config.go + internal/logging 注释陈旧修正(组件子目录, 命名空间补 mtls-admin)
+- CHANGELOG: 补三轮审计收敛与关键修复; 测试基线 178→514
+- docs/arch-management-split.md: log_* 行注明强制组件路径不落盘
+- i18n 占位符一致性: 后端 39 键 + 前端 115 键 zh/en 全量比对 0 错配(静态检查, 无需修)

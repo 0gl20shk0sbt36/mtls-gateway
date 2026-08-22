@@ -100,8 +100,9 @@ cp config.example.toml /etc/mtls-gw/config.toml
 | `ca` / `ca_key` | CA 证书/私钥(签发用; 私钥 600) |
 | `server_cert` / `server_key` | 网关自身 TLS 证书 |
 | `admin_role` | 内置管理角色名(默认 `mtls-superadmin`; 别用常用名) |
-| `admin_listen` | 管理 API 端口(仅 admin_role 证书) |
 | `info_listen` | `/info` 服务发现端口(任一已登记证书) |
+| `reload_listen` | 网关 `/admin/reload` 端口(管理进程调用, 仅 admin_role 证书; 空=与 info 同端口合并) |
+| `admin_listen` | 管理 API 端口(仅 admin_role 证书; 属于 mtls-admin 进程) |
 | `config_mode` | `mutable`(落盘, 默认) / `ephemeral`(仅内存) / `immutable`(只读) |
 | `lang` | 错误消息语言 `zh` / `en`(默认 zh) |
 | `key_type` / `key_bits` | 签发密钥: rsa 2048/3072/4096 或 ecdsa 256/384/521 |
@@ -156,7 +157,7 @@ relay 配置(`relay.json`):
 
 - `server_addr` = `/info` 发现端点; `admin_addr` = admin 端点(证书管理, 独立)
 - `cert_dir` = 客户端证书源: 空=系统证书库(平台原生身份库: Windows 系统证书库「个人/My」CNG / Linux 约定目录 `~/.mtls-gw/certs` / Android 应用私有目录), 非空=目录源(每子目录一个证书); 配置优先于启动参数 `-source`/`-source-arg`
-- `log_file` = 运行日志路径(隧道/证书/连接事件, **终端+文件双写**; 空=分平台默认: Windows exe 目录 / Linux `~/.cache/mtls-relay`)
+- `log_file` = 运行日志路径(隧道/证书/连接事件, **终端+文件双写**; 空=分平台默认: Windows exe 目录/`mtls-relay` 组件子目录 / Linux `~/.cache/mtls-relay`)
 - 隧道按**服务**建(一个服务含多个通道), 本地路由可覆盖端口/路径
 - 证书轮换/服务端地址变化自动重建隧道
 
@@ -183,7 +184,7 @@ relay 自带 WebUI(`--listen-admin :28083`):
 - **管理面隔离**: 业务/管理/发现三个端口分离; 管理 API 独立于业务端口
 - **DNS rebinding 防护**: relay 管理 API 强制 loopback + Origin 校验
 - **server_ca 不可用拒绝启动**: 防降级系统根被 MITM 冒充网关
-- **启动权限预检(Linux)**: 启动时检查配置引用的全部文件/目录权限(CA/DB/证书/日志/sock/落盘目录), 不足拒绝启动并输出到 stderr(尽力写事件日志) — 防"目录不可写带病运行"致落盘失败/内存分叉
+- **启动权限预检(Linux)**: 启动时检查配置引用的全部文件/目录权限(CA/DB/证书/日志/sock/落盘目录), 不足拒绝启动并输出到 stderr(尽力写事件日志) — 防"目录不可写带病运行"致落盘失败/内存分叉。密钥文件额外要求 `mode&0o007==0`(禁 world 可读/写); **0640(group 可读)放行** — 权衡: 单用户/可信组部署常见, 若要"仅属主可读"请自行收紧为 0600
 - **同名证书禁止**: 签发前查重(含已吊销), 防同名混淆
 - **错误脱敏**: 认证失败只回 `forbidden`, 细节仅写事件日志
 - **超时/体积限制**: 全端口 ReadTimeout/WriteTimeout/IdleTimeout + 请求体 MaxBytesReader 4MB
@@ -199,7 +200,7 @@ relay 自带 WebUI(`--listen-admin :28083`):
 ## 5. 测试
 
 ```bash
-go test -race ./...          # Go 单测/集成(194 个测试函数, -race 全绿)
+go test -race ./...          # Go 单测/集成(514 个测试函数, -race 全绿)
 go vet ./...
 gofmt -l cmd internal        # 应为空(CI 强制)
 

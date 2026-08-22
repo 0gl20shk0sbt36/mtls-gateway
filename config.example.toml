@@ -26,6 +26,8 @@ admin_days = 30                       # 含管理角色证书的默认有效期
 
 # ---- 安全 ----
 require_ip_bind = true                # 证书是否必须绑定来源 IP(建议保持 true)
+# 私钥权限预检(仅 Linux): ca_key/server_key/reload_key 要求 mode&0o007==0(禁 world 可读/写);
+# 0640(group 可读)放行(单用户/可信组部署常见); 若要"仅属主可读"请用 0600
 admin_role = "mtls-superadmin"        # ★ 内置管理角色名(别用常用名; 证书有该角色才能进管理 API;
                                       #   禁止出现在业务服务 roles 里, 否则加载报错)
 tls_min_version = "1.2"               # TLS 最低版本: "1.2" 或 "1.3"
@@ -33,7 +35,10 @@ config_mode = "mutable"               # 配置模式: mutable(落盘,默认) | e
 lang = "zh"                           # 错误消息语言: zh | en
 
 # ---- 日志(事件型, 不记录数据内容) ----
-# 未配置时用分平台默认路径: Windows=exe 同目录 / Linux=~/.cache/mtls-gw
+# 未配置时用分平台默认路径: Windows=exe 目录/<组件> / Linux=~/.cache/<组件>
+# 注: mtls-admin 与网关读同一 config, 为避免双进程各自滚动同一文件(rename 竞态),
+#     管理进程会把日志路径强制替换为 mtls-admin 组件路径(显式配置的共享路径也会被
+#     替换; 替换只影响本进程, 配置落盘时保持原始路径, 网关不受影响)
 log_file = "/var/log/mtls-gw/events.log"       # 系统/配置变更/证书签发吊销事件; 空=默认分平台路径
 access_log_file = "/var/log/mtls-gw/access.log" # 访问日志(大量, 单独文件): 证书/时间/通道/方法/路径/状态/字节; 空=默认分平台路径
 stdout_log_file = "/var/log/mtls-gw/stdout.log" # 标准日志(认证/启动/错误等 log.Printf, 终端+文件双写); 空=默认分平台路径

@@ -101,7 +101,7 @@ func LoadConfig(path string) (RelayConfig, error) {
 }
 
 // DefaultLogPath 返回组件运行日志的默认路径(分平台, 经 internal/logging 统一):
-// Windows = exe 同目录(便携式); Linux/其他 = 用户缓存目录(不污染安装目录)。
+// Windows = exe 目录/mtls-relay 组件子目录(便携式); Linux/其他 = 用户缓存目录(不污染安装目录)。
 func DefaultLogPath() string {
 	return logging.DefaultPath("mtls-relay", "relay.log")
 }
