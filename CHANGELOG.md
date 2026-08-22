@@ -18,7 +18,8 @@ v4 架构 + 三轮深度审计收敛:
 - **网关 reload API(管理服务拆分阶段 1)**: `POST /admin/reload`(admin 证书)全量热重载 — `db.Store.Reload()`(重读 SQLite 重建内存表, 原子替换失败保持旧) + `ConfigManager.ReloadFromDisk()`(重读 config.toml → 校验 → 新 Router, 失败不切换) + `auth.Gateway.Reload()`。`loadConfig` 抽离为 `parseConfig`(启动 fatal 包装 / reload 返回 error, 配置文件缺失 reload 必报错不静默清空路由)。完整拆分方案见 `docs/arch-management-split.md`(网关纯数据面 + 独立管理进程)。
 - **DSH 首次发送超时修复(转发机制, 二次定位)**: 主根因是 relay TCP 透传 120s 空闲杀连接切断空闲 WebSocket 长连接(dsh 回复经 WS 事件流推送, 无心跳帧; 看回复 >120s → WS 断 → 重连窗口内第一次发消息超时; SSH 直连无 relay 层则不超时)。`defaultTCPIdle 120s→12h`(frp 对照: frp 不杀空闲连接) + Dialer 显式 TCP KeepAlive 15s; 服务端 4 个 http.Server 同步 `WriteTimeout→0` + `IdleTimeout→300s`。新增防回归断言 `TestDefaultTCPIdle`/`TestGatewayTimeoutConstants`。
 - **审计收敛**: 31 批 pro 三专项 + 2 轮 flash 横向扫描, 修复 30+ 真实 bug + 25+ 安全加固; 三轮子代理复审迭代收敛(第一轮 7 并行只读审计 → 修复 17cba8f; 第二轮 4 复审发现 1 高 4 中 → 修复 6e0a456; 第三轮 3 复审全部"无必须再修" → 8e8cf9a/b629c0f)。关键修复: permissioncheck mode 检查平台门控(Windows 密钥文件拒启回归, ModeRestrict 0o077→0o007 放行 0640) / 审计事件下沉 api.Manager 双通道统一 / mtls-admin 日志强制组件路径(configmgr 落盘保持原始路径防污染) / relay 数据竞争与 /info 限流 / certsource symlink 三处覆盖 / 日志输出 C0 控制字符清洗(公共 pathutil.SanitizeForLog)。
-- **测试基线**: 235 个 Go 测试函数(-race 全绿) + 前端单测 8 + E2E 14 + 两个 CLI 黑盒测试 14。
+- **测试基线**: 235 个 Go 测试函数(-race 全绿) + 前端单测 8 + E2E 15 + 两个 CLI 黑盒测试 16。
+- **CI 首跑修复(2026-08-22 推送后真机 3 轮)**: windows-test 抓出管理桥 JSON 转义/CLI .exe/8.3 短名 EvalSymlinks 误判; WebUI E2E setup.sh 重写为双进程架构(管理拆分后签发在 mtls-admin; 两阶段 admin 激活 reload 客户端; 端口迁 57xxx 避开生产); 暴露真功能缺口 — 证书签发/吊销从不触发网关 reload → api.Manager.SetPostChange 落地; gw/admin 预检前 MkdirAll 日志目录。7 job 全绿。
 - 详见 [docs/AUDIT-CHANGELOG.md](./docs/AUDIT-CHANGELOG.md) 与 [TODO.md](./TODO.md)。
 
 ## [v0.1.0] — 2026-08

@@ -39,16 +39,16 @@
 ## 构建 / 测试 / CI
 ```bash
 go build ./cmd/mtls-gw ./cmd/mtls-gw-cli ./cmd/mtls-relay
-go test -race ./...    # 130+ 测试函数(Go 单测/集成随被测包放置)
+go test -race ./...    # 235 个测试函数(Go 单测/集成随被测包放置)
 go vet ./...
 gofmt -l cmd internal  # 应为空(CI 强制)
 ```
 - 测试内**自建临时 CA + 服务器证书**, 不依赖部署环境(改动可直接测)。
-- 前端测试: 单测 `internal/relayweb/web/test/`(8 例) + E2E `internal/relayweb/web/e2e/`(14 例, setup.sh 生成环境)。
-- CI (GitHub Actions): build + vet + gofmt + test + race, Go 1.25 + 1.26 双版本; 打 tag 自动多平台编译发 Release。
+- 前端测试: 单测 `internal/relayweb/web/test/`(8 例) + E2E `internal/relayweb/web/e2e/`(15 例, setup.sh 生成环境; E2E 端口段 57xxx, 与生产/常用段隔离)。
+- CI (GitHub Actions): 双 Go 版本(1.25/1.26) build+vet+gofmt+test+race / WebUI 单测 / playwright E2E / windows 真机测试(CNG + 平台差异) / windows+android 交叉编译; 打 tag 自动多平台编译发 Release。
 
 ## 审计历史
-pro 审计变更记录见 `docs/AUDIT-CHANGELOG.md`(28 批 × 3 专项)。
+pro 审计变更记录见 `docs/AUDIT-CHANGELOG.md`(31 批 × 3 专项 + flash 横向扫描 + 2026-08-22 三轮子代理复审迭代 + CI 首跑修复)。
 
 ## 未来方向(规划中, 未实现)
 - **TrustSource 抽象**: 把 IP 绑定抽成可插拔接口 `TrustSource.authorize(req) → 设备标识|拒绝`(IPBindSource / LanSource / 未来网络)。

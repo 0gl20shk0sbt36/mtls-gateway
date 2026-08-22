@@ -208,11 +208,11 @@ gofmt -l cmd internal        # 应为空(CI 强制)
 node --test internal/relayweb/web/test/*.test.js   # 单元测试 8 例
 # E2E(需先跑 setup.sh 生成环境)
 bash internal/relayweb/web/e2e/setup.sh /tmp/mtls-e2e
-node --test internal/relayweb/web/e2e/*.test.mjs   # 14 例
+node --test internal/relayweb/web/e2e/*.test.mjs   # 15 例
 ```
 
 - 测试内**自建临时 CA + 服务器证书**, 不依赖部署环境。
-- CI(GitHub Actions): build + vet + gofmt + test + race, Go 1.25 + 1.26 双版本; 打 tag 自动多平台编译发 Release。
+- CI(GitHub Actions): 双 Go 版本(1.25/1.26) build+vet+gofmt+test+race / WebUI 单测 / playwright E2E / windows 真机测试 / windows+android 交叉编译; 打 tag 自动多平台编译发 Release。
 
 ---
 
