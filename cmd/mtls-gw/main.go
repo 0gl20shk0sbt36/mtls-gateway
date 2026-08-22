@@ -206,15 +206,12 @@ func main() {
 
 	if merged {
 		// 合并端口: /info(匿名引导) + /admin/reload(admin 证书) 同端口路径区分
-		mm := http.NewServeMux()
-		mm.HandleFunc("/info", infoHandler(gateway, cm, accLog).ServeHTTP)
-		mm.Handle("/admin/", adminHandler(gateway, cm, evLog)) // 尾部斜杠=前缀匹配(/admin/*)
 		go func() {
 			ln, err := net.Listen("tcp", reloadListen)
 			if err != nil {
 				log.Fatalf("merged listen: %v", err)
 			}
-			startServer(ln, mm, "info+reload", "merged: /info anonymous, /admin/reload mTLS")
+			startServer(ln, mergedHandler(gateway, cm, accLog, evLog), "info+reload", "merged: /info anonymous, /admin/reload mTLS")
 		}()
 	} else {
 		if infoListen != "" {
@@ -345,6 +342,16 @@ func gatewayHandler(gw *auth.Gateway, cm *configmgr.ConfigManager, port string, 
 			acc.Write(accessEvent(rec, rt.Listen(), r.Method, r.URL.Path, code, r.ContentLength, sw.Bytes(), remote, time.Since(start)))
 		}
 	})
+}
+
+// mergedHandler 合并端口(info_listen == reload_listen)的路径分发:
+// /info 匿名可达(引导), /admin/* 必须 admin 证书 — 前缀匹配安全语义可测(pro 深度审计提示,
+// 若 /admin 前缀匹配写错则 reload 暴露给匿名, 是安全事故且需测试拦截)。
+func mergedHandler(gw *auth.Gateway, cm *configmgr.ConfigManager, accLog, evLog *eventlog.Logger) http.Handler {
+	mm := http.NewServeMux()
+	mm.HandleFunc("/info", infoHandler(gw, cm, accLog).ServeHTTP)
+	mm.Handle("/admin/", adminHandler(gw, cm, evLog)) // 尾部斜杠=前缀匹配(/admin/*)
+	return mm
 }
 
 // infoHandler /info: 无需 admin; 已登记证书即可; 返回该证书可访问的服务(按角色过滤)

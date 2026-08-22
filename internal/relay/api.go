@@ -162,6 +162,10 @@ func (m *Manager) UpdateSettings(p SettingsPatch) error {
 		}
 		if p.ServerCA != nil {
 			if err := m.relay.SetServerCA(*p.ServerCA); err != nil {
+				// 回滚内存 cfg + 已应用的 Lang(此前 SetLang 已生效, 只回滚 cfg 会语言分叉 — pro 深度审计 F4)
+				if p.Lang != nil {
+					m.relay.SetLang(oldCfg.Lang)
+				}
 				m.mu.Lock()
 				m.cfg = oldCfg // 回滚(未落盘, 磁盘保持旧值)
 				m.mu.Unlock()

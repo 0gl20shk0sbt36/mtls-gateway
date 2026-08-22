@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -212,4 +213,72 @@ func genClientCert(t *testing.T, dir, name string, caCert *x509.Certificate, caK
 		t.Fatal(err)
 	}
 	return cert
+}
+
+// pro 深度审计补: reloadClient.Trigger() 真实 mTLS 握手 — 200→true / 403→false / 网络失败→false
+// (此前只有构造测试, 握手/URL/状态码判定零覆盖 — pro 测试有效性审计点名的最高价值空白)
+func TestReloadClientTriggerHandshake(t *testing.T) {
+	dir := t.TempDir()
+	caCert, caKey, caPath, _ := genCA(t, dir)
+	// reload 客户端证书(CA 签发, 写文件供 newReloadClient 加载)
+	rcCert := genClientCert(t, dir, "reload-client", caCert, caKey)
+	certPath := filepath.Join(dir, "reload.crt")
+	keyPath := filepath.Join(dir, "reload.key")
+	os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: rcCert.Certificate[0]}), 0o600)
+	keyDER, _ := x509.MarshalPKCS8PrivateKey(rcCert.PrivateKey)
+	os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}), 0o600)
+	// 服务器证书 + 客户端证书校验
+	serverCertPath, serverKeyPath := genServerCert(t, dir, caCert, caKey)
+	serverCert, err := tls.LoadX509KeyPair(serverCertPath, serverKeyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := x509.NewCertPool()
+	pool.AddCert(caCert)
+	mkSrv := func(status int) *httptest.Server {
+		srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(status)
+		}))
+		srv.TLS = &tls.Config{Certificates: []tls.Certificate{serverCert}, ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: pool}
+		srv.StartTLS()
+		return srv
+	}
+
+	// 200 → true
+	srvOK := mkSrv(http.StatusOK)
+	defer srvOK.Close()
+	cfgOK := config.DefaultConfig()
+	cfgOK.GatewayReloadAddr = strings.TrimPrefix(srvOK.URL, "https://")
+	cfgOK.CA = caPath
+	cfgOK.ReloadCert = certPath
+	cfgOK.ReloadKey = keyPath
+	rcOK, err := newReloadClient(cfgOK)
+	if err != nil {
+		t.Fatalf("newReloadClient: %v", err)
+	}
+	if !rcOK.Trigger() {
+		t.Fatal("200 握手应返回 true")
+	}
+	// 403 → false
+	srvDeny := mkSrv(http.StatusForbidden)
+	defer srvDeny.Close()
+	cfgDeny := cfgOK
+	cfgDeny.GatewayReloadAddr = strings.TrimPrefix(srvDeny.URL, "https://")
+	rcDeny, err := newReloadClient(cfgDeny)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rcDeny.Trigger() {
+		t.Fatal("403 应返回 false")
+	}
+	// 网络失败(未监听) → false
+	cfgBad := cfgOK
+	cfgBad.GatewayReloadAddr = "127.0.0.1:1"
+	rcBad, err := newReloadClient(cfgBad)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rcBad.Trigger() {
+		t.Fatal("网络失败应返回 false")
+	}
 }

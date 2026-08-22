@@ -590,3 +590,77 @@ func TestInfoHandler_RevokedCert403(t *testing.T) {
 		t.Fatalf("匿名 /info 应 200 引导, got %d", resp2.StatusCode)
 	}
 }
+
+// pro 深度审计补: 合并端口 mux 安全语义 — /info 匿名 200(引导), /admin/reload 必须 admin 证书。
+// 若前缀匹配写错(/admin 无尾斜杠)则 reload 暴露给匿名, 是安全事故且需测试拦截。
+func TestMergedHandlerSecurity(t *testing.T) {
+	dir := t.TempDir()
+	caCert, caKey, caPath, _ := genCA(t, dir)
+	certPath, keyPath := genServerCert(t, dir, caCert, caKey)
+	store, _ := db.Open(filepath.Join(dir, "i.db"))
+	defer store.Close()
+	gw, err := auth.New(store, caPath, certPath, keyPath, false, "mtls-superadmin", "1.2")
+	if err != nil {
+		t.Fatalf("auth: %v", err)
+	}
+	cfg := config.DefaultConfig()
+	router, _ := proxy.NewRouter(nil, nil, nil)
+	tomlPath := filepath.Join(dir, "c.toml")
+	if err := os.WriteFile(tomlPath, []byte("admin_role = \"mtls-superadmin\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cm := configmgr.New(tomlPath, cfg, router)
+	h := mergedHandler(gw, cm, nil, nil)
+	srv := httptest.NewUnstartedServer(h)
+	srv.TLS = gw.ServerTLSConfig()
+	srv.StartTLS()
+	defer srv.Close()
+	pool := x509.NewCertPool()
+	pool.AddCert(caCert)
+
+	// 匿名 GET /info → 200(引导; 同端口 admin 不暴露给匿名)
+	anon := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool}}}
+	if resp, err := anon.Get(srv.URL + "/info"); err != nil {
+		t.Fatalf("anon /info: %v", err)
+	} else {
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("匿名 /info 应 200, got %d", resp.StatusCode)
+		}
+	}
+	// 匿名 POST /admin/reload → 403
+	if resp, err := anon.Post(srv.URL+"/admin/reload", "application/json", nil); err != nil {
+		t.Fatalf("anon reload: %v", err)
+	} else {
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusForbidden {
+			t.Fatalf("匿名 /admin/reload 应 403, got %d", resp.StatusCode)
+		}
+	}
+	// admin 证书 POST /admin/reload → 200(热重载链路: DB + 配置重读)
+	admCert := genClientCert(t, t.TempDir(), "adm", caCert, caKey)
+	admLeaf, _ := x509.ParseCertificate(admCert.Certificate[0])
+	store.Upsert(db.CertRecord{Serial: admLeaf.SerialNumber.String(), Name: "adm", Purposes: []string{"mtls-superadmin"}, Status: "enabled", IssuedAt: time.Now().Format(time.RFC3339), ExpiresAt: "2099-01-01"})
+	admCli := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, Certificates: []tls.Certificate{admCert}}}}
+	if resp, err := admCli.Post(srv.URL+"/admin/reload", "application/json", nil); err != nil {
+		t.Fatalf("admin reload: %v", err)
+	} else {
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("admin /admin/reload 应 200, got %d", resp.StatusCode)
+		}
+	}
+	// 普通证书(无 admin 角色)POST /admin/reload → 403
+	usrCert := genClientCert(t, t.TempDir(), "usr", caCert, caKey)
+	usrLeaf, _ := x509.ParseCertificate(usrCert.Certificate[0])
+	store.Upsert(db.CertRecord{Serial: usrLeaf.SerialNumber.String(), Name: "usr", Purposes: []string{"dsh"}, Status: "enabled", IssuedAt: time.Now().Format(time.RFC3339), ExpiresAt: "2099-01-01"})
+	usrCli := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, Certificates: []tls.Certificate{usrCert}}}}
+	if resp, err := usrCli.Post(srv.URL+"/admin/reload", "application/json", nil); err != nil {
+		t.Fatalf("user reload: %v", err)
+	} else {
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusForbidden {
+			t.Fatalf("普通证书 /admin/reload 应 403, got %d", resp.StatusCode)
+		}
+	}
+}

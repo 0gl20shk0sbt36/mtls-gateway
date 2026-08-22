@@ -282,3 +282,15 @@ func TestConfigManagerReservedRoleBranches(t *testing.T) {
 		t.Fatal("any 禁删除(内置保留字)")
 	}
 }
+
+// pro 深度审计补: ReplaceAll 必须拒绝 admin_role 进 roles 声明(与 config.Parse/AddRole 对称;
+// 此前 ReplaceAll 直接赋 m.cfg.Roles 绕过校验, 可持久化网关拒载配置)
+func TestReplaceAllRejectsAdminRoleInRoles(t *testing.T) {
+	cm, _ := testConfigManager(t, "mutable")
+	if err := cm.ReplaceAll(nil, nil, []string{cm.AdminRole(), "x"}); err == nil || !strings.Contains(err.Error(), "禁止出现在 roles 声明列表") {
+		t.Fatalf("ReplaceAll 含 admin_role 的 roles 应拒绝: %v", err)
+	}
+	if err := cm.ReplaceAll(nil, nil, []string{"x", "y"}); err != nil {
+		t.Fatalf("正常 ReplaceAll 应通过: %v", err)
+	}
+}

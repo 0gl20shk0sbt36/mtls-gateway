@@ -145,7 +145,13 @@ func enumMyCerts() ([]myCert, error) {
 			break // 枚举完毕(prev 已被本次调用释放)
 		}
 		prev = ctx
-		cert, perr := x509.ParseCertificate(unsafe.Slice(ctx.EncodedCert, int(ctx.Length)))
+		// 先拷贝 DER 到 Go 拥有内存再解析: x509.ParseCertificate 保留对输入 DER 的引用
+		// (cert.Raw = input, parser.go:896), 而输入别名枚举上下文内存 — 枚举 ctx 下一轮
+		// 即被释放, 不拷贝则 cert.Raw 悬垂(pro 深度审计 F1; 即使从 dup 解析也不够,
+		// dup 在 myCert.close 时同样释放, cert.Raw 照样悬垂)
+		raw := make([]byte, int(ctx.Length))
+		copy(raw, unsafe.Slice(ctx.EncodedCert, int(ctx.Length)))
+		cert, perr := x509.ParseCertificate(raw)
 		if perr != nil {
 			continue // 损坏条目跳过; 下一次枚举调用会释放该 ctx(不得手动释放)
 		}
@@ -272,9 +278,8 @@ func ncryptSign(kh windows.Handle, digest, sig []byte, padInfo unsafe.Pointer, f
 // BCRYPT_PKCS1_PADDING_INFO / BCRYPT_PSS_PADDING_INFO(bcrypt.h)
 type bcryptPKCS1PaddingInfo struct{ pszAlgID *uint16 }
 type bcryptPSSPaddingInfo struct {
-	pszAlgID  *uint16
-	cbSalt    uint32
-	cbTrailer uint32
+	pszAlgID *uint16
+	cbSalt   uint32 // 真实 BCRYPT_PSS_PADDING_INFO 仅两字段(对照 bcrypt.h); 曾误加 cbTrailer, 已删(F3)
 }
 
 const (

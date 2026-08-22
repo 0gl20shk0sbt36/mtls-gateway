@@ -96,6 +96,14 @@ func (m *ConfigManager) rebuild() error {
 			}
 		}
 	}
+	// admin_role 禁入 roles 声明列表: 与 config.Parse/AddRole 三处对称 —
+	// 此前 ReplaceAll 直接把请求 roles 赋给 m.cfg.Roles 绕过此校验, 可持久化网关
+	// 拒绝加载的配置(内存/磁盘分叉 + 网关重启拒载 + 提权不变量绕过, pro 深度审计抓出)
+	for _, r := range m.cfg.Roles {
+		if r == m.cfg.AdminRole {
+			return fmt.Errorf("admin_role %q 禁止出现在 roles 声明列表(提权风险)", m.cfg.AdminRole)
+		}
+	}
 	old := m.router
 	r, err := proxy.NewRouter(m.cfg.Mappings, m.cfg.Services, m.cfg.Roles)
 	if err != nil {

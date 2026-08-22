@@ -265,13 +265,21 @@ func TestRelay_BadUpstream(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 第一次连接应失败 (上游连不上), 但 listener 存活
+	// 第一次连接应失败 (上游连不上): 本地 Dial 可建立, 但 relay 拨上游失败后应关闭该连接
 	conn, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", localPort))
 	if err != nil {
 		t.Fatal(err)
 	}
-	conn.Write([]byte("x"))
-	conn.Close() // 本地连接可建立, 上行失败在 goroutine 内
+	defer conn.Close()
+	if _, err := conn.Write([]byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	// pro 深度审计补: 坏上游下读应得 EOF/错误(连接被 relay 关闭), 而非悬挂
+	conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	buf := make([]byte, 16)
+	if _, err := conn.Read(buf); err == nil {
+		t.Fatal("坏上游: 本地连接应被关闭(读应 EOF/错误)")
+	}
 
 	// 确认隧道仍注册
 	status := r.Status()

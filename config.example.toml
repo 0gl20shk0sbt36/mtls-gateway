@@ -35,6 +35,8 @@ admin_role = "mtls-superadmin"        # ★ 内置管理角色名(别用常用�
                                       #   禁止出现在业务服务 roles 里, 否则加载报错)
 tls_min_version = "1.2"               # TLS 最低版本: "1.2" 或 "1.3"
 config_mode = "mutable"               # 配置模式: mutable(落盘,默认) | ephemeral(仅内存) | immutable(只读)
+# ⚠ ephemeral 仅管理进程内存生效: 网关 /admin/reload 读磁盘文件, 不会感知 ephemeral 改动
+#   (双进程 + gateway_reload_addr 时会产生静默分叉 — pro 深度审计提示; 双进程部署请用 mutable)
 # 注: 管理 API 的配置保存会整份重写本文件(格式归一化, 注释/顺序会重排) — 手改前先备份
 lang = "zh"                           # 错误消息语言: zh | en
 

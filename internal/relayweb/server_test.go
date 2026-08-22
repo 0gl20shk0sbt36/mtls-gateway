@@ -36,10 +36,17 @@ func TestSameOrigin(t *testing.T) {
 	}
 }
 
-// 集成: 跨源请求到 /api/status → 403
+// 集成: 跨源请求到 /api/status → 403(handler 层真实 ServeHTTP; sameOrigin 检查先于 mgr 使用, nil 安全)
 func TestHandlerRejectsCrossOrigin(t *testing.T) {
-	// 用 nil Manager 会 panic — 只测 sameOrigin 层即可(上面已测); 此处验证 403 响应由包装层产生
-	_ = http.StatusForbidden
+	h := NewHandler(nil, false)
+	req := httptest.NewRequest("GET", "/api/status", nil)
+	req.Host = "127.0.0.1:18081"
+	req.Header.Set("Origin", "http://evil.com")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("跨源请求应 403, got %d", rec.Code)
+	}
 }
 
 // R3 集成: NewHandler 对非 loopback Host 返回 403; / 返回 index.html

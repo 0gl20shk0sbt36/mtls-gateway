@@ -261,3 +261,25 @@ func TestAppendLineReopensAfterNil(t *testing.T) {
 		t.Fatalf("f=nil 后写入应重开文件续记: %q err=%v", data, err)
 	}
 }
+
+// pro 深度审计补: 滚动后继续写 — 当前文件应含刚写入事件(rotate 重开成功路径内容级断言)
+func TestWriteAfterRotateContent(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "evt.log")
+	l, err := New(path, 1, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	big := strings.Repeat("x", 700*1024)
+	for i := 0; i < 3; i++ {
+		l.Write(Event{Type: "access", Cert: "c1", Msg: big})
+	}
+	if len(l.Files()) < 2 {
+		t.Fatalf("应已滚动, got %d 份文件", len(l.Files()))
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || !strings.Contains(string(data), `"type":"access"`) {
+		t.Fatalf("滚动后当前文件应含事件(重开成功): %q err=%v", data, err)
+	}
+}

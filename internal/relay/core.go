@@ -126,21 +126,34 @@ func (r *Relay) loadCertLang(certID, lang string) (tls.Certificate, error) {
 		return tls.Certificate{}, localizeLoadErr(l, certID, err)
 	}
 	r.mu.Lock()
+	// 换源防回填: SetSource 已换 src(清缓存)时, 本 goroutine 从旧源快照加载的证书
+	// 不得写回新缓存(否则旧源身份残留 ≤TTL, pro 深度审计 F6); 返回调用方一次性使用
+	if r.src != src {
+		r.mu.Unlock()
+		releaseCertKeyDelayed(c)
+		return c, nil
+	}
 	if old, ok2 := r.certCache[certID]; ok2 {
-		closeCertKey(old.cert) // 释放旧 signer(Windows CNG 密钥句柄; 普通内存密钥无 Close, 忽略)
+		releaseCertKeyDelayed(old.cert) // 延迟释放旧 signer: 在途握手可能仍持旧句柄(pro 深度审计 F2)
 	}
 	r.certCache[certID] = certCacheEntry{cert: c, loadedAt: time.Now()}
 	r.mu.Unlock()
 	return c, nil
 }
 
-// closeCertKey 释放证书私钥资源(实现 io.Closer 的 signer, 如 Windows CNG NCRYPT 句柄)。
+// keyReleaseDelay 旧 signer 延迟释放窗口: 缓存替换后, 在途 TLS 握手/旧 Transport
+// 仍可能持有旧句柄, 立即释放 → NCryptSignHash 用已释放句柄(UAF, pro 深度审计 F2)。
+// 延迟远超握手/连接建立时长(秒级), 覆盖全部在途窗口; 宁漏不 UAF(进程退出 OS 回收)。
+const keyReleaseDelay = 30 * time.Second
+
+// releaseCertKeyDelayed 延迟释放证书私钥资源(实现 io.Closer 的 signer, 如 Windows CNG NCRYPT 句柄)。
 // fileSource/dirSource 的内存密钥无 Close, 静默忽略。
-func closeCertKey(tc tls.Certificate) {
-	if tc.PrivateKey != nil {
-		if cl, ok := tc.PrivateKey.(io.Closer); ok {
-			_ = cl.Close()
-		}
+func releaseCertKeyDelayed(tc tls.Certificate) {
+	if tc.PrivateKey == nil {
+		return
+	}
+	if cl, ok := tc.PrivateKey.(io.Closer); ok {
+		time.AfterFunc(keyReleaseDelay, func() { _ = cl.Close() })
 	}
 }
 
@@ -195,7 +208,7 @@ func (r *Relay) SetSource(src certsource.Source) {
 	r.mu.Lock()
 	r.src = src
 	for k, e := range r.certCache {
-		closeCertKey(e.cert)
+		releaseCertKeyDelayed(e.cert) // 延迟释放: 在途握手/旧 Transport 仍持旧句柄(pro 深度审计 F2)
 		delete(r.certCache, k)
 	}
 	subject := r.caSubject
