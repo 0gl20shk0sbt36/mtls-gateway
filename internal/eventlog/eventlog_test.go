@@ -238,3 +238,24 @@ func TestRotateMaxFilesOne(t *testing.T) {
 		t.Fatalf("maxFiles=1 should keep <=2 files, got %d: %v", len(files), files)
 	}
 }
+
+// 审计补: rotate 重开失败置 f=nil 后, 下次写入应重试重开并续记(不再永久静默)
+func TestAppendLineReopensAfterNil(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "ev.log")
+	l, err := New(path, 1, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	// 模拟 rotate 重开失败后的状态(rotate 置 l.f=nil)
+	l.mu.Lock()
+	l.f = nil
+	l.mu.Unlock()
+	// 下次写入应重试重开并落盘
+	l.Write(Event{Type: "start", Msg: "reopen-test"})
+	data, err := os.ReadFile(path)
+	if err != nil || !strings.Contains(string(data), "reopen-test") {
+		t.Fatalf("f=nil 后写入应重开文件续记: %q err=%v", data, err)
+	}
+}

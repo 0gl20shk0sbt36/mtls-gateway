@@ -3,6 +3,7 @@ package relayweb
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -59,5 +60,25 @@ func TestNewHandlerRejectsRemoteHost(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("remote host should be 403, got %d", rec.Code)
+	}
+}
+
+// 审计补: 安全响应头(CSP / X-Frame-Options / X-Content-Type-Options)断言
+func TestSecurityHeaders(t *testing.T) {
+	h := NewHandler(nil, false) // 头在 sameOrigin 检查前设置, nil mgr 不会 panic
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Host = "127.0.0.1:18081"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if got := rec.Header().Get("Content-Security-Policy"); got == "" {
+		t.Fatal("缺 CSP 头")
+	} else if !strings.Contains(got, "default-src 'self'") {
+		t.Fatalf("CSP 异常: %s", got)
+	}
+	if got := rec.Header().Get("X-Frame-Options"); got != "DENY" {
+		t.Fatalf("X-Frame-Options = %q, want DENY", got)
+	}
+	if got := rec.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Fatalf("X-Content-Type-Options = %q, want nosniff", got)
 	}
 }

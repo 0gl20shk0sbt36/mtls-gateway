@@ -196,3 +196,19 @@ func TestCLIUnknownCommand(t *testing.T) {
 		t.Fatalf("未知命令应退出码 1, got %d", code)
 	}
 }
+
+// 审计补: --admin=<addr> 等号形式
+func TestCLIAdminEqualsForm(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `[]`)
+	}))
+	defer srv.Close()
+	addr := strings.TrimPrefix(srv.URL, "http://")
+	cmd := exec.Command(binPath, "--admin="+addr, "certs")
+	var stdout, stderr strings.Builder
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("--admin= 等号形式应可用: %v (%s)", err, stderr.String())
+	}
+}

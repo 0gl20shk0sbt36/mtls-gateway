@@ -206,3 +206,18 @@ func TestCLIUnknownCommand(t *testing.T) {
 		t.Error("stderr 应有未知命令提示")
 	}
 }
+
+// 审计补: --sock=<path> 等号形式
+func TestCLISockEqualsForm(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `[]`)
+	})
+	sock, closeFn := startUnixSock(t, handler)
+	defer closeFn()
+	cmd := exec.Command(binPath, "--sock="+sock, "list")
+	var stdout, stderr strings.Builder
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("--sock= 等号形式应可用: %v (%s)", err, stderr.String())
+	}
+}

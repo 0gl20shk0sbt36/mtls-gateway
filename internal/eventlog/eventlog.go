@@ -170,10 +170,16 @@ func (l *Logger) appendLine(b []byte) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.f == nil {
-		return
+		// rotate 重开失败后的重试路径(rotate 置 nil): 每次写入尝试重开, 恢复后自动续记
+		if err := l.open(); err != nil {
+			return // 仍失败: 丢弃本次, 不刷屏(rotate 已留痕)
+		}
 	}
 	if l.size+int64(len(b)) > l.maxSize {
 		l.rotate()
+	}
+	if l.f == nil { // rotate 重开失败(本次滚动后)
+		return
 	}
 	n, err := l.f.Write(b)
 	if err != nil || n != len(b) {

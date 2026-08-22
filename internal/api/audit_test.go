@@ -141,3 +141,26 @@ func TestNewManagerBadInputs(t *testing.T) {
 		t.Fatal("缺失 CA 文件应报错")
 	}
 }
+
+// 审计补: HTTPHandler 构建一次缓存(每请求不再 new ServeMux) — 行为等价验证
+func TestHTTPHandlerServes(t *testing.T) {
+	m := testManager(t, CertTemplate{})
+	h := m.HTTPHandler()
+	// 无 X-Auth-Purpose → 403
+	req := httptest.NewRequest(http.MethodGet, "/admin/health", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("无 admin purpose 应 403, got %d", rec.Code)
+	}
+	// 带 admin purpose → 200(缓存 handler 正常工作)
+	req2 := httptest.NewRequest(http.MethodGet, "/admin/health", nil)
+	req2.Header.Set("X-Auth-Purpose", "mtls-superadmin")
+	for i := 0; i < 2; i++ { // 连续调用等价(缓存行为稳定)
+		rec2 := httptest.NewRecorder()
+		h.ServeHTTP(rec2, req2)
+		if rec2.Code != http.StatusOK {
+			t.Fatalf("带 admin purpose 应 200(第 %d 次), got %d", i+1, rec2.Code)
+		}
+	}
+}
