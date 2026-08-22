@@ -62,14 +62,18 @@ roles = ["dsh"]                    # 允许访问的角色; "any" = 任一已登
 4. 命中映射 + 角色授权判定
 5. 反向代理转发
 
-### 1.5 管理双通道
+### 1.5 管理双通道(独立管理进程 mtls-admin)
+
+管理功能运行在**独立进程 mtls-admin** 中(与网关 mtls-gw 读同一 config.toml):
+网关是纯数据面(认证+路由+转发), 管理进程是唯一写者(DB/配置), 变更后调网关 `POST /admin/reload`
+全量热重载(内存副本只读, 原子替换)。
 
 | 通道 | 访问方式 | 权限 |
 |---|---|---|
 | Unix socket(本机 CLI) | 文件权限 600 | 直接 admin(仅 Linux) |
 | TCP admin API | mTLS 证书 | 仅 `admin_role` 证书 |
 
-CLI 与 Web 面板都是管理 API 的**对等壳**, Web 不直接调 CLI。
+CLI 与 Web 面板都是管理 API 的**对等壳**, Web 不直接调 CLI; 两者均连 mtls-admin。
 
 ---
 
@@ -103,13 +107,14 @@ cp config.example.toml /etc/mtls-gw/config.toml
 | `key_type` / `key_bits` | 签发密钥: rsa 2048/3072/4096 或 ecdsa 256/384/521 |
 | `default_days` / `admin_days` | 普通/管理证书默认有效期 |
 
-### 2.3 启动
+### 2.3 启动(两个进程)
 
 ```bash
-/usr/local/bin/mtls-gw -config /etc/mtls-gw/config.toml
+/usr/local/bin/mtls-gw   -config /etc/mtls-gw/config.toml   # 网关(纯数据面)
+/usr/local/bin/mtls-admin -config /etc/mtls-gw/config.toml  # 管理进程(签发/吊销/配置)
 ```
 
-### 2.4 签发证书(本机 CLI, Unix socket)
+### 2.4 签发证书(本机 CLI, 连 mtls-admin 的 Unix socket)
 
 ```bash
 mtls-gw-cli -sock /run/mtls-gw/mtls-gw.sock issue \
@@ -118,7 +123,8 @@ mtls-gw-cli revoke -serial <serial>
 mtls-gw-cli list
 ```
 
-> Windows 无 Unix socket, 签发走 TCP admin API(需 admin 证书)。
+> Unix socket 由 mtls-admin 提供(与网关读同一 config, sock_path 一致)。
+> Windows 无 Unix socket, 签发走 TCP admin API(需 admin 证书, admin_addr 指向 mtls-admin)。
 
 ---
 
@@ -213,7 +219,8 @@ node --test internal/relayweb/web/e2e/*.test.mjs   # 14 例
 
 | 目录 | 职责 |
 |---|---|
-| `cmd/mtls-gw` | 服务端守护进程(config 解析 + 多端口 mTLS + 管理 API) |
+| `cmd/mtls-gw` | 网关守护进程(纯数据面: 认证 + 路由 + 转发 + /info + reload) |
+| `cmd/mtls-admin` | 独立管理进程(签发/吊销/配置 CRUD, 与网关读同一配置, 变更后调网关 reload) |
 | `cmd/mtls-gw-cli` | 本机管理 CLI(Unix socket) |
 | `cmd/mtls-relay` | 客户端中继 daemon(/info 发现 → 隧道 + WebUI) |
 | `internal/db` | SQLite 持久化 + 内存权威表 |
