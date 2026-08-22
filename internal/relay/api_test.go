@@ -374,3 +374,27 @@ func TestUpdateSettings(t *testing.T) {
 		t.Errorf("落盘 tunnels 应为 []: %s", raw)
 	}
 }
+
+// 批次 B-3: Manager.Localize 导出入口(GUI 前置) — 已知错误按语言翻译, 未收录原样
+func TestManagerLocalize(t *testing.T) {
+	m, err := NewManager(nil, filepath.Join(t.TempDir(), "relay.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := m.Localize("zh", errors.New("decrypt key admin: x509: decryption password incorrect")).Error()
+	if !strings.Contains(got, "密码错误") {
+		t.Errorf("Localize(zh) = %q, 期望含 密码错误", got)
+	}
+	en := m.Localize("en", errors.New("decrypt key admin: x509: decryption password incorrect")).Error()
+	if !strings.Contains(en, "password") {
+		t.Errorf("Localize(en) = %q, 期望英文可读", en)
+	}
+	raw := errors.New("unknown error 42")
+	if m.Localize("zh", raw).Error() != raw.Error() {
+		t.Errorf("未收录错误应原样返回")
+	}
+	// 包函数与导出入口行为一致(同一实现)
+	if m.Localize("zh", raw).Error() != localizeKnown("zh", raw).Error() {
+		t.Errorf("Localize 与 localizeKnown 应一致")
+	}
+}
