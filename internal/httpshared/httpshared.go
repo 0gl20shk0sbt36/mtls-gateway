@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"time"
 
+	"mtls-gateway/internal/errs"
 	"mtls-gateway/internal/i18n"
 )
 
@@ -52,6 +53,19 @@ func LangFromRequest(r *http.Request) string {
 
 // L 按请求语言返回 i18n 字典(默认 zh)。
 func L(r *http.Request) *i18n.L { return i18n.New(LangFromRequest(r)) }
+
+// KindOfErr 返回错误的 errs.Kind 字符串(空串=未分类)。ErrWriter.Kind 的常用注入。
+func KindOfErr(err error) string { return string(errs.KindOf(err)) }
+
+// LocalizeErrImmutable 仅 errImmutable 按请求语言重翻; 其余错误原样返回。
+// 网关与管理进程的管理端点共用(现状: configmgr/proxy 的 CRUD 错误硬编码中文,
+// 完整 i18n 接入属后续工作; 结构化 errs.Kind 已覆盖状态码与高频翻译)。
+func LocalizeErrImmutable(lang string, err error) error {
+	if errs.IsKind(err, errs.KindImmutable) {
+		return i18n.New(lang).E("errImmutable")
+	}
+	return err
+}
 
 // ErrWriter 统一管理 API 错误出口: JSON 信封 {"error": msg} + 状态码 + 请求语言。
 //

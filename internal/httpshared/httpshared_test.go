@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"mtls-gateway/internal/errs"
 )
 
 // TestWriteJSON 统一 JSON 成功信封: Content-Type + 可解码
@@ -126,5 +128,26 @@ func TestErrWriterKind(t *testing.T) {
 	(ErrWriter{Status: func(err error) int { return 500 }}).Write(rec3, nil, errors.New("z"))
 	if strings.Contains(rec3.Body.String(), "kind") {
 		t.Fatalf("nil Kind 不应出现在信封: %q", rec3.Body.String())
+	}
+}
+
+// 盲测收尾: KindOfErr / LocalizeErrImmutable 共享助手(网关与管理进程共用)
+func TestKindOfErrAndLocalizeErrImmutable(t *testing.T) {
+	if got := KindOfErr(errs.New(errs.KindConflict, "x")); got != "conflict" {
+		t.Fatalf("KindOfErr = %q, want conflict", got)
+	}
+	if got := KindOfErr(errors.New("plain")); got != "" {
+		t.Fatalf("KindOfErr(plain) = %q, want 空串", got)
+	}
+	// errImmutable: 按语言重翻
+	imm := errs.New(errs.KindImmutable, "config is immutable")
+	zh := LocalizeErrImmutable("zh", imm).Error()
+	if !strings.Contains(zh, "只读") {
+		t.Fatalf("LocalizeErrImmutable(zh) = %q, 期望含只读", zh)
+	}
+	// 非 errImmutable 原样
+	other := errors.New("some error")
+	if LocalizeErrImmutable("zh", other).Error() != other.Error() {
+		t.Fatal("非 immutable 错误应原样")
 	}
 }

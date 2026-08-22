@@ -29,7 +29,6 @@ import (
 	"mtls-gateway/internal/db"
 	"mtls-gateway/internal/eventlog"
 	"mtls-gateway/internal/httpshared"
-	"mtls-gateway/internal/i18n"
 	"mtls-gateway/internal/pathutil"
 	"mtls-gateway/internal/permissioncheck"
 	"mtls-gateway/internal/proxy"
@@ -391,26 +390,14 @@ func infoHandler(gw *auth.Gateway, cm *configmgr.ConfigManager, acc *eventlog.Lo
 }
 
 // adminHandler 管理 TCP handler: 认证 + 只允许 admin_role
-// gwErrLang 按请求 X-Lang 返回错误字典(默认 zh)
-func gwErrLang(r *http.Request) *i18n.L {
-	if lang := r.Header.Get("X-Lang"); lang == "en" || lang == "zh" {
-		return i18n.New(lang)
-	}
-	return i18n.New("zh")
-}
-
-// gwErr 输出错误; 状态码复用 api.ErrStatus(不再固定 400)。
-// 注意: 目前仅 errImmutable 按请求语言重翻; 其余 configmgr/proxy 的 CRUD 错误是硬编码中文,
-// 完整 i18n 接入属后续工作。错误本地化/状态码机制分散三处(此处 + relay.localizeKnown + api.StatusFromKeywords),
-// 新增错误串时需同步对应处, 否则状态码或翻译会静默漂移。
-func gwErr(w http.ResponseWriter, r *http.Request, err error) {
-	msg := err.Error()
-	l := gwErrLang(r)
-	if localized := l.E("errImmutable").Error(); msg == i18n.New("zh").S("errImmutable") || msg == i18n.New("en").S("errImmutable") || msg == localized {
-		msg = localized
-	}
-	http.Error(w, msg, api.ErrStatus(err))
-}
+// gwErr 输出管理端点错误(JSON 信封 + 状态码 + kind): 与 mtls-admin 共用
+// httpshared.ErrWriter 统一出口 — 状态码走 api.ErrStatus(errs.Kind 结构化优先),
+// errImmutable 按 X-Lang 重翻, kind 随信封上传; 消除旧"分散三处"漂移。
+var gwErr = httpshared.ErrWriter{
+	Status:   api.ErrStatus,
+	Localize: httpshared.LocalizeErrImmutable,
+	Kind:     httpshared.KindOfErr,
+}.Write
 
 // adminHandler 网关管理端点(管理服务拆分后仅剩 reload):
 //   - POST /admin/reload — 全量热重载(DB + 配置), 由独立 mtls-admin 进程调用(admin 证书)
