@@ -678,8 +678,7 @@ func (m *Manager) Handler() http.Handler {
 	})
 	mux.HandleFunc("PUT /api/settings", func(w http.ResponseWriter, r *http.Request) {
 		var p SettingsPatch
-		if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
-			writeErr(w, r, fmt.Errorf("bad settings body: %w", err))
+		if !decodeJSON(w, r, &p) { // 含 MaxBytesReader 4MB 上限(此前直接 Decode 绕过限流 — 测试审计发现)
 			return
 		}
 		if err := m.UpdateSettings(p); err != nil {

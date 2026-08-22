@@ -243,3 +243,31 @@ func TestReload(t *testing.T) {
 		t.Fatalf("reload 后吊销状态应同步: %+v", got)
 	}
 }
+
+// 中危(测试全面性审计): Reload 失败(数据库文件损坏)必须保持旧内存表可用
+// — 网关 reload 失败不切换是核心承诺, 需防回归。
+func TestReloadFailureKeepsOldTable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	rec := CertRecord{Serial: "3001", Name: "dev-a", Purposes: []string{"dsh"}, Status: "enabled", ExpiresAt: "2099-01-01"}
+	if err := s.Upsert(rec); err != nil {
+		t.Fatal(err)
+	}
+	// 让底层读取失败: 删表(WAL 模式下覆盖文件不可靠 — 空文件=合法空库,
+	// 新 inode 不影响已开连接)。buildTable 查询失败 → Reload 报错且旧表保持。
+	if _, err := s.sqlite.Exec(`DROP TABLE certs`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Reload(); err == nil {
+		t.Fatal("底层读失败的 Reload 应报错")
+	}
+	// 旧内存表保持可用
+	got, ok := s.Get("3001")
+	if !ok || got.Name != "dev-a" || !got.HasPurpose("dsh") {
+		t.Fatalf("Reload 失败后旧表应保持: %+v ok=%v", got, ok)
+	}
+}

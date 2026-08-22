@@ -200,7 +200,7 @@ relay 自带 WebUI(`--listen-admin :28083`):
 ## 5. 测试
 
 ```bash
-go test -race ./...          # Go 单测/集成(514 个测试函数, -race 全绿)
+go test -race ./...          # Go 单测/集成(235 个测试函数, -race 全绿)
 go vet ./...
 gofmt -l cmd internal        # 应为空(CI 强制)
 

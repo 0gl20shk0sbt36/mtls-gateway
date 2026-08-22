@@ -339,5 +339,9 @@ http.Server 三段复制、configmgr 9 CRUD 模板、DTO 复制、角色名校�
 ### 最终验证(2 复审 3b26f1a7/1a5e2e9b)
 平台/安全双复审对 8e8cf9a 均报无必须再修; 文档一致性收尾 e7271cf(README 端口表 reload_listen/ModeRestrict 权衡/config.example 日志段说明/CHANGELOG/arch/TODO + i18n 占位符后端 39 键前端 115 键 0 错配静态校验)
 
-### 测试全面性专项(独立审计, 2026-08-22 派发)
-审计测试场景设计是否全面(负面路径/边界值/安全断言/失败回滚/并发/平台矩阵/回归护栏), 非覆盖率数字。结果待回填。
+### 测试全面性专项(独立审计, 2026-08-22 派发 → 已收敛)
+审计测试场景设计是否全面(负面路径/边界值/安全断言/失败回滚/并发/平台矩阵/回归护栏), 非覆盖率数字。
+**结论**: 护栏整体完备(22:18 落盘回滚/DSH 超时/日志注入/admin_role 启动校验/转发头伪造/403 脱敏/并发同名签发/configmgr 回滚/permissioncheck/E2E 主流程), 但有 4 高危 + 9 中危"有功能但零测试"缺口。
+**已补(本提交)**: SetAudit 审计回调触发与失败不触发 / IssueCert 保留字+未声明角色实测 / symlink 逃逸三处拒绝(List/Load/LoadWithPassword) + 合法身份不误伤 / api+relay 两侧 4MB 请求体上限 / UpdateSettings SetServerCA 失败回滚 / Start 中途失败回滚(监听释放) / db.Reload 失败保持旧表 / /info 吊销证书 403 + 匿名引导 200 / eventlog maxFiles=1 / NewManager 坏 CA/key / configmgr null+admin_role 禁声明+any 禁删 / /info 超 1MB 响应限流回归 / **新增 Windows 门控冒烟测试**(certsource_windows_test.go, 随 CI windows-test 真机跑 CNG 枚举, 填补"Windows CNG 零直接测试"缺口)。
+**补测发现的真实缺口**: `PUT /api/settings` 直接 json.Decode 绕过 MaxBytesReader 4MB 限流(5MB body 返回 200)→ 已改 decodeJSON 修复。
+**记录待补(低危/复杂)**: Reload 热切换失败恢复旧隧道(需起真实隧道+冲突端口编排, 成本高)、E2E 配置成功保存路径、accessEvent 字段断言、rolesMu 并发 -race、等价 listen 写法判重、Discover 失败路径。

@@ -583,3 +583,35 @@ func TestReloadCertIDSwitch(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 }
+
+// 中危(测试全面性审计): Start 中途失败必须回滚已启动的隧道(监听释放,
+// 不留半启动状态) — 坏隧道不卡死后续启动 + 不残留监听的承诺。
+func TestRelay_StartRollbackOnFailure(t *testing.T) {
+	h := newHarness(t)
+	defer h.close()
+	src := h.buildSrc(t)
+
+	occupied := freePort(t)
+	ln, err := net.Listen("tcp", "127.0.0.1:"+fmt.Sprintf("%d", occupied))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	first := freePort(t)
+
+	r := New(src)
+	defer r.Close()
+	cfg := RelayConfig{ListenHost: "127.0.0.1", ServerAddr: h.gwAddr, ServerCAFile: h.caPath, Tunnels: []Tunnel{
+		{Service: "s1", Routes: []TunnelRoute{{Channel: ":" + gwPortOf(h.gwAddr), Local: ":" + fmt.Sprintf("%d", first)}}, CertID: h.clientPairPath, Enabled: true},
+		{Service: "s2", Routes: []TunnelRoute{{Channel: ":" + gwPortOf(h.gwAddr), Local: ":" + fmt.Sprintf("%d", occupied)}}, CertID: h.clientPairPath, Enabled: true},
+	}}
+	if err := r.Start(cfg); err == nil {
+		t.Fatal("占用端口应导致 Start 失败")
+	}
+	// 回滚断言: 第一个隧道端口已释放, 可重新 bind
+	ln2, err := net.Listen("tcp", "127.0.0.1:"+fmt.Sprintf("%d", first))
+	if err != nil {
+		t.Fatalf("Start 失败后第一个隧道监听未释放(回滚缺失): %v", err)
+	}
+	ln2.Close()
+}

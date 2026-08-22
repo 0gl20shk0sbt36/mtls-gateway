@@ -540,3 +540,53 @@ func TestGatewayHandlerDotSegmentNormalized(t *testing.T) {
 		t.Fatalf("backend should receive normalized path, got: %q", b)
 	}
 }
+
+// 中危(测试全面性审计): /info 对已吊销证书必须 403(有证书但认证失败 ≠ 匿名引导)
+func TestInfoHandler_RevokedCert403(t *testing.T) {
+	dir := t.TempDir()
+	caCert, caKey, caPath, _ := genCA(t, dir)
+	certPath, keyPath := genServerCert(t, dir, caCert, caKey)
+	store, _ := db.Open(filepath.Join(dir, "i.db"))
+	defer store.Close()
+	gw, err := auth.New(store, caPath, certPath, keyPath, false, "mtls-superadmin", "1.2")
+	if err != nil {
+		t.Fatalf("auth: %v", err)
+	}
+	cfg := config.DefaultConfig()
+	router, _ := proxy.NewRouter(nil, nil, nil)
+	cm := configmgr.New(filepath.Join(dir, "c.toml"), cfg, router)
+	h := infoHandler(gw, cm, nil)
+	srv := httptest.NewUnstartedServer(h)
+	srv.TLS = gw.ServerTLSConfig()
+	srv.StartTLS()
+	defer srv.Close()
+
+	// 已吊销证书 → 403
+	cert := genClientCert(t, t.TempDir(), "revoked-dev", caCert, caKey)
+	leaf, _ := x509.ParseCertificate(cert.Certificate[0])
+	if err := store.Upsert(db.CertRecord{Serial: leaf.SerialNumber.String(), Name: "revoked-dev", Purposes: []string{"dsh"}, Status: "revoked", IssuedAt: time.Now().Format(time.RFC3339), ExpiresAt: "2099-01-01"}); err != nil {
+		t.Fatal(err)
+	}
+	pool := x509.NewCertPool()
+	pool.AddCert(caCert)
+	cl := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, Certificates: []tls.Certificate{cert}}}}
+	resp, err := cl.Get(srv.URL + "/info")
+	if err != nil {
+		t.Fatalf("info: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("已吊销证书 /info 应 403, got %d", resp.StatusCode)
+	}
+
+	// 真匿名(无证书) → 200 引导(返回 CA), 不受吊销影响
+	anon := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool}}}
+	resp2, err := anon.Get(srv.URL + "/info")
+	if err != nil {
+		t.Fatalf("anon info: %v", err)
+	}
+	resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("匿名 /info 应 200 引导, got %d", resp2.StatusCode)
+	}
+}

@@ -264,3 +264,17 @@ func entries2(dir string) []string {
 	}
 	return out
 }
+
+// 中危(测试全面性审计): 保留字分支 — null/admin_role 禁声明, "any" 禁删
+func TestConfigManagerReservedRoleBranches(t *testing.T) {
+	cm, _ := testConfigManager(t, "mutable")
+	if err := cm.AddRole("null"); err == nil {
+		t.Fatal("null 禁声明")
+	}
+	if err := cm.AddRole(cm.AdminRole()); err == nil {
+		t.Fatal("admin_role 禁声明为普通角色")
+	}
+	if err := cm.DeleteRole("any"); err == nil {
+		t.Fatal("any 禁删除(内置保留字)")
+	}
+}

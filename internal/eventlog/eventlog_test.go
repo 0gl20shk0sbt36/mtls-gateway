@@ -220,3 +220,21 @@ func TestTextModeDisabled(t *testing.T) {
 		t.Fatal("nil Logger 的 TextWriter 应为 nil")
 	}
 }
+
+// 中危(测试全面性审计): maxFiles=1 语义 — 只留当前 + 1 份历史(≤2 个文件)
+func TestRotateMaxFilesOne(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "evt3.log")
+	l, err := New(path, 1, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	big := strings.Repeat("z", 700*1024)
+	for i := 0; i < 6; i++ {
+		l.Write(Event{Type: "access", Cert: "c1", Msg: big})
+	}
+	if files := l.Files(); len(files) > 2 {
+		t.Fatalf("maxFiles=1 should keep <=2 files, got %d: %v", len(files), files)
+	}
+}
