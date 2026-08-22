@@ -312,41 +312,11 @@ func (rt *tunnelRuntime) handleConn(local net.Conn) {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		buf := make([]byte, 32*1024)
-		for {
-			n, err := local.Read(buf)
-			if n > 0 {
-				if _, werr := upstream.Write(buf[:n]); werr != nil {
-					return
-				}
-				atomic.AddInt64(&rt.metrics.bytesIn, int64(n))
-				touch()
-			}
-			if err != nil {
-				// 本地 EOF: 半关闭传播到上游(tls.Conn/TCPConn 均支持), 让对端读到 EOF
-				if cw, ok := upstream.(interface{ CloseWrite() error }); ok {
-					cw.CloseWrite()
-				}
-				return
-			}
-		}
+		copyLoop(local, upstream, &rt.metrics.bytesIn, touch, true) // 本地→上游: 半关闭传播
 	}()
 	go func() {
 		defer wg.Done()
-		buf := make([]byte, 32*1024)
-		for {
-			n, err := upstream.Read(buf)
-			if n > 0 {
-				if _, werr := local.Write(buf[:n]); werr != nil {
-					return
-				}
-				atomic.AddInt64(&rt.metrics.bytesOut, int64(n))
-				touch()
-			}
-			if err != nil {
-				return
-			}
-		}
+		copyLoop(upstream, local, &rt.metrics.bytesOut, touch, false)
 	}()
 	// 空闲超时监控: 超过 idle 无数据流动才关闭; 有流动则继续; idle<=0 跳过
 	done := make(chan struct{})
@@ -374,6 +344,32 @@ func (rt *tunnelRuntime) handleConn(local net.Conn) {
 				return
 			}
 			timer.Reset(idle) // 有流动: 重置计时器再等一个 idle
+		}
+	}
+}
+
+// copyLoop 单向透传: src → dst, 计字节数并刷新 idle 时间戳。
+// 可读性审计: 原 handleConn 两个 copy goroutine 完全重复, 抽公共 helper。
+// halfClose: src 读到 EOF 时向 dst 传播半关闭(让对端读到 EOF, TCP 透传语义)。
+func copyLoop(src, dst net.Conn, counter *int64, touch func(), halfClose bool) {
+	buf := make([]byte, 32*1024)
+	for {
+		n, err := src.Read(buf)
+		if n > 0 {
+			if _, werr := dst.Write(buf[:n]); werr != nil {
+				return
+			}
+			atomic.AddInt64(counter, int64(n))
+			touch()
+		}
+		if err != nil {
+			if halfClose {
+				// 半关闭传播(tls.Conn/TCPConn 均支持), 让对端读到 EOF
+				if cw, ok := dst.(interface{ CloseWrite() error }); ok {
+					cw.CloseWrite()
+				}
+			}
+			return
 		}
 	}
 }
