@@ -439,7 +439,7 @@ func (m *Manager) handler(isLocal bool) http.Handler {
 	mux.HandleFunc("POST /admin/certs/issue", func(w http.ResponseWriter, r *http.Request) {
 		if !isLocal {
 			// 远程通道: 管理 API 只给 admin 用途 (由外层 middleware 检查, 这里再兜底)
-			if r.Header.Get("X-Auth-Purpose") != m.AdminRole {
+			if !httpshared.IsAdminAuth(r) {
 				apiErrWriter.Write(w, r, errs.New(errs.KindAdminDenied, "admin required"))
 				return
 			}
@@ -461,7 +461,7 @@ func (m *Manager) handler(isLocal bool) http.Handler {
 		httpshared.WriteJSON(w, resp)
 	})
 	mux.HandleFunc("POST /admin/certs/revoke", func(w http.ResponseWriter, r *http.Request) {
-		if !isLocal && r.Header.Get("X-Auth-Purpose") != m.AdminRole {
+		if !isLocal && !httpshared.IsAdminAuth(r) {
 			apiErrWriter.Write(w, r, errs.New(errs.KindAdminDenied, "admin required"))
 			return
 		}
@@ -486,7 +486,7 @@ func (m *Manager) handler(isLocal bool) http.Handler {
 		httpshared.WriteJSON(w, map[string]bool{"ok": true})
 	})
 	mux.HandleFunc("GET /admin/certs", func(w http.ResponseWriter, r *http.Request) {
-		if !isLocal && r.Header.Get("X-Auth-Purpose") != m.AdminRole {
+		if !isLocal && !httpshared.IsAdminAuth(r) {
 			apiErrWriter.Write(w, r, errs.New(errs.KindAdminDenied, "admin required"))
 			return
 		}
@@ -499,12 +499,12 @@ func (m *Manager) handler(isLocal bool) http.Handler {
 }
 
 // HTTPHandler 返回可挂到 TCP mTLS 服务器的管理 handler
-// 外层认证通过后设置 X-Auth-Purpose 头, 这里按用途放行
+// 外层认证通过后注入 admin 授权 context(httpshared.WithAdminAuth), 这里只读 context 放行
 func (m *Manager) HTTPHandler() http.Handler {
 	inner := m.handler(false) // 构建一次: 此前每请求 new ServeMux(L3 债; 路由读 Manager 状态均持锁, 缓存安全)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// 管理路径只允许 admin 用途(端点均为 /admin/*)
-		if r.Header.Get("X-Auth-Purpose") != m.AdminRole {
+		// 管理路径只允许 admin 用途(端点均为 /admin/*); 无外层授权标记 = 拒绝(fail-closed)
+		if !httpshared.IsAdminAuth(r) {
 			apiErrWriter.Write(w, r, errs.New(errs.KindAdminDenied, "admin required"))
 			return
 		}

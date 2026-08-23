@@ -122,6 +122,9 @@ func (m *ConfigManager) rebuild() error {
 
 // ReloadFromDisk 重读配置文件并全量热重载(管理进程改配置后经 /admin/reload 调用)。
 // 先解析+校验+构建新 router, 再原子替换(mode/Lang 同步); 任一步失败保持旧配置继续服务(失败不切换)。
+// 安全字段(admin_role/require_ip_bind/tls_min_version)不热重载 — 网关 auth.New 启动固化,
+// 接受新值会造成"配置校验按新值、授权闸门按旧值"分叉(S-2, pro 前瞻审计): 旧 admin 证书
+// 会 stale-open 直到重启。检测到任一变更 → 拒绝 reload 并报错, 迫使运维重启两进程。
 func (m *ConfigManager) ReloadFromDisk() error {
 	cfg, err := config.Parse(m.path)
 	if err != nil {
@@ -129,6 +132,12 @@ func (m *ConfigManager) ReloadFromDisk() error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if cfg.AdminRole != m.cfg.AdminRole ||
+		cfg.RequireIPBindResolved() != m.cfg.RequireIPBindResolved() ||
+		cfg.TLSMinVersion != m.cfg.TLSMinVersion {
+		return errs.New(errs.KindBadRequest,
+			"reload 拒绝: admin_role/require_ip_bind/tls_min_version 变更需重启两个进程(网关授权闸门启动固化, 热重载不同步)")
+	}
 	r, err := proxy.NewRouter(cfg.Mappings, cfg.Services, cfg.Roles)
 	if err != nil {
 		return fmt.Errorf("reload config: %w", err)

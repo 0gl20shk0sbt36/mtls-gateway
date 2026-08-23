@@ -24,6 +24,8 @@ type (
 	IssueRequest  = types.IssueRequest
 	IssueResponse = types.IssueResponse
 	MappingInfo   = types.MappingInfo
+	ServiceInfo   = types.ServiceInfo
+	ChannelInfo   = types.ChannelInfo
 )
 
 // 管理操作请求/响应 (与服务端 internal/api 的 IssueRequest/IssueResponse 对齐)

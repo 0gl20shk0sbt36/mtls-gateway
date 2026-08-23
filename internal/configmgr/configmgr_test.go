@@ -200,3 +200,43 @@ func TestConfigManagerReloadFromDisk(t *testing.T) {
 		t.Fatal("配置文件缺失 reload 应报错")
 	}
 }
+
+// S-2 防回归(pro 前瞻审计): ReloadFromDisk 拒绝安全字段(admin_role/require_ip_bind/
+// tls_min_version)变更 — 网关 auth 启动固化, 接受新值会造成"校验新值/闸门旧值"分叉,
+// admin_role 轮换时旧 admin 证书 stale-open 直到重启。
+func TestReloadRejectsSecurityFieldChange(t *testing.T) {
+	cm, path := testConfigManager(t, "mutable")
+	initial := "roles = [\"x\"]\n\n[[mappings]]\nid = \"m1\"\nlisten = \":9601\"\ntarget = \"http://127.0.0.1:1\"\n\n[[services]]\nname = \"s1\"\nchannels = [\"m1\"]\nroles = [\"x\"]\n"
+	if err := os.WriteFile(path, []byte(initial), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// 三种安全字段任一变更 → 拒绝 + 状态保持
+	variants := map[string]string{
+		"admin_role":      "admin_role = \"opsadmin\"\n",
+		"require_ip_bind": "require_ip_bind = false\n",
+		"tls_min_version": "tls_min_version = \"1.3\"\n",
+	}
+	for name, extra := range variants {
+		changed := extra + initial
+		if err := os.WriteFile(path, []byte(changed), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := cm.ReloadFromDisk(); err == nil {
+			t.Fatalf("%s 变更应被拒绝(S-2)", name)
+		}
+		// 状态保持: 旧 admin_role 等仍生效, mappings 不变
+		if n := len(cm.Mappings()); n != 1 {
+			t.Fatalf("%s 拒绝后 mappings 应保持 1, got %d", name, n)
+		}
+		if cm.AdminRole() != config.DefaultConfig().AdminRole {
+			t.Fatalf("%s 拒绝后 admin_role 应保持默认, got %q", name, cm.AdminRole())
+		}
+	}
+	// 恢复原配置后 reload 成功
+	if err := os.WriteFile(path, []byte(initial), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := cm.ReloadFromDisk(); err != nil {
+		t.Fatalf("恢复后 reload 应成功: %v", err)
+	}
+}

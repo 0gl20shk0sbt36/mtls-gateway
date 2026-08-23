@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"mtls-gateway/internal/db"
+	"mtls-gateway/internal/httpshared"
 )
 
 // 高危(测试全面性审计): 审计回调 SetAudit — 签发/吊销成功触发, 失败不触发。
@@ -143,24 +144,50 @@ func TestNewManagerBadInputs(t *testing.T) {
 }
 
 // 审计补: HTTPHandler 构建一次缓存(每请求不再 new ServeMux) — 行为等价验证
+// S-1 加固后: 授权经 httpshared.WithAdminAuth context 传递, 请求头不再可信
 func TestHTTPHandlerServes(t *testing.T) {
 	m := testManager(t, CertTemplate{})
 	h := m.HTTPHandler()
-	// 无 X-Auth-Purpose → 403
+	// 无 admin 授权 context → 403(fail-closed)
 	req := httptest.NewRequest(http.MethodGet, "/admin/health", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {
-		t.Fatalf("无 admin purpose 应 403, got %d", rec.Code)
+		t.Fatalf("无 admin 授权应 403, got %d", rec.Code)
 	}
-	// 带 admin purpose → 200(缓存 handler 正常工作)
-	req2 := httptest.NewRequest(http.MethodGet, "/admin/health", nil)
-	req2.Header.Set("X-Auth-Purpose", "mtls-superadmin")
+	// S-1: 伪造 X-Auth-Purpose 头不再有效(已废弃, 内层只认 context)
+	reqForged := httptest.NewRequest(http.MethodGet, "/admin/health", nil)
+	reqForged.Header.Set("X-Auth-Purpose", "mtls-superadmin")
+	recForged := httptest.NewRecorder()
+	h.ServeHTTP(recForged, reqForged)
+	if recForged.Code != http.StatusForbidden {
+		t.Fatalf("伪造 X-Auth-Purpose 头应 403(S-1), got %d", recForged.Code)
+	}
+	// 带 admin 授权 context → 200(缓存 handler 正常工作)
+	req2 := httpshared.WithAdminAuth(httptest.NewRequest(http.MethodGet, "/admin/health", nil))
 	for i := 0; i < 2; i++ { // 连续调用等价(缓存行为稳定)
 		rec2 := httptest.NewRecorder()
 		h.ServeHTTP(rec2, req2)
 		if rec2.Code != http.StatusOK {
-			t.Fatalf("带 admin purpose 应 200(第 %d 次), got %d", i+1, rec2.Code)
+			t.Fatalf("带 admin 授权应 200(第 %d 次), got %d", i+1, rec2.Code)
 		}
+	}
+}
+
+// S-1 防回归: 内层 handler(isLocal=false)同样只认 context — 无外层授权 = 403
+func TestHandlerRemoteRequiresAdminContext(t *testing.T) {
+	m := testManager(t, CertTemplate{})
+	inner := m.handler(false)
+	req := httptest.NewRequest(http.MethodGet, "/admin/certs", nil)
+	rec := httptest.NewRecorder()
+	inner.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("远程 handler 无授权 context 应 403, got %d", rec.Code)
+	}
+	req2 := httpshared.WithAdminAuth(httptest.NewRequest(http.MethodGet, "/admin/certs", nil))
+	rec2 := httptest.NewRecorder()
+	inner.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("远程 handler 带授权 context 应 200, got %d", rec2.Code)
 	}
 }

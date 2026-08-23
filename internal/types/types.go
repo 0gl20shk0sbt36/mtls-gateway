@@ -139,3 +139,15 @@ type MappingInfo struct {
 	Listen string `json:"listen"`
 	Target string `json:"target"`
 }
+
+// ChannelInfo /info 返回的通道信息(服务端→relay 发现协议 wire 契约)
+type ChannelInfo struct {
+	Listen string `json:"listen"` // ":9443" 或 ":9445/admin"
+	Target string `json:"target"` // 后端 URL
+}
+
+// ServiceInfo /info 返回的服务信息(含其全部通道)
+type ServiceInfo struct {
+	Name     string        `json:"name"`     // 服务名
+	Channels []ChannelInfo `json:"channels"` // 该服务的通道列表
+}

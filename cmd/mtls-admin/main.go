@@ -417,8 +417,8 @@ func adminHandler(gw *auth.Gateway, mgr *api.Manager, cm *configmgr.ConfigManage
 			http.Error(w, "admin cert required", http.StatusForbidden)
 			return
 		}
-		r.Header.Set("X-Auth-Purpose", gw.AdminRole)
-		mux.ServeHTTP(w, r)
+		// 授权结论经 context 传递(S-1 加固): 内层 handler 只读 context, 不再信任请求头
+		mux.ServeHTTP(w, httpshared.WithAdminAuth(r))
 	})
 }
 

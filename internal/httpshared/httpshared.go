@@ -9,6 +9,7 @@
 package httpshared
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"time"
@@ -53,6 +54,26 @@ func LangFromRequest(r *http.Request) string {
 
 // L 按请求语言返回 i18n 字典(默认 zh)。
 func L(r *http.Request) *i18n.L { return i18n.New(LangFromRequest(r)) }
+
+// —— 管理 API 授权上下文 ——
+//
+// 授权结论(mTLS + admin_role 校验通过)经 context 传递, 不用客户端可控的请求头
+// (X-Auth-Purpose 已废弃): 内层 handler 只读 context, 任何绕过外层中间件的挂载
+// 路径都会 fail-closed。S-1 安全加固(pro 前瞻审计 2026-08-23): GUI 阶段"换方式
+// 挂载 admin API"不会再意外产生提权旁路。
+type adminCtxKey struct{}
+
+// WithAdminAuth 标记请求已通过外层管理授权(Authorize + IsAdmin)。
+// 由 mtls-admin 外层中间件在认证通过后调用, 返回带标记的新请求。
+func WithAdminAuth(r *http.Request) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), adminCtxKey{}, true))
+}
+
+// IsAdminAuth 检查请求是否已通过外层管理授权(无标记 = 未授权, 内层必须拒绝)。
+func IsAdminAuth(r *http.Request) bool {
+	ok, _ := r.Context().Value(adminCtxKey{}).(bool)
+	return ok
+}
 
 // KindOfErr 返回错误的 errs.Kind 字符串(空串=未分类)。ErrWriter.Kind 的常用注入。
 func KindOfErr(err error) string { return string(errs.KindOf(err)) }

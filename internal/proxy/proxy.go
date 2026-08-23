@@ -27,10 +27,12 @@ import (
 
 // 类型别名: DTO 实体在 internal/types(消除 config→proxy 反向依赖 + 跨包复制)。
 type (
-	Mapping    = types.Mapping
-	HeaderRule = types.HeaderRule
-	HeaderVars = types.HeaderVars
-	ServiceCfg = types.ServiceCfg
+	Mapping     = types.Mapping
+	HeaderRule  = types.HeaderRule
+	HeaderVars  = types.HeaderVars
+	ServiceCfg  = types.ServiceCfg
+	ServiceInfo = types.ServiceInfo
+	ChannelInfo = types.ChannelInfo
 )
 
 // 哨兵常量/校验: 实体在 internal/types(proxy 内部沿用短名)
@@ -38,18 +40,6 @@ const (
 	RoleAny  = types.RoleAny
 	RoleNull = types.RoleNull
 )
-
-// ChannelInfo /info 返回的通道信息
-type ChannelInfo struct {
-	Listen string `json:"listen"`
-	Target string `json:"target"`
-}
-
-// ServiceInfo /info 返回的服务信息
-type ServiceInfo struct {
-	Name     string        `json:"name"`
-	Channels []ChannelInfo `json:"channels"`
-}
 
 // route 编译后的映射
 type route struct {
@@ -408,6 +398,8 @@ func newReverseProxy(target *url.URL) *httputil.ReverseProxy {
 
 // SanitizeHeader 移除可能伪造的转发头(由网关自己生成)。
 // 补全 RFC 7239 Forwarded 及常见代理/URL 重写头, 防已认证客户端伪造直达后端的路径级访问控制。
+// X-Auth-Purpose 一并删除(S-1 加固): 该头曾是管理 API 内部授权标记, 已改 context 传递;
+// 删除它防止未来管理 API 经网关 mapping 暴露时客户端可控该头。
 func SanitizeHeader(r *http.Request) {
 	r.Header.Del("X-Forwarded-For")
 	r.Header.Del("X-Real-Ip")
@@ -418,6 +410,7 @@ func SanitizeHeader(r *http.Request) {
 	r.Header.Del("X-Original-URL")
 	r.Header.Del("X-Rewrite-URL")
 	r.Header.Del("Via")
+	r.Header.Del("X-Auth-Purpose")
 }
 
 // sanitizeLogPath 清洗日志输出的路径: 删除 CR/LF 及其余 C0 控制字符(含 ANSI ESC)。

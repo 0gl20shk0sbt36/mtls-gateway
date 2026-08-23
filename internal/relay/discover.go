@@ -22,17 +22,6 @@ import (
 )
 
 // ServiceInfo 服务端 /info 返回的一个服务(含其全部通道)
-type ServiceInfo struct {
-	Name     string        `json:"name"`     // 服务名
-	Channels []ChannelInfo `json:"channels"` // 该服务的通道列表
-}
-
-// ChannelInfo 服务的一个通道
-type ChannelInfo struct {
-	Listen string `json:"listen"` // ":9443" 或 ":9445/admin"
-	Target string `json:"target"` // 后端 URL
-}
-
 // DiscoverResult /info 响应包装
 type DiscoverResult struct {
 	Services []ServiceInfo `json:"services"`

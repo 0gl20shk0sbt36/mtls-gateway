@@ -27,12 +27,12 @@ func TestResolveChannelIndexIDBeforeIndex(t *testing.T) {
 func TestSanitizeHeaderFull(t *testing.T) {
 	r := &http.Request{Header: http.Header{}}
 	for _, h := range []string{"X-Forwarded-For", "X-Real-Ip", "X-Forwarded-Proto", "X-Forwarded-Host",
-		"X-Forwarded-Server", "Forwarded", "X-Original-URL", "X-Rewrite-URL", "Via"} {
+		"X-Forwarded-Server", "Forwarded", "X-Original-URL", "X-Rewrite-URL", "Via", "X-Auth-Purpose"} {
 		r.Header.Set(h, "evil")
 	}
 	SanitizeHeader(r)
 	for _, h := range []string{"X-Forwarded-For", "X-Real-Ip", "X-Forwarded-Proto", "X-Forwarded-Host",
-		"X-Forwarded-Server", "Forwarded", "X-Original-URL", "X-Rewrite-URL", "Via"} {
+		"X-Forwarded-Server", "Forwarded", "X-Original-URL", "X-Rewrite-URL", "Via", "X-Auth-Purpose"} {
 		if got := r.Header.Get(h); got != "" {
 			t.Fatalf("header %s should be stripped, got %q", h, got)
 		}
