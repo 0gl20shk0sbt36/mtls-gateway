@@ -104,3 +104,37 @@ func TestResolveListen(t *testing.T) {
 		t.Fatalf("IPv6 bind_host=%q: got %q, want \"[::]:9444\"", "::", got)
 	}
 }
+
+// D-3(pro 前瞻审计): Parse 记录未建模 TOML 键(persist 全量重写会丢, configmgr 据此告警)
+func TestParseUndecodedKeys(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	content := "bind_host = \"127.0.0.1\"\nfuture_field = \"will-be-lost\"\n\n[[mappings]]\nid = \"m1\"\nlisten = \":9601\"\ntarget = \"http://127.0.0.1:1\"\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Parse(path)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	found := false
+	for _, k := range cfg.Undecoded {
+		if k == "future_field" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("Undecoded 应含 future_field, got %v", cfg.Undecoded)
+	}
+	// 无未知键时为空(不误报)
+	clean := filepath.Join(t.TempDir(), "clean.toml")
+	if err := os.WriteFile(clean, []byte("bind_host = \"127.0.0.1\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg2, err := Parse(clean)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg2.Undecoded) != 0 {
+		t.Fatalf("干净配置 Undecoded 应为空, got %v", cfg2.Undecoded)
+	}
+}

@@ -184,6 +184,11 @@ func (m *ConfigManager) persist() error {
 	if m.mode == config.ModeEphemeral {
 		return nil
 	}
+	// D-3(pro 前瞻审计): 全量重写会丢失配置文件中未建模的键/注释 — 落盘前告警,
+	// 让运维在升级/手改配置后知道哪些内容将被抹掉(不拒绝: 可用性优先, 备份已留)。
+	if len(m.cfg.Undecoded) > 0 {
+		log.Printf("⚠️ 配置文件含未建模键 %v, 本次落盘将丢失(如需保留请先升级二进制或手动合并)", m.cfg.Undecoded)
+	}
 	if err := copyFile(m.path, m.path+".bak-"+time.Now().Format("20060102-150405.000000000")); err != nil {
 		log.Printf("config backup failed: %v (仍继续写入)", err)
 	}

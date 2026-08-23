@@ -1,8 +1,15 @@
 package main
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
+	"math/big"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +19,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // mtls-gw-cli 子进程黑盒测试: 编译二进制 + 起 unix socket 假 daemon + exec 跑各命令, 断言退出码与输出。
@@ -219,5 +227,83 @@ func TestCLISockEqualsForm(t *testing.T) {
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("--sock= 等号形式应可用: %v (%s)", err, stderr.String())
+	}
+}
+
+// A-4(pro 前瞻审计): TCP admin 模式 — mTLS 直连 admin API(Windows 无 unix socket)
+// 生成 CA + 服务器证书 + admin 客户端证书, 起 mTLS 假 daemon, CLI 经 --admin 签发成功。
+func TestCLITCPAdminMode(t *testing.T) {
+	if testing.Short() {
+		t.Skip("short mode")
+	}
+	// ---- 自建 CA + 证书 ----
+	caKey, _ := rsa.GenerateKey(rand.Reader, 2048)
+	now := time.Now()
+	caTmpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "cli-test-ca"},
+		NotBefore: now.Add(-time.Hour), NotAfter: now.Add(24 * time.Hour), IsCA: true, BasicConstraintsValid: true,
+		KeyUsage: x509.KeyUsageCertSign}
+	caDER, _ := x509.CreateCertificate(rand.Reader, caTmpl, caTmpl, &caKey.PublicKey, caKey)
+	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER})
+	pool := x509.NewCertPool()
+	pool.AppendCertsFromPEM(caPEM)
+
+	mkLeaf := func(cn string, isServer bool) tls.Certificate {
+		k, _ := rsa.GenerateKey(rand.Reader, 2048)
+		tmpl := &x509.Certificate{SerialNumber: big.NewInt(time.Now().UnixNano()), Subject: pkix.Name{CommonName: cn},
+			NotBefore: now.Add(-time.Hour), NotAfter: now.Add(24 * time.Hour), KeyUsage: x509.KeyUsageDigitalSignature}
+		if isServer {
+			tmpl.IPAddresses = []net.IP{net.ParseIP("127.0.0.1")}
+			tmpl.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}
+		} else {
+			tmpl.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
+		}
+		der, _ := x509.CreateCertificate(rand.Reader, tmpl, caTmpl, &k.PublicKey, caKey)
+		return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: k}
+	}
+	serverCert := mkLeaf("localhost", true)
+	clientCert := mkLeaf("cli-admin", false)
+
+	dir := t.TempDir()
+	caPath := filepath.Join(dir, "ca.pem")
+	os.WriteFile(caPath, caPEM, 0o600)
+	certPath := filepath.Join(dir, "admin.pem")
+	keyPath := filepath.Join(dir, "admin.key")
+	os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: clientCert.Certificate[0]}), 0o600)
+	keyDER, _ := x509.MarshalPKCS8PrivateKey(clientCert.PrivateKey)
+	os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}), 0o600)
+
+	// ---- mTLS 假 admin daemon ----
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/admin/certs/issue" {
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"serial":"TCP-SERIAL","p12_password":"PW","expires":"2027-01-01"}`)
+	}))
+	srv.TLS = &tls.Config{Certificates: []tls.Certificate{serverCert},
+		ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: pool}
+	srv.StartTLS()
+	defer srv.Close()
+	addr := strings.TrimPrefix(srv.URL, "https://")
+
+	stdout, stderr, code := runCLI(t, "",
+		"--admin", addr, "--cert", certPath, "--key", keyPath, "--ca", caPath,
+		"issue", "dev-tcp", "--purpose", "dsh")
+	if code != 0 {
+		t.Fatalf("TCP 模式 issue exit=%d stderr=%s", code, stderr)
+	}
+	if !strings.Contains(stdout, "TCP-SERIAL") {
+		t.Errorf("stdout 应含 TCP-SERIAL: %s", stdout)
+	}
+}
+
+// A-4: TCP 模式参数缺失(有 --admin 无证书) → 启动即报错
+func TestCLITCPAdminMissingCerts(t *testing.T) {
+	_, stderr, code := runCLI(t, "", "--admin", "127.0.0.1:9444", "issue", "x", "--purpose", "dsh")
+	if code != 1 {
+		t.Fatalf("缺证书应退出码 1, got %d", code)
+	}
+	if !strings.Contains(stderr, "TCP admin 模式需要") {
+		t.Errorf("stderr 应提示缺证书: %s", stderr)
 	}
 }

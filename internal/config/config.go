@@ -93,6 +93,10 @@ type Config struct {
 	GatewayReloadAddr string `toml:"gateway_reload_addr"` // 网关 /admin/reload 地址(如 100.104.135.63:9444); 空=变更后不自动 reload
 	ReloadCert        string `toml:"reload_cert"`         // 调网关 reload 的 admin 客户端证书(pem)
 	ReloadKey         string `toml:"reload_key"`          // 调网关 reload 的 admin 客户端私钥(pem)
+
+	// Undecoded 解析时未建模的 TOML 键(仅 Parse 填充, toml:"-" 不序列化):
+	// persist 全量重写会丢它们, configmgr 落盘前据此告警(D-3)。
+	Undecoded []string `toml:"-"`
 }
 
 // RequireIPBindResolved 返回实际 IP 绑定要求 (默认 true)
@@ -139,9 +143,13 @@ func DefaultConfig() Config {
 // 文件不存在也返回错误 — reload 时配置文件缺失必须报错, 不得静默用默认值清空运行中路由。
 func Parse(path string) (Config, error) {
 	cfg := DefaultConfig()
-	if _, err := toml.DecodeFile(path, &cfg); err != nil {
+	md, err := toml.DecodeFile(path, &cfg)
+	if err != nil {
 		return cfg, err
 	}
+	// 记录配置文件中未建模的键(TOML 库默认忽略): persist 全量重写会丢失它们,
+	// configmgr 落盘前据此告警(D-3, pro 前瞻审计)。toml:"-" 不进序列化。
+	cfg.Undecoded = undecodedKeys(md)
 	if cfg.AdminRole == "" {
 		cfg.AdminRole = auth.DefaultAdminRole
 	}
@@ -208,6 +216,16 @@ func Parse(path string) (Config, error) {
 		seen[r] = true
 	}
 	return cfg, nil
+}
+
+// undecodedKeys 提取 toml.MetaData 中未解码的键(字符串化, 供告警展示)。
+func undecodedKeys(md toml.MetaData) []string {
+	keys := md.Undecoded()
+	out := make([]string, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, k.String())
+	}
+	return out
 }
 
 // ResolveListen 把 ":port" 落到 bindHost (绝对地址原样返回)。

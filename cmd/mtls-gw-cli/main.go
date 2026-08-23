@@ -1,15 +1,18 @@
-// mtls-gw-cli — mtls-gw 管理 CLI (瘦客户端, 调 Unix socket API)
+// mtls-gw-cli — mtls-gw 管理 CLI (瘦客户端, 调 Unix socket 或 TCP admin API)
 // 用法:
 //
 //	mtls-gw-cli issue <name> --purpose dsh --ts-ip 100.x.y.z [--days 365]
 //	mtls-gw-cli revoke <serial>
 //	mtls-gw-cli list
 //	mtls-gw-cli health
+//	mtls-gw-cli --admin <host:port> --cert <admin.pem> --key <admin.key> --ca <ca.pem> ...   TCP 模式(Windows 用)
 package main
 
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -26,22 +29,64 @@ import (
 var sockPath = "/run/mtls-gw.sock"
 var lang = i18n.Detect() // 系统语言检测 (LC_ALL > LC_MESSAGES > LANG > zh)
 
+// TCP admin 模式参数(A-4, pro 前瞻审计): Windows 无 unix socket, CLI 经 mTLS
+// 直连 mtls-admin 的 admin_listen TCP 端点(admin 证书)。配置后 do() 走 HTTPS。
+var (
+	adminAddr    string // 服务端 admin_listen host:port(空=Unix socket 模式)
+	adminCertPEM string // admin 客户端证书(pem)
+	adminKeyPEM  string // admin 客户端私钥(pem)
+	adminCAPEM   string // 网关 CA(校验服务端证书)
+)
+
 func main() {
-	// 全局 --sock 参数 (必须在子命令前; 支持 --sock=<path> 形式 — flash 低危项)
+	// 全局 --sock/--admin 参数 (必须在子命令前; 支持 = 形式 — flash 低危项)
 	newArgs := []string{}
 	for i := 0; i < len(os.Args); i++ {
 		switch {
 		case os.Args[i] == "--sock" && i+1 < len(os.Args):
 			sockPath = os.Args[i+1]
-			i++ // 跳过值
+			i++
 			continue
 		case strings.HasPrefix(os.Args[i], "--sock="):
 			sockPath = strings.TrimPrefix(os.Args[i], "--sock=")
+			continue
+		case os.Args[i] == "--admin" && i+1 < len(os.Args):
+			adminAddr = os.Args[i+1]
+			i++
+			continue
+		case strings.HasPrefix(os.Args[i], "--admin="):
+			adminAddr = strings.TrimPrefix(os.Args[i], "--admin=")
+			continue
+		case os.Args[i] == "--cert" && i+1 < len(os.Args):
+			adminCertPEM = os.Args[i+1]
+			i++
+			continue
+		case strings.HasPrefix(os.Args[i], "--cert="):
+			adminCertPEM = strings.TrimPrefix(os.Args[i], "--cert=")
+			continue
+		case os.Args[i] == "--key" && i+1 < len(os.Args):
+			adminKeyPEM = os.Args[i+1]
+			i++
+			continue
+		case strings.HasPrefix(os.Args[i], "--key="):
+			adminKeyPEM = strings.TrimPrefix(os.Args[i], "--key=")
+			continue
+		case os.Args[i] == "--ca" && i+1 < len(os.Args):
+			adminCAPEM = os.Args[i+1]
+			i++
+			continue
+		case strings.HasPrefix(os.Args[i], "--ca="):
+			adminCAPEM = strings.TrimPrefix(os.Args[i], "--ca=")
 			continue
 		}
 		newArgs = append(newArgs, os.Args[i])
 	}
 	os.Args = newArgs
+	// TCP 模式参数完整性校验: --admin 需要证书三件套
+	if adminAddr != "" && (adminCertPEM == "" || adminKeyPEM == "" || adminCAPEM == "") {
+		fmt.Fprintln(os.Stderr, "TCP admin 模式需要 --admin <host:port> --cert <admin.pem> --key <admin.key> --ca <ca.pem>")
+		os.Exit(1)
+	}
 	if len(os.Args) < 2 {
 		usage()
 		os.Exit(1)
@@ -69,25 +114,28 @@ func main() {
 
 func usage() {
 	if lang == i18n.En {
-		fmt.Println(`mtls-gw-cli — management CLI (talks to the core daemon over a Unix socket)
+		fmt.Println(`mtls-gw-cli — management CLI (talks to the core daemon over a Unix socket, or the admin API over TCP mTLS)
 usage:
   mtls-gw-cli issue <name> --purpose <admin|dsh|...> --ts-ip <100.x.y.z> [--days N] [--password P]
   mtls-gw-cli revoke <serial>
   mtls-gw-cli list
   mtls-gw-cli health
-  mtls-gw-cli --sock <path> ...  specify socket path`)
+  mtls-gw-cli --sock <path> ...   specify socket path
+  mtls-gw-cli --admin <host:port> --cert <admin.pem> --key <admin.key> --ca <ca.pem> ...   TCP admin mode (Windows)`)
 		return
 	}
-	fmt.Println(`mtls-gw-cli — 管理 CLI (经 Unix socket 调核心进程)
+	fmt.Println(`mtls-gw-cli — 管理 CLI (经 Unix socket 或 TCP mTLS admin API 调管理进程)
 用法:
   mtls-gw-cli issue <name> --purpose <admin|dsh|...> --ts-ip <100.x.y.z> [--days N] [--password P]
   mtls-gw-cli revoke <serial>
   mtls-gw-cli list
   mtls-gw-cli health
-  mtls-gw-cli --sock <path> ...  指定 socket 路径`)
+  mtls-gw-cli --sock <path> ...  指定 socket 路径
+  mtls-gw-cli --admin <host:port> --cert <admin.pem> --key <admin.key> --ca <ca.pem> ...   TCP 模式(Windows 用, mTLS admin 证书)`)
 }
 
-// do 经 Unix socket 发请求(method + 可选 JSON body); httpPost/httpGet 的共用实现
+// do 发请求(method + 可选 JSON body): Unix socket(默认)或 TCP mTLS admin(--admin)。
+// httpPost/httpGet 的共用实现。
 func do(method, path string, body any) (*http.Response, error) {
 	var rdr io.Reader
 	if body != nil {
@@ -97,22 +145,53 @@ func do(method, path string, body any) (*http.Response, error) {
 		}
 		rdr = bytes.NewReader(data)
 	}
-	req, err := http.NewRequest(method, "http://unix"+path, rdr)
+	base := "http://unix"
+	transport := &http.Transport{
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return net.Dial("unix", sockPath)
+		},
+	}
+	if adminAddr != "" {
+		// TCP admin 模式: mTLS(admin 客户端证书 + 网关 CA 校验服务端)
+		cert, err := tls.LoadX509KeyPair(adminCertPEM, adminKeyPEM)
+		if err != nil {
+			return nil, fmt.Errorf("load admin cert: %w", err)
+		}
+		caPEM, err := os.ReadFile(adminCAPEM)
+		if err != nil {
+			return nil, fmt.Errorf("read ca: %w", err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(caPEM) {
+			return nil, fmt.Errorf("parse ca pem")
+		}
+		base = "https://" + adminAddr
+		transport = &http.Transport{
+			TLSClientConfig: &tls.Config{
+				Certificates: []tls.Certificate{cert},
+				RootCAs:      pool,
+				ServerName:   stripHost(adminAddr),
+				MinVersion:   tls.VersionTLS12,
+			},
+		}
+	}
+	req, err := http.NewRequest(method, base+path, rdr)
 	if err != nil {
 		return nil, err
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	client := &http.Client{
-		Transport: &http.Transport{
-			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-				return net.Dial("unix", sockPath)
-			},
-		},
-		Timeout: 30 * time.Second,
-	}
+	client := &http.Client{Transport: transport, Timeout: 30 * time.Second}
 	return client.Do(req)
+}
+
+// stripHost 从 host:port 取 host(TLS ServerName; 与 httpshared.AdminClient 同语义)。
+func stripHost(addr string) string {
+	if h, _, err := net.SplitHostPort(addr); err == nil {
+		return h
+	}
+	return addr
 }
 
 // httpPost 经 Unix socket 发 JSON 请求
