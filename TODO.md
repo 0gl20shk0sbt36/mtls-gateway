@@ -8,15 +8,16 @@
 - [x] **WebUI 连接设置加"客户端证书源"字段** — `cert_dir`(填路径=文件源 dir, 留空=系统证书库); 改配置后热重建证书源(relay 加 SetSource: 清缓存+按 server_ca 重新过滤)。配套: relay 启动时配置优先于 `-source` 参数(ResolveCertSource)
 - [x] **WebUI 连接设置去掉 lang 输入框** — 设置界面已有"语言"选项(header 下拉); 后端 settings API 保留 lang 字段
 - [x] ~~**统一授权模型(管理端点 vs 业务路由两套概念)**~~ — **核心已统一**(2026-08-23 核实): 业务路由(gatewayHandler)、/info(infoHandler)、/admin/reload(adminHandler)三端点全部走同一 `gw.Authorize`; /info 匿名兜底返回 CA、admin 强制 `IsAdmin`、业务按 `route.Allows(roles)`。**剩余增强项**: /info 角色可配置(默认 null 匿名) — 不阻塞, 做 GUI 角色可视化时再议
-- [ ] **S-1 X-Auth-Purpose 头信任链加固(GUI 前置, pro 前瞻审计 2026-08-23)** — 当前安全(外层中间件在 IsAdmin 后无条件覆盖该头, 客户端伪造无效); 风险在 GUI 阶段"换方式挂载 admin API"时绕过外层 → 直接提权。修法: 授权结论改 context 传递 + `proxy.SanitizeHeader` 基线删 `X-Auth-Purpose` + 补"admin handler 必须过外层中间件"防回归测试
-- [ ] **S-2 reload 拒绝安全字段变更(pro 前瞻审计 2026-08-23)** — `ReloadFromDisk` 无条件接受新 `admin_role`/`require_ip_bind`/`tls_min_version`, 但网关 `auth.New` 启动固化旧值 → admin_role 轮换时旧 admin 证书 stale-open 直到重启(安全语义缺口)。修法: ReloadFromDisk 检测三项与旧值不一致 → 拒绝 reload 并报错"需重启"
-- [ ] **A-1 ServiceInfo/ChannelInfo 下沉 internal/types(pro 前瞻审计)** — proxy 与 relay/discover 各定义一份同名 struct, 靠"长得一样"耦合, /info 加字段旧客户端静默丢字段; 应收敛 types + /info 响应加 version 能力协商
-- [ ] **A-2 DB schema 版本号 + 迁移框架(pro 前瞻审计)** — 无 `PRAGMA user_version`/迁移逻辑, `CREATE TABLE IF NOT EXISTS` 不给存量库加列; 模型加字段(protocol/metadata)无升级路径, 多服务接入的硬天花板
-- [ ] **D-3 TOML 未知键丢失(pro 前瞻审计)** — persist 全量重写丢弃未建模键+注释; 用 toml.MetaData.Undecoded() 在 persist 前检测并告警(至少先备份+提示)
-- [ ] **A-4 mtls-gw-cli 无 TCP admin 模式(pro 前瞻审计)** — CLI 仅 unix socket, Windows 上不可用, 与 AGENTS.md"Windows 走 TCP admin API"矛盾; 给 CLI 加 `--admin host:port` 模式复用 relay.AdminClient
-- [ ] **D-1 双进程 reload 非原子(pro 前瞻审计)** — DB 重载成功+配置重载失败 → 网关"新证书+旧路由"混合态; 建议 reload 先预检(构建新 router 成功再提交)
-- [ ] **O-2 双进程版本协商(pro 前瞻审计)** — /admin/health 回传版本号, 升级时检测 admin/gw 版本不匹配告警
-- [ ] **S-3 reload 证书 IP 绑定陷阱(pro 前瞻审计, 文档项)** — reload 证书走同一 Authorize(含 IP 预检), SAN IP 必须等于管理进程源 IP; 部署文档需明确 reload 证书绑定(README 部署章节补充)
+- [x] ~~**S-1 X-Auth-Purpose 头信任链加固(GUI 前置, pro 前瞻审计 2026-08-23)**~~ — 已修(a94e040): context 传递 + SanitizeHeader 删头 + 防回归测试 — 当前安全(外层中间件在 IsAdmin 后无条件覆盖该头, 客户端伪造无效); 风险在 GUI 阶段"换方式挂载 admin API"时绕过外层 → 直接提权。修法: 授权结论改 context 传递 + `proxy.SanitizeHeader` 基线删 `X-Auth-Purpose` + 补"admin handler 必须过外层中间件"防回归测试
+- [x] ~~**S-2 reload 拒绝安全字段变更(pro 前瞻审计 2026-08-23)**~~ — 已修(a94e040 + 5cf6fa4): ValidateReload/ReloadFromDisk 双重拦截 — `ReloadFromDisk` 无条件接受新 `admin_role`/`require_ip_bind`/`tls_min_version`, 但网关 `auth.New` 启动固化旧值 → admin_role 轮换时旧 admin 证书 stale-open 直到重启(安全语义缺口)。修法: ReloadFromDisk 检测三项与旧值不一致 → 拒绝 reload 并报错"需重启"
+- [x] ~~**A-1 ServiceInfo/ChannelInfo 下沉 internal/types(pro 前瞻审计)**~~ — 已修(a94e040) — proxy 与 relay/discover 各定义一份同名 struct, 靠"长得一样"耦合, /info 加字段旧客户端静默丢字段; 应收敛 types + /info 响应加 version 能力协商
+- [x] ~~**A-2 DB schema 版本号 + 迁移框架(pro 前瞻审计)**~~ — 已修(5cf6fa4): PRAGMA user_version + migrations — 无 `PRAGMA user_version`/迁移逻辑, `CREATE TABLE IF NOT EXISTS` 不给存量库加列; 模型加字段(protocol/metadata)无升级路径, 多服务接入的硬天花板
+- [x] ~~**D-3 TOML 未知键丢失(pro 前瞻审计)**~~ — 已修(9f25777): Parse 记录 Undecoded + persist 告警 — persist 全量重写丢弃未建模键+注释; 用 toml.MetaData.Undecoded() 在 persist 前检测并告警(至少先备份+提示)
+- [x] ~~**A-4 mtls-gw-cli 无 TCP admin 模式(pro 前瞻审计)**~~ — 已修(9f25777): AdminClient 移 httpshared + CLI --admin 模式 — CLI 仅 unix socket, Windows 上不可用, 与 AGENTS.md"Windows 走 TCP admin API"矛盾; 给 CLI 加 `--admin host:port` 模式复用 relay.AdminClient
+- [x] ~~**D-1 双进程 reload 非原子(pro 前瞻审计)**~~ — 已修(5cf6fa4): ValidateReload 预检 — DB 重载成功+配置重载失败 → 网关"新证书+旧路由"混合态; 建议 reload 先预检(构建新 router 成功再提交)
+- [x] ~~**O-2 双进程版本协商(pro 前瞻审计)**~~ — 已修(5cf6fa4): /admin/health 回传 version — /admin/health 回传版本号, 升级时检测 admin/gw 版本不匹配告警
+- [x] ~~**S-3 reload 证书 IP 绑定陷阱(pro 前瞻审计, 文档项)**~~ — 已修(5cf6fa4): README 已知限制补充
+- [x] ~~**O-1 reload 动态起停监听(pro 前瞻审计)**~~ — 已修(5cf6fa4): listenerRegistry + 端口集合热 diff(新增即监听/删除即断连), 多服务接入不再需重启网关 — reload 证书走同一 Authorize(含 IP 预检), SAN IP 必须等于管理进程源 IP; 部署文档需明确 reload 证书绑定(README 部署章节补充)
 - [ ] **服务端 config 备份权限 bug(22:18 事件, 根因已定位+代码已修)** — `/etc/mtls-gw` 目录属主 `nobody:nogroup` 755, 但 systemd 服务 `User=yyx` → yyx 无目录写权限, 备份 + 主写入全失败。代码侧已加**启动前权限预检**(Linux unix.Access: CA/DB/证书/日志/sock/落盘目录, 不足拒绝启动, stderr 必有输出 + 尽力写日志, 见 `cmd/mtls-gw/permissioncheck_linux.go`); **待运维**: `sudo chown yyx:yyx /etc/mtls-gw` + 重部署新二进制
 - [ ] **服务端内存 Router 与磁盘不一致(22:18 事件, 代码已修)** — 根因: configmgr CRUD 在 `persist()` 失败(目录不可写)时**不回滚内存 cfg**(router 已 rebuild 成新状态, 磁盘没写成) → 内存/磁盘分叉直到重启。已抽 `mutate(apply, rollback)` 统一 9 个 CRUD, persist/rebuild 失败整体回滚 + 重建旧 router; 新增 `TestConfigManagerPersistFailureRollback` 复现 22:18 场景(ReplaceAll 空 services + 落盘失败 → 内存/路由保持原状)。**待部署新二进制生效**
 - [ ] **DSH 首次发送超时(根因已定位+代码已修, 待部署验证)** — **实为 relay TCP 透传 120s 空闲杀连接**切断空闲 WebSocket 长连接: dsh 回复经 WS downlink(events/mux+host, 无心跳帧)推送, 走 mTLS 时 WS 经 relay TCP 透传(:9443 无路径), 看回复/思考 >120s 即被 relay 切断 → 前端重连窗口内第一次发消息超时(重连后流式正常); SSH 直连无 relay 层则不超时。已修: `defaultTCPIdle 120s→12h`(frp 对照: frp 不杀空闲连接, 死连接靠 TCP keepalive) + Dialer 显式 KeepAlive 15s(防 NAT 静默回收); 另服务端 4 个 http.Server `WriteTimeout:60s→0`(绝对时限会切 LLM 长流式) + `IdleTimeout:60s→300s`。**待部署新二进制验证**

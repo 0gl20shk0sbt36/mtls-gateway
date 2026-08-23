@@ -376,3 +376,31 @@ http.Server 三段复制、configmgr 9 CRUD 模板、DTO 复制、角色名校�
 
 **验证**: 20 包 -race 全绿; 五平台构建 + windows vet(含测试文件)通过; 前端单测 8/8 + E2E 15/15; CI 7/7 全绿(含 windows-test 编译验证 UAF 修复)。
 **教训**: flash 修复"失败分支"后, pro 独立视角发现"成功路径"存在同类缺陷 — 验证了"flash 审不出交 pro"的流程必要性。
+
+---
+
+## 2026-08-23 pro 前瞻审计轮(提交 a94e040 + 9f25777 + 5cf6fa4)
+
+用户询问"还有什么严重问题/阻碍后续推进的" → 派 pro 只读子代理做**前瞻性风险审计**(聚焦 GUI 阶段/双进程部署/多服务接入三类阻碍, 而非一般挑刺)。结论: 无当前可利用漏洞; 2 个安全语义缺口 + 8 个阻碍项, **全部修复**(3 批提交)。
+
+**🔴 S-1 X-Auth-Purpose 头信任链(修复 a94e040)**: 授权结论经 HTTP 请求头传递, 当前安全(外层 IsAdmin 后无条件覆盖), 但 GUI 阶段"换方式挂载 admin API"即变提权旁路。修: httpshared.WithAdminAuth/IsAdminAuth context 传递 + api.Manager 4 处改读 context + proxy.SanitizeHeader 删 X-Auth-Purpose + 伪造头/无标记防回归测试。
+
+**🔴 S-2 reload 接受安全字段新值(修复 a94e040)**: admin_role/require_ip_bind/tls_min_version 热重载不同步(网关 auth 启动固化) → admin_role 轮换 stale-open。修: checkReloadSecurityFields 在 ValidateReload + ReloadFromDisk 双重拦截, 变更即拒绝报"需重启"。
+
+**🟡 A-1 ServiceInfo/ChannelInfo 两套重复 struct(修复 a94e040)**: proxy 与 relay/discover 各一份, /info wire 契约漂移风险。修: 下沉 internal/types 单一定义(proxy/relay 别名)。
+
+**🟡 D-3 TOML 未知键丢失(修复 9f25777)**: persist 全量重写丢未建模键+注释。修: config.Parse 记录 Undecoded(toml.MetaData), configmgr.persist 前告警。
+
+**🟡 A-4 mtls-gw-cli 无 TCP admin 模式(修复 9f25777)**: CLI 仅 unix socket, Windows 不可用, 与文档矛盾。修: AdminClient 移 httpshared(relay 别名兼容) + CLI 新增 --admin/--cert/--key/--ca mTLS 模式 + 真实握手测试。
+
+**🟡 A-2 无 DB schema 版本(修复 5cf6fa4)**: CREATE TABLE IF NOT EXISTS 不给存量库补列, 模型演进无升级路径。修: PRAGMA user_version + migrations 表 + 存量库自动升级测试。
+
+**🟡 O-1 reload 不动态起停监听(修复 5cf6fa4)**: 多服务接入=加端口=必重启。修: 网关 listenerRegistry + reload 后端口集合热 diff(新增即监听/删除即断连) + diffPorts 纯函数与集成测试。
+
+**🟡 D-1 reload 非原子(修复 5cf6fa4)**: DB 先换、配置失败 → 混合态。修: configmgr.ValidateReload 预检(解析+安全字段+构建 router), 失败则 DB 不动。
+
+**🟡 O-2 无版本协商(修复 5cf6fa4)**: /admin/health 回传 version(api.Manager + 网关端点), 升级对比双进程版本。
+
+**🟡 S-3 reload 证书 IP 绑定陷阱(修复 5cf6fa4, 文档)**: reload 走同一 Authorize(含 IP 预检), 证书 SAN 须绑管理进程源 IP; README 已知限制补充(顺带修正 A-4 后 Windows CLI 描述)。
+
+**验证**: 23 包 -race 全绿; windows/android 交叉编译; 前端单测 8/8 + E2E 15/15(本地真实双进程环境); CI 7/7 全绿(Test 1.25/1.26、windows-test、WebUI unit/E2E、windows/android build)。
