@@ -73,6 +73,7 @@ type Manager struct {
 	roles      map[string]bool // 声明角色集合 (签发 purposes 校验用)
 	audit      AuditFunc       // 审计回调(签发/吊销成功后调用; nil=不记录)
 	postChange func()          // 证书变更回调(签发/吊销成功后调用; nil=不调用)
+	Version    string          // 进程版本(/admin/health 回传, O-2 版本协商; 默认 "dev")
 }
 
 // AuditFunc 审计事件回调: 签发/吊销成功后调用, kind 为 "cert_issue"/"cert_revoke"。
@@ -493,7 +494,12 @@ func (m *Manager) handler(isLocal bool) http.Handler {
 		httpshared.WriteJSON(w, m.store.List())
 	})
 	mux.HandleFunc("GET /admin/health", func(w http.ResponseWriter, r *http.Request) {
-		httpshared.WriteJSON(w, map[string]string{"status": "ok"})
+		// O-2(pro 前瞻审计): 回传版本号, 升级/排障时对比双进程版本是否一致
+		v := m.Version
+		if v == "" {
+			v = "dev"
+		}
+		httpshared.WriteJSON(w, map[string]string{"status": "ok", "version": v})
 	})
 	return mux
 }

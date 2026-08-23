@@ -59,7 +59,8 @@ func newAdminEnv(t *testing.T) *adminEnv {
 	ev, _ := eventlog.New(evPath, 5, 2)
 	t.Cleanup(func() { ev.Close() })
 
-	h := adminHandler(gw, cm, ev)
+	reg := newListenerRegistry()
+	h := adminHandler(gw, cm, ev, reg, "127.0.0.1", nil)
 	srv := httptest.NewUnstartedServer(h)
 	srv.TLS = gw.ServerTLSConfig()
 	srv.StartTLS()

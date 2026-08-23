@@ -76,12 +76,51 @@ CREATE TABLE IF NOT EXISTS certs (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_certs_name ON certs(name);`); err != nil {
 		return nil, fmt.Errorf("create table/index: %w", err)
 	}
+	// schema 版本迁移(A-2, pro 前瞻审计): 模型加列/索引有升级路径,
+	// 不再依赖 CREATE TABLE IF NOT EXISTS(它不会给存量库补列)。
+	if err := migrate(sdb, schemaVersion); err != nil {
+		return nil, err
+	}
 
 	s := &Store{sqlite: sdb, table: make(map[string]CertRecord)}
 	if err := s.Reload(); err != nil {
 		return nil, err
 	}
 	return s, nil
+}
+
+// schemaVersion 当前 DB schema 版本(存 SQLite PRAGMA user_version)。
+// 升级模型(加列/索引/新表)时: 版本号 +1, 并在 migrations 里补对应迁移函数 —
+// 存量库 Open 时按序执行缺失版本, 新库直接到最新版。
+const schemaVersion = 1
+
+// migrations 版本 → 迁移函数(仅在"从旧版本升到该版本"时执行)。
+// v1 = 初始 schema(Open 直接建表), 无迁移函数; 未来如:
+//
+//	migrations[2] = func(sdb *sql.DB) error {
+//		_, err := sdb.Exec(`ALTER TABLE certs ADD COLUMN metadata TEXT NOT NULL DEFAULT ''`)
+//		return err
+//	}
+var migrations = map[int]func(*sql.DB) error{}
+
+// migrate 读取 user_version 并执行缺失迁移(幂等: 已是目标版本则跳过)。
+// 存量库 user_version=0 → 依次升到 schemaVersion(无迁移函数的版本仅推进版本号)。
+func migrate(sdb *sql.DB, target int) error {
+	var v int
+	if err := sdb.QueryRow(`PRAGMA user_version`).Scan(&v); err != nil {
+		return fmt.Errorf("read user_version: %w", err)
+	}
+	for next := v + 1; next <= target; next++ {
+		if fn, ok := migrations[next]; ok {
+			if err := fn(sdb); err != nil {
+				return fmt.Errorf("migrate v%d: %w", next, err)
+			}
+		}
+		if _, err := sdb.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, next)); err != nil {
+			return fmt.Errorf("set user_version=%d: %w", next, err)
+		}
+	}
+	return nil
 }
 
 // buildTable 从 SQLite 全量构建内存表(Open/Reload 共用; 不持锁, 调用方负责)

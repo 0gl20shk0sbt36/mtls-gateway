@@ -219,9 +219,10 @@ Import the p12 (private key + password) into the browser/phone — no extra soft
 
 ### Known Limitations
 
-- Windows has no Unix socket; CLI issuing goes through the TCP admin API
+- Windows has no Unix socket: use the CLI's TCP mode `mtls-gw-cli --admin <host:port> --cert <admin.pem> --key <admin.key> --ca <ca.pem> ...` (mTLS admin cert straight to mtls-admin)
 - Cert expiry compared as `yyyy-mm-dd` strings (still valid on the expiry day)
 - Without `gateway_reload_addr` configured, newly issued certs need a manual gateway `/admin/reload` (or restart) before `/info` sees them; with it configured, mtls-admin auto-reloads the gateway after every issue/revoke
+- **The reload cert must be bound to the admin process's source IP**: reload shares the same authorization path as business requests (including `require_ip_bind` IP precheck), so `reload_cert`'s SAN IP must equal mtls-admin's source IP when it connects to the gateway (e.g. SAN 127.0.0.1 when `gateway_reload_addr = "127.0.0.1:..."`, not the device TS IP); otherwise every auto-reload fails with 403 silently
 
 ---
 

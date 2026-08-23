@@ -610,7 +610,7 @@ func TestMergedHandlerSecurity(t *testing.T) {
 		t.Fatal(err)
 	}
 	cm := configmgr.New(tomlPath, cfg, router)
-	h := mergedHandler(gw, cm, nil, nil)
+	h := mergedHandler(gw, cm, nil, nil, newListenerRegistry(), "127.0.0.1")
 	srv := httptest.NewUnstartedServer(h)
 	srv.TLS = gw.ServerTLSConfig()
 	srv.StartTLS()

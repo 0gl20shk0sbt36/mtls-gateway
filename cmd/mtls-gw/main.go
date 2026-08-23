@@ -18,7 +18,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -46,30 +45,9 @@ var version = "dev"
 // 常量本体在 internal/httpshared(与 mtls-admin 共享, 防两进程漂移)。
 
 func main() {
-	var servers []*http.Server // 优雅退出时关闭
-	var serversMu sync.Mutex
-	var gateway *auth.Gateway // 供下方 startServer 闭包使用(在 auth.New 处赋值)
-	// startServer 起一个 mTLS http.Server(统一超时 + 注册优雅退出 + Serve; 失败 Fatal)。
-	// 收敛 4 段 http.Server 构造复制(P2 债); 监听(listen)由调用方先建立(不同端口/地址来源)。
-	startServer := func(ln net.Listener, h http.Handler, name, detail string) {
-		srv := &http.Server{
-			Handler:           h,
-			ReadHeaderTimeout: 10 * time.Second,
-			ReadTimeout:       30 * time.Second,
-			// WriteTimeout=0: 流式响应(SSE/LLM token 流)可能持续数分钟, 60s 会在生成中途
-			// 强制切断(表现: 消息超时一次, 重发命中缓存即好); 单用户内网挂连接风险可接受,
-			// 反代侧 ResponseHeaderTimeout 仍保护响应头
-			WriteTimeout: httpshared.WriteTimeout,
-			IdleTimeout:  httpshared.IdleTimeout,
-		}
-		serversMu.Lock()
-		servers = append(servers, srv)
-		serversMu.Unlock()
-		log.Printf("mtls %s listening on %s (%s)", name, ln.Addr(), detail)
-		if err := srv.Serve(tlsListener(ln, gateway.ServerTLSConfig())); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("%s serve: %v", name, err)
-		}
-	}
+	var gateway *auth.Gateway // 供监听 handler 使用(在 auth.New 处赋值)
+	// 监听注册表(O-1, pro 前瞻审计): 启动注册, reload 动态增删业务端口, 优雅退出全关。
+	reg := newListenerRegistry()
 	cfgPath = flag.String("config", "/etc/mtls-gw/config.toml", "配置文件路径")
 	flag.Parse()
 
@@ -187,7 +165,7 @@ func main() {
 			if err != nil {
 				log.Fatalf("listen %s: %v", addr, err)
 			}
-			startServer(ln, gatewayHandler(gateway, cm, port, accLog), "gateway", "mTLS")
+			reg.add("gw:"+port, ln, gatewayHandler(gateway, cm, port, accLog), "gateway", "mTLS", gateway.ServerTLSConfig())
 		}()
 	}
 
@@ -209,7 +187,7 @@ func main() {
 			if err != nil {
 				log.Fatalf("merged listen: %v", err)
 			}
-			startServer(ln, mergedHandler(gateway, cm, accLog, evLog), "info+reload", "merged: /info anonymous, /admin/reload mTLS")
+			reg.add("merged", ln, mergedHandler(gateway, cm, accLog, evLog, reg, bindHost), "info+reload", "merged: /info anonymous, /admin/reload mTLS", gateway.ServerTLSConfig())
 		}()
 	} else {
 		if infoListen != "" {
@@ -218,7 +196,7 @@ func main() {
 				if err != nil {
 					log.Fatalf("info listen %s: %v", infoListen, err)
 				}
-				startServer(ln, infoHandler(gateway, cm, accLog), "/info", "registered cert only")
+				reg.add("info", ln, infoHandler(gateway, cm, accLog), "/info", "registered cert only", gateway.ServerTLSConfig())
 			}()
 		}
 		if reloadListen != "" {
@@ -227,7 +205,7 @@ func main() {
 				if err != nil {
 					log.Fatalf("reload listen %s: %v", reloadListen, err)
 				}
-				startServer(ln, adminHandler(gateway, cm, evLog), "/admin/reload", "mTLS, admin cert required")
+				reg.add("reload", ln, adminHandler(gateway, cm, evLog, reg, bindHost, accLog), "/admin/reload", "mTLS, admin cert required", gateway.ServerTLSConfig())
 			}()
 		}
 	}
@@ -242,10 +220,7 @@ func main() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	serversMu.Lock()
-	snapshot := append([]*http.Server(nil), servers...)
-	serversMu.Unlock()
-	for _, s := range snapshot {
+	for _, s := range reg.all() {
 		s.Shutdown(ctx)
 	}
 }
@@ -344,10 +319,11 @@ func gatewayHandler(gw *auth.Gateway, cm *configmgr.ConfigManager, port string, 
 // mergedHandler 合并端口(info_listen == reload_listen)的路径分发:
 // /info 匿名可达(引导), /admin/* 必须 admin 证书 — 前缀匹配安全语义可测(pro 深度审计提示,
 // 若 /admin 前缀匹配写错则 reload 暴露给匿名, 是安全事故且需测试拦截)。
-func mergedHandler(gw *auth.Gateway, cm *configmgr.ConfigManager, accLog, evLog *eventlog.Logger) http.Handler {
+func mergedHandler(gw *auth.Gateway, cm *configmgr.ConfigManager, accLog, evLog *eventlog.Logger,
+	reg *listenerRegistry, bindHost string) http.Handler {
 	mm := http.NewServeMux()
 	mm.HandleFunc("/info", infoHandler(gw, cm, accLog).ServeHTTP)
-	mm.Handle("/admin/", adminHandler(gw, cm, evLog)) // 尾部斜杠=前缀匹配(/admin/*)
+	mm.Handle("/admin/", adminHandler(gw, cm, evLog, reg, bindHost, accLog)) // 尾部斜杠=前缀匹配(/admin/*)
 	return mm
 }
 
@@ -400,10 +376,12 @@ var gwErr = httpshared.ErrWriter{
 }.Write
 
 // adminHandler 网关管理端点(管理服务拆分后仅剩 reload):
-//   - POST /admin/reload — 全量热重载(DB + 配置), 由独立 mtls-admin 进程调用(admin 证书)
+//   - POST /admin/reload — 全量热重载(DB + 配置) + 业务端口集合热 diff(O-1),
+//     由独立 mtls-admin 进程调用(admin 证书)
 //
 // 其余管理功能(签发/吊销/配置 CRUD)已拆分至 mtls-admin 进程, 网关不再提供。
-func adminHandler(gw *auth.Gateway, cm *configmgr.ConfigManager, ev *eventlog.Logger) http.Handler {
+func adminHandler(gw *auth.Gateway, cm *configmgr.ConfigManager, ev *eventlog.Logger,
+	reg *listenerRegistry, bindHost string, acc *eventlog.Logger) http.Handler {
 	mux := http.NewServeMux()
 
 	// 记配置变更事件
@@ -413,11 +391,25 @@ func adminHandler(gw *auth.Gateway, cm *configmgr.ConfigManager, ev *eventlog.Lo
 		}
 	}
 
+	// GET /admin/health — 探活 + 版本回传(O-2, pro 前瞻审计): 升级/排障时对比
+	// 网关与 mtls-admin 版本是否一致(版本不匹配时 config 校验可能分叉)。
+	mux.HandleFunc("GET /admin/health", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]string{"status": "ok", "version": version})
+	})
+
 	// POST /admin/reload — 全量热重载(DB + 配置): 管理进程改完 DB/配置后调用。
 	// 先 DB 后配置, 各自原子替换; 任一失败返回错误(成功侧已生效, 失败侧保持旧副本, 可重试)。
 	// admin 证书保护(外层统一 Authorize + IsAdmin)。
+	// POST /admin/reload — 全量热重载(DB + 配置) + 端口集合热 diff。
+	// 顺序(D-1, pro 前瞻审计): 先 ValidateReload 预检(解析+安全字段+构建 router),
+	// 失败则 DB 也不动 — 避免"DB 已换新、配置保持旧"的混合态; 再 DB → 配置原子替换;
+	// 最后 diff 业务端口: 新增即监听, 删除即关闭(不再需要重启网关)。
 	mux.HandleFunc("POST /admin/reload", func(w http.ResponseWriter, r *http.Request) {
-		oldPorts := cm.Router().Listens() // reload 前(当前实际监听的端口)
+		oldPorts := reg.gatewayPorts() // reload 前实际监听的业务端口
+		if err := cm.ValidateReload(); err != nil {
+			gwErr(w, r, err) // 预检失败: DB 不动, 整体保持旧状态
+			return
+		}
 		if err := gw.Reload(); err != nil {
 			gwErr(w, r, fmt.Errorf("db reload: %w", err))
 			return
@@ -427,23 +419,24 @@ func adminHandler(gw *auth.Gateway, cm *configmgr.ConfigManager, ev *eventlog.Lo
 			return
 		}
 		cfgChanged("热重载: DB + 配置(管理进程触发)")
-		// 热重载不动态起/停监听: 新增端口需重启网关才生效 — 显式告警(避免静默"路由存在但不可达")
-		existing := map[string]bool{}
-		for _, p := range oldPorts {
-			existing[p] = true
-		}
-		var added []string
-		for _, p := range cm.Router().Listens() {
-			if !existing[p] {
-				added = append(added, p)
+		// O-1: 业务端口集合热 diff — 新增端口立即监听, 删除端口立即关闭
+		added, removed := diffPorts(oldPorts, cm.Router().Listens())
+		for _, port := range added {
+			if err := reg.addGatewayPort(bindHost, port, gatewayHandler(gw, cm, port, acc), gw.ServerTLSConfig()); err != nil {
+				msg := fmt.Sprintf("热重载: 新增端口 %s 监听失败: %v (需重启网关)", port, err)
+				log.Printf("%s", msg)
+				cfgChanged(msg)
 			}
 		}
-		if len(added) > 0 {
-			msg := fmt.Sprintf("热重载: 新增端口 %v 需重启网关才生效(热重载不动态起监听)", added)
+		for _, port := range removed {
+			reg.remove("gw:" + port)
+		}
+		if len(added) > 0 || len(removed) > 0 {
+			msg := fmt.Sprintf("热重载: 业务端口变更 +%v -%v (动态生效)", added, removed)
 			log.Printf("%s", msg)
 			cfgChanged(msg)
 		}
-		writeJSON(w, map[string]any{"ok": true})
+		writeJSON(w, map[string]any{"ok": true, "added": added, "removed": removed})
 	})
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -218,9 +218,10 @@ relay 自带 WebUI(`--listen-admin :28083`):
 
 ### 已知限制
 
-- Windows 无 Unix socket, CLI 签发走 TCP admin API
+- Windows 无 Unix socket: CLI 用 TCP 模式 `mtls-gw-cli --admin <host:port> --cert <admin.pem> --key <admin.key> --ca <ca.pem> ...`(mTLS admin 证书直连 mtls-admin)
 - 证书有效期按 `yyyy-mm-dd` 字符串比较(到期日当天仍有效)
 - 未配置 `gateway_reload_addr` 时, 运行时新增证书需手动调网关 `/admin/reload`(或重启)才能被 `/info` 获取; 配置了则 mtls-admin 在每次签发/吊销后自动 reload 网关
+- **reload 证书必须绑定管理进程的源 IP**: reload 走与业务请求相同的授权路径(含 `require_ip_bind` IP 预检), `reload_cert` 的 SAN IP 须等于 mtls-admin 连接网关时的源 IP(如 `gateway_reload_addr = "127.0.0.1:..."` 时 SAN 要绑 127.0.0.1, 而非设备 TS IP), 否则自动 reload 全部 403 静默失败
 
 ---
 

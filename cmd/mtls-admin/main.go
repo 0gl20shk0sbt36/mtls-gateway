@@ -150,6 +150,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("manager: %v", err)
 	}
+	mgr.Version = version // O-2: /admin/health 回传版本, 升级/排障对比双进程版本
 	mgr.SetDeclaredRoles(cfg.Roles)
 	// 审计事件在 Manager 内部触发(签发/吊销成功), 双通道(unix socket/TCP)统一留痕 —
 	// 证书操作是最高价值审计项, 不能只靠 TCP wrapper(CLI 走 unix socket 会绕过)

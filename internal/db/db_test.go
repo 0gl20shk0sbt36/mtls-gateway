@@ -1,6 +1,7 @@
 package db
 
 import (
+	"database/sql"
 	"fmt"
 	"path/filepath"
 	"sync"
@@ -270,4 +271,59 @@ func TestReloadFailureKeepsOldTable(t *testing.T) {
 	if !ok || got.Name != "dev-a" || !got.HasPurpose("dsh") {
 		t.Fatalf("Reload 失败后旧表应保持: %+v ok=%v", got, ok)
 	}
+}
+
+// A-2(pro 前瞻审计): DB schema 版本迁移 — 新库到最新版, 存量库幂等, 数据保留
+func TestSchemaVersionMigration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "gw.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 写入一条记录(验证迁移后数据保留)
+	if err := s.Upsert(CertRecord{Serial: "s1", Name: "dev", Purposes: []string{"dsh"}, Status: "enabled"}); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+
+	// 重新 Open(存量库): 迁移幂等, 版本仍最新, 数据在
+	s2, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s2.Close()
+	var v int
+	if err := s2.sqlite.QueryRow(`PRAGMA user_version`).Scan(&v); err != nil {
+		t.Fatal(err)
+	}
+	if v != schemaVersion {
+		t.Fatalf("user_version = %d, want %d", v, schemaVersion)
+	}
+	if rec, ok := s2.Get("s1"); !ok || rec.Name != "dev" {
+		t.Fatalf("迁移后数据应保留: %+v", rec)
+	}
+}
+
+// A-2: 模拟旧库(user_version=0)升级到当前版本 — migrate 直接推进版本号
+func TestMigrateFromLegacy(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.db")
+	// 手工建 v0 库(旧版无 user_version 概念 = 0)
+	sdb, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sdb.Exec(`CREATE TABLE IF NOT EXISTS certs (serial TEXT PRIMARY KEY, name TEXT NOT NULL, purpose TEXT NOT NULL, ts_ip TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'enabled', issued_at TEXT NOT NULL, expires_at TEXT NOT NULL, fingerprint TEXT NOT NULL DEFAULT '')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrate(sdb, schemaVersion); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	var v int
+	if err := sdb.QueryRow(`PRAGMA user_version`).Scan(&v); err != nil {
+		t.Fatal(err)
+	}
+	if v != schemaVersion {
+		t.Fatalf("legacy 升级后 user_version = %d, want %d", v, schemaVersion)
+	}
+	sdb.Close()
 }
